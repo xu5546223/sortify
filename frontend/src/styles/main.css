@@ -1,0 +1,486 @@
+/* 導入我們的主題配置 - 包含正確的 Tailwind CSS v3 導入 */
+@import "./theme.css";
+@import "./utilities.css";
+
+/* 確保主題配置被正確應用 */
+:root {
+  /* 強制初始化 CSS 變量 */
+  color-scheme: light dark;
+}
+
+/* 暗黑模式支持 */
+[data-theme="dark"] {
+  color-scheme: dark;
+  background-color: var(--color-surface-50);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+}
+
+[data-theme="dark"] body {
+  background-color: var(--color-surface-50);
+}
+
+[data-theme="dark"] #root {
+  background-color: var(--color-surface-50);
+}
+
+/* 確保平滑過渡 */
+* {
+  transition-property: color, background-color, border-color;
+  transition-duration: 0.2s;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* 滾動條樣式 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-surface-100);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-surface-400);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-surface-500);
+}
+
+/* 暗色模式下的滾動條優化 */
+[data-theme="dark"] ::-webkit-scrollbar-track {
+  background: var(--color-surface-100);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: var(--color-surface-500);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-surface-600);
+}
+
+/* Focus 樣式優化 */
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--color-primary-500);
+  outline-offset: 2px;
+}
+
+/* 禁用狀態透明度 */
+:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 選擇文字樣式 */
+::selection {
+  background-color: var(--color-primary-500);
+  color: white;
+}
+
+.sidebar {
+    width: 260px;
+    background-color: #343a40;
+    color: white;
+    /* position: fixed; /* Removed for potentially more flexible layout handled by App.tsx */
+    /* top: 0; */
+    /* left: 0; */
+    /* height: 100%; */ 
+    /* overflow-y: auto; */
+}
+
+.sidebar a {
+    display: block;
+    padding: 12px 20px;
+    color: #adb5bd;
+    text-decoration: none;
+    transition: background-color 0.2s ease, color 0.2s ease;
+    border-left: 3px solid transparent;
+}
+
+.sidebar a:hover,
+.sidebar a.active {
+    background-color: #495057;
+    color: white;
+    border-left-color: #007bff;
+}
+
+.sidebar .logo {
+    padding: 20px;
+    text-align: center;
+    font-size: 1.5rem;
+    font-weight: 600;
+    border-bottom: 1px solid #495057;
+}
+
+.content {
+    /* margin-left: 260px; /* This will be handled by the layout in App.tsx */
+    padding: 20px;
+    width: 100%; /* Ensure content takes remaining width */
+}
+
+.card {
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    margin-bottom: 20px;
+    padding: 20px;
+}
+
+.card-header {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 15px;
+    color: #333;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+}
+
+.btn {
+    padding: 10px 15px;
+    border-radius: 6px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    display: inline-flex; /* For icon alignment */
+    align-items: center;
+    justify-content: center;
+}
+
+.btn i.fa-fw {
+    width: 1.25em;
+}
+
+.btn-primary {
+    background-color: #007bff;
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: #0056b3;
+}
+
+.btn-secondary {
+    background-color: #6c757d;
+    color: white;
+}
+
+.btn-secondary:hover {
+    background-color: #545b62;
+}
+
+.btn-danger {
+    background-color: #dc3545;
+    color: white;
+}
+
+.btn-danger:hover {
+    background-color: #b02a37;
+}
+
+.table th,
+.table td {
+    padding: 12px 15px;
+    border-bottom: 1px solid #dee2e6;
+    vertical-align: middle;
+}
+
+.table th {
+    background-color: #f8f9fa;
+    font-weight: 600;
+    text-align: left;
+}
+
+.qr-code-placeholder {
+    width: 200px;
+    height: 200px;
+    background-color: #e9ecef;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+}
+
+.qr-code-placeholder img {
+    max-width: 100%;
+    max-height: 100%;
+}
+
+.stat-card {
+    padding: 15px;
+    border-radius: 6px;
+    color: white;
+    margin-bottom: 15px;
+    position: relative;
+    overflow: hidden;
+}
+
+.stat-card .value {
+    font-size: 1.75rem;
+    font-weight: bold;
+}
+
+.stat-card .label {
+    font-size: 0.9rem;
+}
+
+.stat-card .stat-icon {
+    opacity: 0.2;
+    position: absolute;
+    right: 15px;
+    bottom: 10px;
+    font-size: 3rem;
+}
+
+.bg-stat-blue {
+    background-color: #17a2b8;
+}
+
+.bg-stat-green {
+    background-color: #28a745;
+}
+
+.bg-stat-yellow {
+    background-color: #ffc107;
+    color: #212529;
+}
+
+.bg-stat-red {
+    background-color: #dc3545;
+}
+
+/* .main-content-page { display: none; } We will handle page visibility with React Router */
+/* .main-content-page.active { display: block; } */
+
+.message-box-pc {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background-color: #333;
+    color: white;
+    padding: 12px 24px;
+    border-radius: 6px;
+    z-index: 1000;
+    /* display: none; /* Will be controlled by React state */
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.chart-container {
+    height: 300px;
+    position: relative;
+}
+
+/* Ensure Tailwind utility classes take precedence where needed, or define specific component styles here */
+
+/* 確保所有主要容器在暗色模式下有正確背景 */
+[data-theme="dark"] .content {
+  background-color: var(--color-surface-50);
+}
+
+/* 傳統 CSS 類的暗色模式覆蓋 */
+[data-theme="dark"] .card {
+  background-color: var(--color-surface-100);
+  border-color: var(--color-surface-300);
+  color: var(--color-surface-900);
+}
+
+[data-theme="dark"] .card-header {
+  color: var(--color-surface-900);
+  border-bottom-color: var(--color-surface-300);
+}
+
+[data-theme="dark"] .table th {
+  background-color: var(--color-surface-200);
+  color: var(--color-surface-900);
+  border-bottom-color: var(--color-surface-300);
+}
+
+[data-theme="dark"] .table th,
+[data-theme="dark"] .table td {
+  border-bottom-color: var(--color-surface-300);
+  color: var(--color-surface-900);
+}
+
+/* 深色模式下 Alert 組件的優化 */
+[data-theme="dark"] .ant-alert {
+  background-color: var(--color-surface-200);
+  border-color: var(--color-surface-400);
+}
+
+[data-theme="dark"] .ant-alert-warning {
+  background-color: #F59E0B !important;
+  border-color: #F59E0B !important;
+  color: #1C1E22 !important;
+}
+
+[data-theme="dark"] .ant-alert-warning .ant-alert-message,
+[data-theme="dark"] .ant-alert-warning .ant-alert-description {
+  color: #1C1E22 !important;
+}
+
+[data-theme="dark"] .ant-alert-info {
+  background-color: #6366F1 !important;
+  border-color: #6366F1 !important;
+  color: #FFFFFF !important;
+}
+
+[data-theme="dark"] .ant-alert-info .ant-alert-message,
+[data-theme="dark"] .ant-alert-info .ant-alert-description {
+  color: #FFFFFF !important;
+}
+
+[data-theme="dark"] .ant-alert-error {
+  background-color: #EF4444 !important;
+  border-color: #EF4444 !important;
+  color: #FFFFFF !important;
+}
+
+[data-theme="dark"] .ant-alert-error .ant-alert-message,
+[data-theme="dark"] .ant-alert-error .ant-alert-description {
+  color: #FFFFFF !important;
+}
+
+[data-theme="dark"] .ant-alert-success {
+  background-color: #10B981 !important;
+  border-color: #10B981 !important;
+  color: #FFFFFF !important;
+}
+
+[data-theme="dark"] .ant-alert-success .ant-alert-message,
+[data-theme="dark"] .ant-alert-success .ant-alert-description {
+  color: #FFFFFF !important;
+}
+
+/* 深色模式下 Alert 圖標顏色優化 */
+[data-theme="dark"] .ant-alert-warning .ant-alert-icon {
+  color: #1C1E22 !important;
+}
+
+[data-theme="dark"] .ant-alert-info .ant-alert-icon,
+[data-theme="dark"] .ant-alert-error .ant-alert-icon,
+[data-theme="dark"] .ant-alert-success .ant-alert-icon {
+  color: #FFFFFF !important;
+}
+
+/* 深色模式下其他文字組件的優化 */
+[data-theme="dark"] .ant-typography {
+  color: var(--color-surface-900);
+}
+
+[data-theme="dark"] .ant-typography-caption {
+  color: var(--color-surface-600);
+}
+
+/* 深色模式下 Tag 組件的優化 */
+[data-theme="dark"] .ant-tag {
+  background-color: var(--color-surface-200);
+  border-color: var(--color-surface-300);
+  color: var(--color-surface-900);
+}
+
+/* 確保所有警告和提示文字在深色模式下可見 */
+[data-theme="dark"] .text-warning {
+  color: #F59E0B !important;
+}
+
+[data-theme="dark"] .text-error {
+  color: #EF4444 !important;
+}
+
+[data-theme="dark"] .text-info {
+  color: #6366F1 !important;
+}
+
+[data-theme="dark"] .text-success {
+  color: #10B981 !important;
+}
+
+/* 系統偏好深色模式下的 Alert 組件優化 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ant-alert {
+    background-color: var(--color-surface-200);
+    border-color: var(--color-surface-400);
+  }
+
+  :root:not([data-theme="light"]) .ant-alert-warning {
+    background-color: #F59E0B !important;
+    border-color: #F59E0B !important;
+    color: #1C1E22 !important;
+  }
+
+  :root:not([data-theme="light"]) .ant-alert-warning .ant-alert-message,
+  :root:not([data-theme="light"]) .ant-alert-warning .ant-alert-description {
+    color: #1C1E22 !important;
+  }
+
+  :root:not([data-theme="light"]) .ant-alert-info {
+    background-color: #6366F1 !important;
+    border-color: #6366F1 !important;
+    color: #FFFFFF !important;
+  }
+
+  :root:not([data-theme="light"]) .ant-alert-info .ant-alert-message,
+  :root:not([data-theme="light"]) .ant-alert-info .ant-alert-description {
+    color: #FFFFFF !important;
+  }
+
+  :root:not([data-theme="light"]) .ant-alert-error {
+    background-color: #EF4444 !important;
+    border-color: #EF4444 !important;
+    color: #FFFFFF !important;
+  }
+
+  :root:not([data-theme="light"]) .ant-alert-error .ant-alert-message,
+  :root:not([data-theme="light"]) .ant-alert-error .ant-alert-description {
+    color: #FFFFFF !important;
+  }
+
+  :root:not([data-theme="light"]) .ant-alert-success {
+    background-color: #10B981 !important;
+    border-color: #10B981 !important;
+    color: #FFFFFF !important;
+  }
+
+  :root:not([data-theme="light"]) .ant-alert-success .ant-alert-message,
+  :root:not([data-theme="light"]) .ant-alert-success .ant-alert-description {
+    color: #FFFFFF !important;
+  }
+
+  /* 系統偏好深色模式下的 Alert 圖標顏色 */
+  :root:not([data-theme="light"]) .ant-alert-warning .ant-alert-icon {
+    color: #1C1E22 !important;
+  }
+
+  :root:not([data-theme="light"]) .ant-alert-info .ant-alert-icon,
+  :root:not([data-theme="light"]) .ant-alert-error .ant-alert-icon,
+  :root:not([data-theme="light"]) .ant-alert-success .ant-alert-icon {
+    color: #FFFFFF !important;
+  }
+
+  /* 系統偏好深色模式下的文字顏色 */
+  :root:not([data-theme="light"]) .text-warning {
+    color: #F59E0B !important;
+  }
+
+  :root:not([data-theme="light"]) .text-error {
+    color: #EF4444 !important;
+  }
+
+  :root:not([data-theme="light"]) .text-info {
+    color: #6366F1 !important;
+  }
+
+  :root:not([data-theme="light"]) .text-success {
+    color: #10B981 !important;
+  }
+} 
