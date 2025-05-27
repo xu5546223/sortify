@@ -135,9 +135,12 @@ async def get_documents(
     cursor = db[DOCUMENT_COLLECTION].find(query)
 
     # 添加排序邏輯
-    if sort_by:
+    ALLOWED_SORT_FIELDS = ["created_at", "updated_at", "filename", "status", "file_size"] # 新增：允許排序的欄位列表
+    if sort_by and sort_by in ALLOWED_SORT_FIELDS: # 修改：檢查 sort_by 是否在允許列表中
         direction = 1 if sort_order.lower() == "asc" else -1
         cursor = cursor.sort(sort_by, direction)
+    elif sort_by:
+        logger.warning(f"不允許的排序欄位: {sort_by}。將使用預設排序。") # 新增：對不允許的排序欄位發出警告
 
     documents_from_db = await cursor.skip(skip).limit(limit).to_list(length=limit) # 鏈式調用
     

@@ -1,14 +1,14 @@
-from datetime import datetime
+from datetime import datetime, timezone # Import timezone
 from enum import Enum
 from typing import Optional, Dict, Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
-# 新增本地時間函數
-def local_now():
-    """返回本地當前時間，而不是 UTC 時間"""
-    return datetime.now()
+# Use UTC now function
+def utc_now():
+    """Returns the current time in UTC."""
+    return datetime.now(timezone.utc)
 
 class LogLevel(str, Enum):
     INFO = "INFO"
@@ -17,7 +17,7 @@ class LogLevel(str, Enum):
     DEBUG = "DEBUG"
 
 class LogEntryBase(BaseModel):
-    timestamp: datetime = Field(default_factory=local_now)  # 改用本地時間
+    timestamp: datetime = Field(default_factory=utc_now)  # Use UTC time
     level: LogLevel = LogLevel.INFO
     message: str
     source: Optional[str] = None  # 例如: "documents_api", "system_service"

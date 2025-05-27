@@ -50,9 +50,20 @@ async def get_device_by_id(db: AsyncIOMotorDatabase, device_id: str) -> Connecte
     device = await collection.find_one({"device_id": device_id})
     return ConnectedDevice(**device) if device else None
 
-async def get_all_devices(db: AsyncIOMotorDatabase, skip: int = 0, limit: int = 100, active_only: bool = False) -> list[ConnectedDevice]:
+async def get_all_devices(
+    db: AsyncIOMotorDatabase, 
+    skip: int = 0, 
+    limit: int = 100, 
+    active_only: bool = False,
+    user_id: Optional[UUID] = None  # Add user_id parameter
+) -> list[ConnectedDevice]:
     collection = db[DEVICE_COLLECTION_NAME]
-    query = {"is_active": True} if active_only else {}
+    query: dict = {}
+    if active_only:
+        query["is_active"] = True
+    if user_id:
+        query["user_id"] = user_id  # Add user_id to the query
+        
     devices_cursor = collection.find(query).skip(skip).limit(limit)
     devices = []
     async for device_doc in devices_cursor:
@@ -91,8 +102,15 @@ class CRUDDevice:
     async def get_by_id(self, db: AsyncIOMotorDatabase, device_id: str) -> ConnectedDevice | None:
         return await get_device_by_id(db, device_id)
 
-    async def get_all(self, db: AsyncIOMotorDatabase, skip: int = 0, limit: int = 100, active_only: bool = False) -> list[ConnectedDevice]:
-        return await get_all_devices(db, skip, limit, active_only)
+    async def get_all(
+        self, 
+        db: AsyncIOMotorDatabase, 
+        skip: int = 0, 
+        limit: int = 100, 
+        active_only: bool = False,
+        user_id: Optional[UUID] = None  # Add user_id parameter
+    ) -> list[ConnectedDevice]:
+        return await get_all_devices(db, skip, limit, active_only, user_id=user_id)
 
     async def update_activity(self, db: AsyncIOMotorDatabase, device_id: str) -> ConnectedDevice | None:
         return await update_device_activity(db, device_id)

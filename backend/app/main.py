@@ -1,5 +1,8 @@
 import logging # 新增
-from fastapi import FastAPI, Depends, HTTPException
+import logging # 新增
+from fastapi import FastAPI, Depends, HTTPException, Request # Add Request
+from fastapi.exceptions import RequestValidationError # Add RequestValidationError
+from fastapi.responses import JSONResponse # Add JSONResponse
 from contextlib import asynccontextmanager
 from .db.mongodb_utils import db_manager # 更改為相對導入
 from .apis.v1 import api_v1_router as generic_v1_router # 引入 v1 路由並更改為相對導入, 並重命名
@@ -149,6 +152,74 @@ app.add_middleware(
 
 # 添加中介軟體 (RequestContextLogMiddleware 應在 CORS 之後)
 app.add_middleware(RequestContextLogMiddleware)
+
+# --- Custom Exception Handlers ---
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    db = await get_db() # Get DB instance for logging
+    request_id = request.state.request_id if hasattr(request.state, "request_id") else "N/A"
+    user_id_for_log = None # Implement logic to get user_id from token if available without full auth
+    
+    # Log the validation error in detail
+    await log_event(
+        db=db,
+        level=LogLevel.WARNING,
+        message="Request validation failed.",
+        source="validation_error_handler",
+        request_id=request_id,
+        user_id=user_id_for_log, # May be None if auth hasn't run or failed
+        details={"errors": exc.errors(), "body": await request.body() if await request.body() else None} # Log errors and body
+    )
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": exc.errors(), "body": exc.body}, # Standard FastAPI validation error response
+    )
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    db = await get_db() # Get DB instance for logging
+    request_id = request.state.request_id if hasattr(request.state, "request_id") else "N/A"
+    user_id_for_log = None # Implement logic to get user_id from token if available
+
+    # Log the HTTPException
+    await log_event(
+        db=db,
+        level=LogLevel.WARNING if exc.status_code < 500 else LogLevel.ERROR,
+        message=f"HTTPException caught: {exc.detail}",
+        source="http_exception_handler",
+        request_id=request_id,
+        user_id=user_id_for_log,
+        details={"status_code": exc.status_code, "detail": exc.detail, "headers": exc.headers}
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=exc.headers,
+    )
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    db = await get_db() # Get DB instance for logging
+    request_id = request.state.request_id if hasattr(request.state, "request_id") else "N/A"
+    user_id_for_log = None # Implement logic to get user_id from token if available
+
+    # Log the generic exception
+    await log_event(
+        db=db,
+        level=LogLevel.CRITICAL, # Or ERROR, depending on severity assessment
+        message=f"Unhandled exception: {str(exc)}",
+        source="generic_exception_handler",
+        request_id=request_id,
+        user_id=user_id_for_log,
+        details={"error_type": type(exc).__name__, "error_message": str(exc), "traceback": "Add traceback here if feasible/desired"} # Consider adding traceback
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error. Please contact support."},
+    )
+
+# --- End of Custom Exception Handlers ---
 
 @app.get("/")
 async def read_root():
