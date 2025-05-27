@@ -1,6 +1,7 @@
 from typing import List, Optional, Dict, Any, Tuple
 import time
 import json
+import uuid  # Add uuid import
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.logging_utils import AppLogger
 from app.services.unified_ai_service_simplified import unified_ai_service_simplified
@@ -102,13 +103,23 @@ class EnhancedAIQAService:
             
             # 過濾用戶有權限訪問的文檔
             if user_id:
-                accessible_documents = []
-                for doc in full_documents:
-                    if hasattr(doc, 'owner_id') and doc.owner_id == user_id:
-                        accessible_documents.append(doc)
-                    else:
-                        logger.debug(f"用戶 {user_id} 無權訪問文檔 {doc.id}")
-                full_documents = accessible_documents
+                try:
+                    user_uuid = uuid.UUID(user_id)
+                    accessible_documents = []
+                    for doc in full_documents:
+                        # Ensure doc.owner_id is also a UUID object for comparison
+                        # (It should be if retrieved from DB correctly and model types are right)
+                        if hasattr(doc, 'owner_id') and isinstance(doc.owner_id, uuid.UUID) and doc.owner_id == user_uuid:
+                            accessible_documents.append(doc)
+                        else:
+                            # Log if owner_id is not a UUID for debugging data issues
+                            if hasattr(doc, 'owner_id') and not isinstance(doc.owner_id, uuid.UUID):
+                                logger.warning(f"Document ID {doc.id} has owner_id of type {type(doc.owner_id)}, expected UUID.")
+                            logger.debug(f"用戶 {user_id} (UUID: {user_uuid}) 無權訪問文檔 {doc.id} (Owner: {doc.owner_id})")
+                    full_documents = accessible_documents
+                except ValueError:
+                    logger.error(f"無效的 user_id 格式: {user_id}，無法執行權限過濾。")
+                    full_documents = [] # Treat as no accessible documents if user_id is invalid
             
             if not full_documents:
                 logger.warning("用戶無權限訪問相關文檔或獲取文檔內容失敗")

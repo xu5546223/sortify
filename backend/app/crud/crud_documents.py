@@ -22,6 +22,24 @@ DOCUMENT_COLLECTION = "documents"
 # 初始化logger
 logger = AppLogger(__name__, level=logging.INFO).get_logger()
 
+def _build_document_filter_query(
+    owner_id: uuid.UUID,
+    uploader_device_id: Optional[str] = None,
+    status_in: Optional[List[DocumentStatus]] = None,
+    filename_contains: Optional[str] = None,
+    tags_include: Optional[List[str]] = None
+) -> Dict[str, Any]:
+    query: Dict[str, Any] = {"owner_id": owner_id}
+    if uploader_device_id:
+        query["uploader_device_id"] = uploader_device_id
+    if status_in:
+        query["status"] = {"$in": [s.value for s in status_in]}
+    if filename_contains:
+        query["filename"] = {"$regex": re.escape(filename_contains), "$options": "i"}
+    if tags_include and len(tags_include) > 0:
+        query["tags"] = {"$in": tags_include}
+    return query
+
 async def create_document(
     db: AsyncIOMotorDatabase, 
     document_data: DocumentCreate, 
@@ -63,15 +81,26 @@ async def get_document_by_id(db: AsyncIOMotorDatabase, document_id: uuid.UUID) -
         try:
             doc = Document(**document_raw)
             return doc
-        except Exception as e:
+        except Exception as e: # Catches Pydantic ValidationError and other potential errors
+            logger.error(f"Error validating document data for ID {document_id} in get_document_by_id: {e}", exc_info=True)
             return None
     else:
+        # Fallback for string ID check (existing logic, ensure it's also safe or updated if needed)
         try:
-            document_raw_str_check = await db[DOCUMENT_COLLECTION].find_one({"_id": str(document_id)})
+            # Attempt to find by string version of the UUID, in case it was stored/passed incorrectly
+            document_id_str = str(document_id)
+            document_raw_str_check = await db[DOCUMENT_COLLECTION].find_one({"_id": document_id_str})
             if document_raw_str_check:
-                return Document(**document_raw_str_check)
-        except Exception:
-            pass
+                try:
+                    doc_str = Document(**document_raw_str_check)
+                    logger.info(f"Document with ID {document_id_str} (originally queried as UUID {document_id}) found using string fallback.")
+                    return doc_str
+                except Exception as e_str:
+                    logger.error(f"Error validating document data for string ID {document_id_str} in get_document_by_id (fallback for {document_id}): {e_str}", exc_info=True)
+                    return None
+        except Exception as fallback_err: # Catch errors during the fallback find_one itself
+            logger.error(f"Error during string ID fallback find_one for {document_id_str} (originally {document_id}) in get_document_by_id: {fallback_err}", exc_info=True)
+            # pass # Or return None, depending on desired behavior for find_one error
         return None
 
 async def get_documents(
@@ -87,17 +116,13 @@ async def get_documents(
     sort_order: Optional[str] = "desc" # <--- 新增排序參數，預設為 desc
 ) -> List[Document]:
     """獲取文件列表，支持過濾、分頁和排序。"""
-    query: Dict[str, Any] = {"owner_id": owner_id} # 強制按 owner_id 過濾
-    if uploader_device_id: # 如果仍需支持，則保留此條件
-        query["uploader_device_id"] = uploader_device_id
-    if status_in: # <--- 修改此處
-        query["status"] = {"$in": [s.value for s in status_in]} # 使用 $in 和枚舉的值
-    if filename_contains:
-        # 使用正則表達式實現不區分大小寫的模糊搜尋
-        query["filename"] = {"$regex": re.escape(filename_contains), "$options": "i"}
-    if tags_include and len(tags_include) > 0:
-        query["tags"] = {"$in": tags_include} # 文件標籤列表包含任一指定標籤
-        
+    query = _build_document_filter_query(
+        owner_id=owner_id,
+        uploader_device_id=uploader_device_id,
+        status_in=status_in,
+        filename_contains=filename_contains,
+        tags_include=tags_include
+    )
     cursor = db[DOCUMENT_COLLECTION].find(query)
 
     # 添加排序邏輯
@@ -108,15 +133,15 @@ async def get_documents(
     documents_from_db = await cursor.skip(skip).limit(limit).to_list(length=limit) # 鏈式調用
     
     processed_documents = []
-    for i, doc_data_from_db in enumerate(documents_from_db):
-        # 確保 _id 存在並且是我們期望的類型 (通常是 ObjectId 或 UUID)
-        # Pydantic 的 alias 機制應該處理從 _id 到 id 的映射
+    for doc_data_from_db in documents_from_db: # documents_from_db is the list from MongoDB
         try:
+            # Ensure '_id' is present for logging, even if other parts fail validation
+            doc_id_for_log = str(doc_data_from_db.get('_id', 'Unknown ID'))
             document_instance = Document(**doc_data_from_db)
             processed_documents.append(document_instance)
-        except Exception as e:
-            # 在生產環境中，這些 print 應替換為 logger.error 或 logger.warning
-            pass
+        except Exception as e: # Catches Pydantic ValidationError and other potential errors
+            logger.error(f"Error validating document data for ID {doc_id_for_log} in get_documents: {e}", exc_info=True)
+            # Skip this document and continue with others
     # return [Document(**doc) for doc in documents_from_db] # 舊的返回方式
     return processed_documents
 
@@ -296,16 +321,13 @@ async def count_documents(
     uploader_device_id: Optional[str] = None # 與 get_documents 保持一致性
 ) -> int:
     """計算符合條件的文件總數。"""
-    query: Dict[str, Any] = {"owner_id": owner_id}
-    if uploader_device_id:
-        query["uploader_device_id"] = uploader_device_id
-    if status_in: # <--- 修改此處
-        query["status"] = {"$in": [s.value for s in status_in]} # 使用 $in 和枚舉的值
-    if filename_contains:
-        query["filename"] = {"$regex": re.escape(filename_contains), "$options": "i"}
-    if tags_include and len(tags_include) > 0:
-        query["tags"] = {"$in": tags_include}
-    
+    query = _build_document_filter_query(
+        owner_id=owner_id,
+        uploader_device_id=uploader_device_id,
+        status_in=status_in,
+        filename_contains=filename_contains,
+        tags_include=tags_include
+    )
     count = await db[DOCUMENT_COLLECTION].count_documents(query)
     return count 
 

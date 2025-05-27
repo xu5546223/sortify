@@ -53,6 +53,27 @@ logger = logging.getLogger(__name__)
 # You might want to configure the logger further, e.g., set level
 # logger.setLevel(logging.INFO) # Or get level from settings
 
+
+async def get_owned_document(
+    document_id: uuid.UUID, 
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+) -> Document:
+    """
+    Dependency to get a document by ID and verify ownership.
+    Raises HTTPException if not found or user is not the owner.
+    """
+    document = await crud_documents.get_document_by_id(db, document_id)
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"ID 為 {document_id} 的文件不存在")
+    
+    if document.owner_id != current_user.id:
+        # Log this attempt for security auditing
+        logger.warning(f"User {current_user.id} ({current_user.email}) attempted to access document {document_id} owned by {document.owner_id}.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="您無權訪問或修改此文件")
+        
+    return document
+
 router = APIRouter()
 
 # 確保上傳目錄存在 (這個全局檢查是好的)
@@ -328,43 +349,29 @@ async def list_documents(
 
 @router.get("/{document_id}", response_model=Document, summary="獲取特定文件的詳細信息")
 async def get_document_details(
-    document_id: uuid.UUID, 
-    db: AsyncIOMotorDatabase = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    document: Document = Depends(get_owned_document)
 ):
-    document = await crud_documents.get_document_by_id(db, document_id)
-    if not document:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"ID 為 {document_id} 的文件不存在")
-    
-    if document.owner_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="您無權查看此文件的詳細信息")
-        
+    """
+    獲取特定文件的詳細信息。
+    權限檢查由 get_owned_document 依賴處理。
+    """
     return document
 
 @router.get("/{document_id}/file", summary="獲取/下載文件本身", response_class=FileResponse)
 async def get_document_file(
-    document_id: uuid.UUID,
-    db: AsyncIOMotorDatabase = Depends(get_db),
-    current_user: User = Depends(get_current_active_user) # <--- 恢復
+    document: Document = Depends(get_owned_document)
 ):
     """
     根據文件ID獲取實際的文件內容，用於下載或客戶端預覽。
-    只有文件擁有者才能下載。
+    只有文件擁有者才能下載。權限檢查由 get_owned_document 依賴處理。
     """
-    document = await crud_documents.get_document_by_id(db, document_id)
-    if not document:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"ID 為 {document_id} 的文件記錄不存在")
-    
-    if document.owner_id != current_user.id: # <--- 恢復權限檢查
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="您無權訪問此文件")
-
     if not document.file_path:
         # 考慮加入 user_id 和 request_id 到日誌
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"文件 {document.filename} (ID: {document_id}) 沒有記錄儲存路徑")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"文件 {document.filename} (ID: {document.id}) 沒有記錄儲存路徑")
 
     if not os.path.exists(document.file_path):
         # 考慮加入 user_id 和 request_id 到日誌
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"文件 {document.filename} (ID: {document_id}) 在指定路徑 {document.file_path} 未找到")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"文件 {document.filename} (ID: {document.id}) 在指定路徑 {document.file_path} 未找到")
 
     media_type = document.file_type if document.file_type else 'application/octet-stream'
     
@@ -677,22 +684,17 @@ async def _process_document_analysis_or_extraction(
 @router.patch("/{document_id}", response_model=Document, summary="更新文件信息或觸發操作")
 async def update_document_details(
     request: Request,
-    document_id: uuid.UUID, 
     doc_update: DocumentUpdate, 
     background_tasks: BackgroundTasks,
-    db: AsyncIOMotorDatabase = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-    # doc_processing_service: DocumentProcessingService = Depends(get_document_processing_service), # 不再直接在這裡用
-    settings_di: Settings = Depends(get_settings)
+    existing_document: Document = Depends(get_owned_document), # Use the dependency
+    db: AsyncIOMotorDatabase = Depends(get_db), # Still needed for operations
+    current_user: User = Depends(get_current_active_user), # Still needed for logging user
+    settings_di: Settings = Depends(get_settings) # Still needed for settings
+    # document_id is now part of existing_document.id
 ):
-    existing_document = await crud_documents.get_document_by_id(db, document_id)
-    if not existing_document:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"ID 為 {document_id} 的文件不存在")
-
-    if existing_document.owner_id != current_user.id:
-        # Allow admin to bypass this check if needed in future
-        # if not current_user.is_superuser: 
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="您無權修改此文件")
+    # existing_document is now provided by the get_owned_document dependency
+    # The checks for existence and ownership are handled by the dependency.
+    document_id = existing_document.id # Use existing_document.id for document_id
 
     update_fields = doc_update.model_dump(exclude_unset=True)
     
@@ -813,46 +815,32 @@ async def update_document_details(
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT, summary="刪除文件")
 async def delete_document_route(
     request: Request,
-    document_id: uuid.UUID, 
-    db: AsyncIOMotorDatabase = Depends(get_db),
-    current_user: User = Depends(get_current_active_user) # <--- 恢復
+    existing_document: Document = Depends(get_owned_document), # Use the dependency
+    db: AsyncIOMotorDatabase = Depends(get_db), # Still needed for DB operations
+    current_user: User = Depends(get_current_active_user) # Still needed for logging
+    # document_id is now part of existing_document.id
 ):
     """
     刪除指定ID的文件記錄及其在伺服器上的實際文件。
-    只有文件擁有者才能刪除。
+    只有文件擁有者才能刪除。權限檢查由 get_owned_document 依賴處理。
     """
+    document_id = existing_document.id # Use existing_document.id for document_id
+
     request_id_for_log = request.headers.get("X-Request-ID")
     if hasattr(request.state, 'request_id'): 
         request_id_for_log = request.state.request_id
     
-    user_id_for_log_str = str(current_user.id) # <--- 轉換為 str
+    user_id_for_log_str = str(current_user.id)
 
-    existing_document = await crud_documents.get_document_by_id(db, document_id)
-    if not existing_document:
-        await log_event(
-            db=db, level=LogLevel.WARNING, 
-            message=f"刪除失敗：文件 ID {document_id} 不存在 (attempt by user {user_id_for_log_str})",
-            source="documents_api",
-            user_id=user_id_for_log_str, 
-            request_id=request_id_for_log, 
-            details={"document_id": str(document_id)}
-        )
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"ID 為 {document_id} 的文件不存在")
-
-    if existing_document.owner_id != current_user.id: # <--- 恢復權限檢查
-        await log_event(
-            db=db, level=LogLevel.WARNING, 
-            message=f"刪除授權失敗：用戶 {user_id_for_log_str} 嘗試刪除不屬於自己的文件 ID {document_id}",
-            source="documents_api_security",
-            user_id=user_id_for_log_str, 
-            request_id=request_id_for_log, 
-            details={"document_id": str(document_id), "owner_id": str(existing_document.owner_id)}
-        )
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="您無權刪除此文件")
+    # The get_owned_document dependency has already performed existence and ownership checks.
+    # No need for:
+    # existing_document = await crud_documents.get_document_by_id(db, document_id)
+    # if not existing_document: ...
+    # if existing_document.owner_id != current_user.id: ...
 
     file_path_to_delete = existing_document.file_path
 
-    deleted_from_db = await crud_documents.delete_document_by_id(db, document_id)
+    deleted_from_db = await crud_documents.delete_document_by_id(db, existing_document.id)
     
     if not deleted_from_db:
         await log_event(
@@ -932,24 +920,37 @@ async def batch_delete_documents_route(
     for doc_id_uuid in request_data.document_ids:
         processed_count += 1
         doc_id_str = str(doc_id_uuid)
+        existing_document: Optional[Document] = None # Define for this scope
         
-        existing_document = await crud_documents.get_document_by_id(db, doc_id_uuid)
-
-        if not existing_document:
-            action_details.append(BatchDeleteResponseDetail(id=doc_id_uuid, status="not_found", message="文件不存在"))
-            logger.warning(f"批量刪除：文件 ID {doc_id_str} 不存在 (請求者: {user_id_for_log_str})")
+        try:
+            document_to_check = await crud_documents.get_document_by_id(db, doc_id_uuid)
+            if not document_to_check:
+                action_details.append(BatchDeleteResponseDetail(id=doc_id_uuid, status="not_found", message="文件不存在"))
+                logger.warning(f"批量刪除：文件 ID {doc_id_str} 不存在 (請求者: {user_id_for_log_str})")
+                continue
+            if document_to_check.owner_id != current_user.id:
+                action_details.append(BatchDeleteResponseDetail(id=doc_id_uuid, status="forbidden", message="無權限刪除此文件"))
+                logger.warning(f"批量刪除授權失敗：用戶 {user_id_for_log_str} 嘗試刪除不屬於自己的文件 ID {doc_id_str}")
+                continue
+            existing_document = document_to_check # Assign if checks pass
+        except Exception as e_loop:
+            logger.error(f"Error processing document {doc_id_uuid} in batch delete during ownership check: {e_loop}", exc_info=True)
+            action_details.append(BatchDeleteResponseDetail(id=doc_id_uuid, status="error", message=f"檢查文件時發生錯誤: {str(e_loop)}"))
             continue
-
-        if existing_document.owner_id != current_user.id:
-            action_details.append(BatchDeleteResponseDetail(id=doc_id_uuid, status="forbidden", message="無權限刪除此文件"))
-            logger.warning(f"批量刪除授權失敗：用戶 {user_id_for_log_str} 嘗試刪除不屬於自己的文件 ID {doc_id_str}")
+        
+        # If existing_document is still None here, it means one of the continue statements above was hit.
+        if not existing_document:
+            # This case should ideally not be reached if the logic above is correct,
+            # but as a safeguard:
+            logger.error(f"批量刪除：文件 ID {doc_id_str} 在檢查後未成功賦值，跳過。")
             continue
 
         file_path_to_delete = existing_document.file_path
         delete_error = False
 
         # 1. 從 MongoDB 刪除
-        deleted_from_db = await crud_documents.delete_document_by_id(db, doc_id_uuid)
+        # Use existing_document.id which is a UUID, same as doc_id_uuid here.
+        deleted_from_db = await crud_documents.delete_document_by_id(db, existing_document.id)
         if not deleted_from_db:
             action_details.append(BatchDeleteResponseDetail(id=doc_id_uuid, status="error", message="從數據庫刪除記錄失敗"))
             logger.error(f"批量刪除：數據庫記錄刪除失敗: {doc_id_str} (請求者: {user_id_for_log_str})")
