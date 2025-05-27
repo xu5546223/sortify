@@ -5,7 +5,7 @@ from typing import List, Optional, Dict
 import uuid
 
 from pydantic import BaseModel
-from app.db.mongodb_utils import get_db
+from app.dependencies import get_db
 from app.core.security import get_current_active_user
 from app.models.user_models import User
 from app.models.vector_models import SemanticSearchRequest, SemanticSearchResult, BatchProcessRequest
