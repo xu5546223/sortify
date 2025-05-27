@@ -1,3 +1,5 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/xu5546223/sortify)
+
 # Sortify AI Assistant
 
 智能文件分析和問答系統，基於先進的向量資料庫和大型語言模型技術。
