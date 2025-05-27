@@ -1,3 +1,4 @@
+from asyncio import Lock
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo import ASCENDING, DESCENDING # 匯入 ASCENDING 和 DESCENDING
 from ..core.config import settings
@@ -67,6 +68,7 @@ class MongoDBConnectionManager:
     client: AsyncIOMotorClient | None = None
     db: AsyncIOMotorDatabase | None = None
     is_connected: bool = False # 新增狀態標誌
+    _reconnect_lock = Lock() # 新增 Lock
 
     async def connect_to_mongo(self):
         logger.info("開始連接到 MongoDB...")
@@ -121,8 +123,14 @@ class DatabaseUnavailableError(Exception):
 
 async def get_db() -> AsyncIOMotorDatabase:
     if not db_manager.is_connected or db_manager.db is None:
-        logger.warning("get_db() 發現資料庫未連接或 db 物件為 None，嘗試重新連接...")
-        await db_manager.connect_to_mongo()
-        if not db_manager.is_connected or db_manager.db is None:
-            raise DatabaseUnavailableError("資料庫連接不可用。請檢查系統設定或服務狀態。")
+        await db_manager._reconnect_lock.acquire()
+        try:
+            # Double check the condition inside the lock to prevent race conditions
+            if not db_manager.is_connected or db_manager.db is None:
+                logger.warning("get_db() 發現資料庫未連接或 db 物件為 None，嘗試重新連接...")
+                await db_manager.connect_to_mongo()
+                if not db_manager.is_connected or db_manager.db is None:
+                    raise DatabaseUnavailableError("資料庫連接不可用。請檢查系統設定或服務狀態。")
+        finally:
+            db_manager._reconnect_lock.release()
     return db_manager.db 

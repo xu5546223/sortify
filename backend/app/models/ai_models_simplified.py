@@ -93,6 +93,35 @@ class AITextAnalysisOutput(BaseModel):
     model_used: Optional[str] = Field(None, description="實際用於分析的AI模型名稱")
     error_message: Optional[str] = Field(None, description="分析過程中的錯誤訊息")
 
+# === New Model Definitions ===
+
+class AIQueryRewriteOutput(BaseModel):
+    rewritten_queries: List[str] = Field(default_factory=list)
+    extracted_parameters: Dict[str, Any] = Field(default_factory=dict)
+    intent_analysis: str = "Intent analysis not provided"
+
+class AIGeneratedAnswerOutput(BaseModel):
+    answer_text: str = "Could not generate a valid answer."
+    # Potentially add other fields like confidence if the LLM provides it directly
+
+class AIDocumentKeyInformation(BaseModel):
+    # Define fields that are expected within key_information
+    # This is an example, adjust based on actual consistent fields
+    content_summary: Optional[str] = None
+    main_topics: List[str] = Field(default_factory=list)
+    # Add other dynamic_fields or specific known fields if they have a somewhat consistent structure
+    # For truly dynamic fields, keeping them as Dict[str, Any] might be necessary
+    dynamic_fields: Dict[str, Any] = Field(default_factory=dict) 
+    # Add other fields like 'rewritten_queries', 'extracted_parameters' if they can appear here for some reason
+
+class AIDocumentAnalysisOutputDetail(BaseModel):
+    initial_summary: Optional[str] = None
+    initial_description: Optional[str] = None # For images
+    content_type: Optional[str] = None # e.g., "text_analysis_result", "image_analysis_result"
+    key_information: Optional[AIDocumentKeyInformation] = None
+    # Add other top-level fields from the 'ai_analysis_output' dictionary if they are consistent
+    # error_message: Optional[str] = None # If errors can be part of this structured output
+
 # === 向後兼容（暫時保留，用於錯誤回退） ===
 
 # 簡化的中間分析步驟（僅用於回退）
