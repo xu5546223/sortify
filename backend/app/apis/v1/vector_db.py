@@ -328,10 +328,23 @@ async def semantic_search(
             similarity_threshold=request.similarity_threshold
         )
         
-        logger.info(f"用戶 {current_user.username} 語義搜索完成，查詢: '{request.query}', 返回 {len(results)} 個結果")
-        return results
+        # Filter results to include only documents owned by the current user
+        owned_results = []
+        if results:
+            for res in results:
+                # Ensure metadata exists and contains owner_id
+                if hasattr(res, 'metadata') and isinstance(res.metadata, dict) and \
+                   res.metadata.get('owner_id') == str(current_user.id):
+                    owned_results.append(res)
+                elif hasattr(res, 'payload') and isinstance(res.payload, dict) and \
+                     res.payload.get('owner_id') == str(current_user.id): # qdrant uses 'payload'
+                     owned_results.append(res)
+
+
+        logger.info(f"用戶 {current_user.username} 語義搜索完成，查詢: '{request.query}', 返回 {len(owned_results)} 個結果 (已過濾)")
+        return owned_results
     except ValueError as ve:
-        logger.error(f"語義搜索失敗: {ve}", exc_info=True)
+        logger.error(f"語義搜索失敗 for user {current_user.username}: {ve}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"語義搜索失敗: {str(ve)}"
@@ -350,85 +363,96 @@ async def batch_delete_documents_from_vector_db(
     logger.info(f"用戶 {current_user.username} 請求批量刪除向量，文檔IDs: {request_data.document_ids}")
     
     doc_ids_to_process_str: List[str] = request_data.document_ids
-    successfully_deleted_from_chroma_ids_str: List[str] = []
+    authorized_doc_ids_to_delete_str: List[str] = []
     successfully_updated_status_ids_str: List[str] = []
-    failed_chroma_delete_ids_str: List[str] = []
-    failed_status_update_ids_str: List[str] = []
-    errors_info: List[Dict[str,str]] = []
+    errors_info: List[Dict[str, str]] = []
+    
+    # 1. Verify ownership for each document ID
+    for doc_id_str in doc_ids_to_process_str:
+        try:
+            doc_uuid = uuid.UUID(doc_id_str)
+            document = await get_document_by_id(db, doc_uuid)
+            if not document:
+                errors_info.append({"id": doc_id_str, "error": "Document not found"})
+                logger.warning(f"Batch delete vector: Document ID {doc_id_str} not found for user {current_user.username}.")
+                continue
+            if document.owner_id != current_user.id:
+                errors_info.append({"id": doc_id_str, "error": "Forbidden"})
+                logger.warning(f"Batch delete vector: User {current_user.username} attempted to delete vector for document {doc_id_str} they do not own.")
+                continue
+            authorized_doc_ids_to_delete_str.append(doc_id_str)
+        except ValueError:
+            errors_info.append({"id": doc_id_str, "error": "Invalid document ID format"})
+            logger.warning(f"Batch delete vector: Invalid document ID format {doc_id_str} for user {current_user.username}.")
+        except Exception as e_check:
+            errors_info.append({"id": doc_id_str, "error": f"Error checking document: {str(e_check)}"})
+            logger.error(f"Batch delete vector: Error checking document {doc_id_str} for user {current_user.username}: {e_check}", exc_info=True)
 
-    # 1. 驗證ID格式並轉換為UUID (如果需要，但服務層目前接受字符串列表)
-    # 這裡假設IDs格式基本正確，服務層會處理無效ID的查找
+    if not authorized_doc_ids_to_delete_str:
+        if errors_info: # If all IDs failed validation
+             return BasicResponse(success=False, message="沒有有效的文檔ID可供處理，或無權限。", details={"errors": errors_info})
+        raise HTTPException(status_code=400, detail="沒有提供有效的文檔ID進行刪除，或無權限操作。")
 
-    # 2. 調用服務層從ChromaDB刪除
+    # 2. Call service layer to delete from ChromaDB
     vector_db_service_instance = get_vector_db_service()
+    chroma_delete_result = {"deleted_count": 0, "failed_ids": [], "errors": []} # Default structure
     try:
-        # delete_by_document_ids 服務方法應該返回哪些ID成功刪除，哪些失敗
-        # 目前它返回 deleted_count, failed_ids, errors
-        # 我們需要調整它，或者在這裡處理每個ID的刪除和狀態更新
-        # 為了更精確地更新狀態，我們這裡逐個處理或修改服務層接口
-        # 假設服務層 delete_by_document_ids 返回了成功和失敗的列表
-        
-        # 簡化：我們先調用批量刪除，然後對於那些ChromaDB認為刪除成功的，我們嘗試更新MongoDB狀態
-        # 這個服務方法本身是 async 的
-        chroma_delete_result = await vector_db_service_instance.delete_by_document_ids(doc_ids_to_process_str)
-        
-        # ChromaDB的delete_by_document_ids 返回一個字典，包含 deleted_count, failed_ids, errors
-        # 我們需要找出哪些ID被ChromaDB實際處理了（即使它沒有返回明確的成功ID列表）
-        # 如果 failed_ids 為空，則所有請求的ID都被視為在ChromaDB層面嘗試刪除 (可能成功也可能本來就不存在)
-        potential_success_ids_in_chroma_str = [
-            doc_id for doc_id in doc_ids_to_process_str 
+        if authorized_doc_ids_to_delete_str: # Only proceed if there are authorized IDs
+            chroma_delete_result = await vector_db_service_instance.delete_by_document_ids(authorized_doc_ids_to_delete_str)
+            logger.info(f"ChromaDB batch delete report for user {current_user.username}: Attempted {len(authorized_doc_ids_to_delete_str)}, Chroma reported {chroma_delete_result.get('deleted_count', 0)} deleted, {len(chroma_delete_result.get('failed_ids',[]))} failed internally in Chroma.")
+
+        # IDs considered successfully processed by Chroma (either deleted or didn't exist there)
+        processed_in_chroma_ids_str = [
+            doc_id for doc_id in authorized_doc_ids_to_delete_str 
             if doc_id not in chroma_delete_result.get("failed_ids", [])
         ]
 
-        logger.info(f"ChromaDB批量刪除報告：嘗試 {len(doc_ids_to_process_str)}，失敗 {len(chroma_delete_result.get('failed_ids',[]))}")
-        logger.info(f"將嘗試為 {len(potential_success_ids_in_chroma_str)} 個文檔更新MongoDB狀態為NOT_VECTORIZED")
-
-        for doc_id_str in potential_success_ids_in_chroma_str:
+        # 3. Update MongoDB status for documents successfully processed by Chroma
+        for doc_id_str in processed_in_chroma_ids_str:
             try:
-                doc_uuid = uuid.UUID(doc_id_str) # 用於CRUD操作
+                doc_uuid = uuid.UUID(doc_id_str)
                 updated_doc = await update_document_vector_status(
                     db, doc_uuid, VectorStatus.NOT_VECTORIZED
                 )
                 if updated_doc:
                     successfully_updated_status_ids_str.append(doc_id_str)
                 else:
-                    # 這意味著文檔在MongoDB中找不到，或者更新失敗了
-                    logger.warning(f"嘗試將文檔 {doc_id_str} 的 vector_status 更新為 NOT_VECTORIZED 時失敗（可能文檔不存在或DB錯誤）。")
-                    failed_status_update_ids_str.append(doc_id_str)
-                    errors_info.append({"id": doc_id_str, "error": "在MongoDB中更新狀態失敗"})
-            except ValueError:
-                logger.warning(f"批量刪除後更新狀態時，文檔ID {doc_id_str} 格式無效。")
-                failed_status_update_ids_str.append(doc_id_str)
-                errors_info.append({"id": doc_id_str, "error": "ID格式無效，無法更新MongoDB狀態"})
+                    logger.warning(f"Batch delete vector: Failed to update vector_status for doc {doc_id_str} (user {current_user.username}) in MongoDB (document not found or DB error).")
+                    errors_info.append({"id": doc_id_str, "error": "Failed to update MongoDB status (document not found or DB error after Chroma deletion)."})
+            except ValueError: # Should not happen if it passed initial UUID check
+                logger.error(f"Batch delete vector: Invalid UUID format {doc_id_str} during MongoDB status update (user {current_user.username}). This should have been caught earlier.")
+                errors_info.append({"id": doc_id_str, "error": "Invalid ID format during MongoDB status update."})
             except Exception as e_mongo_update:
-                logger.error(f"批量刪除後為文檔 {doc_id_str} 更新MongoDB狀態時發生意外錯誤: {e_mongo_update}", exc_info=True)
-                failed_status_update_ids_str.append(doc_id_str)
-                errors_info.append({"id": doc_id_str, "error": f"更新MongoDB狀態時意外錯誤: {str(e_mongo_update)}"})
-
-        # 結合ChromaDB的失敗和MongoDB更新的失敗
-        final_failed_ids = list(set(chroma_delete_result.get("failed_ids", []) + failed_status_update_ids_str))
+                logger.error(f"Batch delete vector: Unexpected error updating MongoDB status for doc {doc_id_str} (user {current_user.username}): {e_mongo_update}", exc_info=True)
+                errors_info.append({"id": doc_id_str, "error": f"Unexpected error updating MongoDB status: {str(e_mongo_update)}"})
         
-        if not final_failed_ids and len(successfully_updated_status_ids_str) == len(doc_ids_to_process_str):
-            logger.info(f"成功批量移除 {len(successfully_updated_status_ids_str)} 個文檔的向量並更新狀態。")
-            return BasicResponse(success=True, message=f"成功批量移除 {len(successfully_updated_status_ids_str)} 個文檔的向量並更新狀態。")
-        else:
-            success_count = len(successfully_updated_status_ids_str)
-            total_requested = len(doc_ids_to_process_str)
-            message = (
-                f"批量移除向量部分成功。總請求: {total_requested}。" 
-                f"成功更新狀態: {success_count}。"
-            )
-            if chroma_delete_result.get("failed_ids", []):
-                 message += f" ChromaDB刪除失敗: {len(chroma_delete_result.get('failed_ids',[]))}."
-            if failed_status_update_ids_str:
-                message += f" MongoDB狀態更新失敗: {len(failed_status_update_ids_str)}."
-            
-            logger.warning(message + f" 失敗ID詳情: {final_failed_ids}")
-            # 即使部分失敗，也可能返回200，但在message中註明
-            return BasicResponse(success=False, message=message, details={"failed_ids": final_failed_ids, "errors": errors_info})
+        # Compile final results
+        final_success_count = len(successfully_updated_status_ids_str)
+        total_authorized_requested = len(authorized_doc_ids_to_delete_str)
+        
+        message = (
+            f"批量向量移除完成。請求處理 {len(doc_ids_to_process_str)} 個文檔。"
+            f"其中 {total_authorized_requested} 個文檔通過權限驗證。"
+            f"成功從向量庫移除並更新狀態: {final_success_count} 個。"
+        )
+        
+        current_failed_ids = list(set(chroma_delete_result.get("failed_ids", [])))
+        for err_info in errors_info: # Add errors from initial validation or MongoDB update stage
+            if err_info["id"] not in current_failed_ids:
+                 current_failed_ids.append(err_info["id"])
 
-    except HTTPException: # 由內部邏輯（如ID格式）拋出的HTTPException
+
+        if final_success_count == total_authorized_requested and total_authorized_requested > 0 and not errors_info and not chroma_delete_result.get("failed_ids"):
+            return BasicResponse(success=True, message=message)
+        else:
+            # Add specific errors from Chroma if any
+            if chroma_delete_result.get("errors"):
+                 errors_info.extend(chroma_delete_result.get("errors"))
+            logger.warning(message + f" 詳細錯誤/跳過列表: {errors_info}")
+            return BasicResponse(success=False, message=message, details={"failed_or_skipped_ids": current_failed_ids, "errors": errors_info})
+
+    except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"批量從向量數據庫刪除文檔並更新狀態時發生頂層錯誤: {e}", exc_info=True)
+        logger.error(f"批量從向量數據庫刪除文檔時發生頂層錯誤 (user {current_user.username}): {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"批量移除向量失敗: {str(e)}") 

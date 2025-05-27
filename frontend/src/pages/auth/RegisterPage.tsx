@@ -157,7 +157,13 @@ const RegisterPage: React.FC = () => {
       <div style={styles.formContainer}>
         <h2 style={styles.title}>建立 Sortify 帳號</h2>
         <form onSubmit={handleSubmit}>
-          {error && <p style={styles.error} dangerouslySetInnerHTML={{ __html: error.replace(/\n/g, '<br />') }} />}
+          {error && (
+            <div style={styles.error}>
+              {error.split('\n').map((line, index) => (
+                <span key={index}>{line}<br/></span>
+              ))}
+            </div>
+          )}
           {successMessage && <p style={styles.success}>{successMessage}</p>}
           
           <div style={styles.inputGroup}>

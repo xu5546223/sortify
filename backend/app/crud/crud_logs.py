@@ -1,3 +1,4 @@
+import re # 新增導入 re
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from uuid import UUID
@@ -53,7 +54,7 @@ async def get_log_entries(
     if request_id:
         query["request_id"] = request_id
     if message_contains:
-        query["message"] = {"$regex": message_contains, "$options": "i"} # 不區分大小寫搜索
+        query["message"] = {"$regex": re.escape(message_contains), "$options": "i"} # 使用 re.escape
 
     time_filter = {}
     if start_time:
@@ -99,7 +100,7 @@ async def count_log_entries(
     if request_id:
         query["request_id"] = request_id
     if message_contains:
-        query["message"] = {"$regex": message_contains, "$options": "i"}
+        query["message"] = {"$regex": re.escape(message_contains), "$options": "i"} # 使用 re.escape
 
     time_filter = {}
     if start_time:
