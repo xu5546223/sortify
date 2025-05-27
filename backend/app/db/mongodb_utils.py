@@ -123,12 +123,14 @@ class DatabaseUnavailableError(Exception):
 
 async def get_db() -> AsyncIOMotorDatabase:
     if not db_manager.is_connected or db_manager.db is None:
-        # 使用 async with 語法來確保鎖總是被正確釋放，即使在發生異常時
-        async with db_manager._reconnect_lock:
+        await db_manager._reconnect_lock.acquire()
+        try:
             # Double check the condition inside the lock to prevent race conditions
             if not db_manager.is_connected or db_manager.db is None:
                 logger.warning("get_db() 發現資料庫未連接或 db 物件為 None，嘗試重新連接...")
                 await db_manager.connect_to_mongo()
                 if not db_manager.is_connected or db_manager.db is None:
                     raise DatabaseUnavailableError("資料庫連接不可用。請檢查系統設定或服務狀態。")
+        finally:
+            db_manager._reconnect_lock.release()
     return db_manager.db 

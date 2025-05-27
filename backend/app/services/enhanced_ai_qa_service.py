@@ -12,8 +12,13 @@ from app.models.vector_models import (
     SemanticSearchRequest, SemanticSearchResult, SemanticContextDocument
 )
 from app.models.ai_models_simplified import TokenUsage
-from app.models.ai_models_simplified import AITextAnalysisOutput
+from app.models.ai_models_simplified import (
+    AITextAnalysisOutput, AIQueryRewriteOutput,
+    AIDocumentAnalysisOutputDetail, AIDocumentKeyInformation,
+    AIGeneratedAnswerOutput # Added new model for answer generation
+)
 from app.crud.crud_documents import get_documents_by_ids
+from pydantic import ValidationError
 import logging
 from datetime import datetime
 
@@ -215,16 +220,36 @@ class EnhancedAIQAService:
                 extracted_params_dict = {}
                 intent_analysis_str = "意圖分析未提供" # 默認值
 
-                if isinstance(content_data, dict): # 直接處理 Query Rewrite 的字典輸出
-                    logger.info("Processing content_data as dictionary for Query Rewrite.")
-                    rewritten_queries_list = content_data.get("rewritten_queries", [original_query])
-                    if not rewritten_queries_list: # 確保列表不為空
-                        rewritten_queries_list = [original_query]
-                    extracted_params_dict = content_data.get("extracted_parameters", {})
-                    intent_analysis_str = content_data.get("intent_analysis", "意圖分析未在字典中提供")
-                
-                elif isinstance(content_data, AITextAnalysisOutput): # 處理 AITextAnalysisOutput (舊邏輯或fallback)
-                    logger.info("Processing content_data as AITextAnalysisOutput for Query Rewrite.")
+                if isinstance(content_data, dict):
+                    logger.info("Attempting to parse content_data as dict using AIQueryRewriteOutput model.")
+                    try:
+                        parsed_output = AIQueryRewriteOutput(**content_data)
+                        rewritten_queries_list = parsed_output.rewritten_queries if parsed_output.rewritten_queries else [original_query]
+                        extracted_params_dict = parsed_output.extracted_parameters if parsed_output.extracted_parameters else {}
+                        intent_analysis_str = parsed_output.intent_analysis
+                        logger.info(f"Successfully parsed AI query rewrite output using AIQueryRewriteOutput model. Intent: {intent_analysis_str[:50]}")
+                        
+                        query_rewrite_result = QueryRewriteResult(
+                            original_query=original_query,
+                            rewritten_queries=rewritten_queries_list,
+                            extracted_parameters=extracted_params_dict,
+                            intent_analysis=intent_analysis_str
+                        )
+                    except ValidationError as ve:
+                        logger.warning(f"Validation error when parsing AI query rewrite output dictionary: {ve}. Content: {content_data}")
+                        # Fallback logic
+                        query_rewrite_result = QueryRewriteResult(
+                            original_query=original_query,
+                            rewritten_queries=[original_query],
+                            extracted_parameters={},
+                            intent_analysis=f"Failed to parse AI rewrite response: {str(ve)}"
+                        )
+                        # Skip further processing in this try block for content_data, as query_rewrite_result is set
+                        return query_rewrite_result, ai_response.token_usage.total_tokens
+
+                elif isinstance(content_data, AITextAnalysisOutput): 
+                    logger.info("Processing content_data as AITextAnalysisOutput for Query Rewrite (fallback path).")
+                    # This path is now more of a fallback if the AI service returns the older model type.
                     ai_output: AITextAnalysisOutput = content_data
                     key_info = ai_output.key_information if hasattr(ai_output, 'key_information') and ai_output.key_information else None
                     
@@ -258,37 +283,37 @@ class EnhancedAIQAService:
                 else:
                     logger.warning(f"content_data is of unexpected type: {type(content_data)}. Using fallback values for rewrite result.")
                     intent_analysis_str = f"查詢重寫結果內容類型未知: {type(content_data)}"
-
+                
+                # This assignment will be skipped if the dict parsing resulted in ValidationError and returned early
                 query_rewrite_result = QueryRewriteResult(
                     original_query=original_query,
                     rewritten_queries=rewritten_queries_list if rewritten_queries_list else [original_query],
                     extracted_parameters=extracted_params_dict if extracted_params_dict else {},
                     intent_analysis=intent_analysis_str
                 )
-                
-                logger.info(f"查詢重寫成功: {len(query_rewrite_result.rewritten_queries)} 個重寫查詢, 意圖: {query_rewrite_result.intent_analysis[:50]}")
+                logger.info(f"Query rewrite processing complete. Rewritten queries: {len(query_rewrite_result.rewritten_queries)}, Intent: {query_rewrite_result.intent_analysis[:50]}")
 
-            except AttributeError as ae:
-                logger.warning(f"查詢重寫結果內容提取時發生屬性錯誤: {ae}，使用原查詢")
+            except AttributeError as ae: # This might still occur if AITextAnalysisOutput path has issues
+                logger.warning(f"Attribute error during query rewrite content processing (likely AITextAnalysisOutput path): {ae}", exc_info=True)
                 query_rewrite_result = QueryRewriteResult(
                     original_query=original_query,
                     rewritten_queries=[original_query],
                     extracted_parameters={},
                     intent_analysis=f"查詢重寫結果解析時屬性錯誤: {str(ae)}"
                 )
-            except Exception as e: # 更通用的異常捕獲
-                logger.warning(f"查詢重寫結果內容提取或構建失敗: {e}，使用原查詢")
+            except Exception as e: # Catch other unexpected errors during content processing
+                logger.warning(f"Unexpected error during query rewrite content processing: {e}", exc_info=True)
                 query_rewrite_result = QueryRewriteResult(
                     original_query=original_query,
                     rewritten_queries=[original_query],
                     extracted_parameters={},
-                    intent_analysis="查詢重寫結果解析失敗"
+                    intent_analysis=f"查詢重寫結果解析時發生未知錯誤: {str(e)}"
                 )
             
             return query_rewrite_result, ai_response.token_usage.total_tokens
             
-        except Exception as e:
-            logger.error(f"統一AI服務查詢重寫失敗: {e}")
+        except Exception as e: # Outer exception for issues with unified_ai_service_simplified.rewrite_query call itself
+            logger.error(f"Unified AI service query rewrite call failed: {e}", exc_info=True)
             # 返回原查詢作為fallback
             fallback_result = QueryRewriteResult(
                 original_query=original_query,
@@ -401,34 +426,51 @@ class EnhancedAIQAService:
                 raw_extracted_text: Optional[str] = getattr(doc, 'extracted_text', None)
                 ai_summary: Optional[str] = None
                 ai_dynamic_long_text: Optional[str] = None
+                current_summary: Optional[str] = None # Initialize current_summary for broader scope
 
                 if doc.analysis and doc.analysis.ai_analysis_output and isinstance(doc.analysis.ai_analysis_output, dict):
-                    output_dict = doc.analysis.ai_analysis_output
-                    
-                    # 嘗試獲取初步摘要 (文本或圖片)
-                    current_summary = output_dict.get('initial_summary') or output_dict.get('initial_description')
+                    try:
+                        # Attempt to parse the dictionary into AIDocumentAnalysisOutputDetail
+                        analysis_output_data = AIDocumentAnalysisOutputDetail(**doc.analysis.ai_analysis_output)
+                        logger.debug(f"Successfully parsed doc.analysis.ai_analysis_output for doc_id: {doc_id_str} using Pydantic models.")
 
-                    key_info = output_dict.get('key_information')
-                    if isinstance(key_info, dict):
-                        # 如果初步摘要不足，嘗試從 key_information 中獲取 content_summary
-                        if not current_summary or len(str(current_summary).strip()) < 50:
-                            content_summary_from_key = key_info.get('content_summary')
-                            if content_summary_from_key and len(str(content_summary_from_key).strip()) > len(str(current_summary).strip() if current_summary else ""):
-                                current_summary = content_summary_from_key
+                        # Try to get initial summary or description
+                        current_summary = analysis_output_data.initial_summary or analysis_output_data.initial_description
+
+                        if analysis_output_data.key_information:
+                            key_info_model = analysis_output_data.key_information # This is now an AIDocumentKeyInformation object
+
+                            # If initial summary is short, try content_summary from key_info
+                            if not current_summary or len(str(current_summary).strip()) < 50:
+                                content_summary_from_key = key_info_model.content_summary
+                                if content_summary_from_key and len(str(content_summary_from_key).strip()) > len(str(current_summary).strip() if current_summary else ""):
+                                    current_summary = content_summary_from_key
+                            
+                            # Try to get a long text from dynamic_fields in key_info
+                            if key_info_model.dynamic_fields:
+                                for field_name, field_value in key_info_model.dynamic_fields.items():
+                                    if isinstance(field_value, str) and len(field_value) > 200:
+                                        if not ai_dynamic_long_text or len(field_value) > len(ai_dynamic_long_text):
+                                            ai_dynamic_long_text = field_value
                         
-                        # 嘗試從 dynamic_fields 獲取更長的文本內容
-                        dynamic_fields = key_info.get('dynamic_fields')
-                        if isinstance(dynamic_fields, dict):
-                            for field_name, field_value in dynamic_fields.items():
-                                if isinstance(field_value, str) and len(field_value) > 200: # 假設長於200字符的是個好的候選
-                                    if not ai_dynamic_long_text or len(field_value) > len(ai_dynamic_long_text):
-                                        ai_dynamic_long_text = field_value # 取最長的那個動態字段值
-                    
-                    if current_summary and isinstance(current_summary, str) and current_summary.strip():
-                        ai_summary = current_summary.strip()
+                        if current_summary and isinstance(current_summary, str) and current_summary.strip():
+                            ai_summary = current_summary.strip()
 
-                # 決定最終使用的內容及其來源類型
-                # 優先級: AI 動態長文本 > 原始提取文本 > AI 摘要
+                    except ValidationError as ve:
+                        logger.warning(f"Validation error parsing doc.analysis.ai_analysis_output for doc_id {doc_id_str}: {ve}. Content: {doc.analysis.ai_analysis_output}")
+                        # Fallback: Try to extract some basic info directly if main parsing fails,
+                        # otherwise ai_summary and ai_dynamic_long_text remain None.
+                        if isinstance(doc.analysis.ai_analysis_output, dict): # Ensure it's still a dict
+                            current_summary = doc.analysis.ai_analysis_output.get('initial_summary') or doc.analysis.ai_analysis_output.get('initial_description')
+                            if current_summary and isinstance(current_summary, str) and current_summary.strip():
+                                ai_summary = current_summary.strip()
+                    except Exception as e: # Catch any other unexpected errors during this parsing
+                        logger.error(f"Unexpected error parsing doc.analysis.ai_analysis_output for doc_id {doc_id_str}: {e}. Content: {doc.analysis.ai_analysis_output}", exc_info=True)
+                        # ai_summary and ai_dynamic_long_text will remain None
+
+                # The rest of the logic for determining doc_content_to_use remains similar,
+                # using the potentially populated ai_dynamic_long_text, raw_extracted_text, ai_summary
+                # Priority: AI dynamic long text > raw extracted text > AI summary
                 if ai_dynamic_long_text:
                     doc_content_to_use = ai_dynamic_long_text
                     content_source_type = "ai_analysis_dynamic_field"
@@ -485,18 +527,31 @@ class EnhancedAIQAService:
                 return f"抱歉，無法生成答案: {error_msg}", tokens_used, 0.1, actual_contexts_for_llm
 
             answer_text: str
-            if isinstance(ai_response.content, str):
+            answer_text: str
+    
+            if isinstance(ai_response.content, dict):
+                try:
+                    parsed_answer = AIGeneratedAnswerOutput(**ai_response.content)
+                    answer_text = parsed_answer.answer_text
+                    logger.info(f"Successfully parsed AI-generated answer using AIGeneratedAnswerOutput model: {answer_text[:100]}...")
+                except ValidationError as ve:
+                    logger.warning(f"Validation error parsing AI-generated answer dictionary: {ve}. Content: {ai_response.content}")
+                    answer_text = f"AI返回的答案格式無效: {str(ve)}" # Or a more generic error
+                except Exception as e: # Catch any other unexpected errors during this parsing
+                    logger.error(f"Unexpected error parsing AI-generated answer dictionary: {e}. Content: {ai_response.content}", exc_info=True)
+                    answer_text = f"解析AI答案時發生意外錯誤。"
+
+            elif isinstance(ai_response.content, str):
                 answer_text = ai_response.content
                 logger.info(f"Successfully received answer as string from unified_ai_service: {answer_text[:100]}...")
-            # The AITextAnalysisOutput branch is now less likely for ANSWER_GENERATION,
-            # but kept for resilience or if other pathways might still produce it.
-            elif isinstance(ai_response.content, AITextAnalysisOutput):
-                logger.warning(f"Received AITextAnalysisOutput for an ANSWER_GENERATION task. Attempting to extract answer.")
+            
+            elif isinstance(ai_response.content, AITextAnalysisOutput): # Retain this if still a possible path
+                logger.warning(f"Received AITextAnalysisOutput for an ANSWER_GENERATION task. Attempting to extract answer as fallback.")
                 # Fallback logic from previous version, simplified
                 extracted_answer = None
                 if ai_response.content.key_information and isinstance(ai_response.content.key_information, dict):
                     extracted_answer = (
-                        ai_response.content.key_information.get("answer") or # Prefer direct "answer" key if present
+                        ai_response.content.key_information.get("answer") or
                         ai_response.content.key_information.get("answer_text") or
                         ai_response.content.key_information.get("generated_answer")
                     )
@@ -508,15 +563,15 @@ class EnhancedAIQAService:
                     answer_text = str(extracted_answer)
                     logger.info(f"Extracted answer from AITextAnalysisOutput fallback: {answer_text[:100]}...")
                 else:
-                    answer_text = "AI服務返回了結構化數據，但無法從中提取明確的答案文本。"
+                    answer_text = "AI服務返回了結構化數據，但無法從中提取明確的答案文本 (AITextAnalysisOutput path)。"
                     logger.warning(f"Could not extract a clear answer from AITextAnalysisOutput fallback. Content: {ai_response.content}")
-            
-            else: # ai_response.content is not str and not AITextAnalysisOutput
+                    
+            else: # ai_response.content is not dict, str, or AITextAnalysisOutput
                 answer_text = f"AI返回了非預期的答案格式: {type(ai_response.content)}"
                 logger.warning(answer_text)
 
-            # 基本的信心分數計算
-            confidence = min(0.9, 0.3 + (len(documents_for_context) * 0.1) + (0.1 if ai_response.success else -0.2))
+            # Basic confidence score calculation (can be refined)
+            confidence = min(0.9, 0.3 + (len(documents_for_context) * 0.1) + (0.1 if ai_response.success and answer_text and not answer_text.startswith("AI返回") and not answer_text.startswith("抱歉") else -0.2))
             
             logger.info(f"答案生成成功。模型: {ai_response.model_used}, Token使用: {tokens_used}")
             return answer_text, tokens_used, confidence, actual_contexts_for_llm

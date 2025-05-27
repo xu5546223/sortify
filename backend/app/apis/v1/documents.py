@@ -24,7 +24,8 @@ import json # <--- 新增 json
 from datetime import datetime
 import mimetypes # <--- 新增導入 mimetypes
 
-from ...dependencies import get_db, get_document_processing_service, get_settings, get_unified_ai_service # <--- 更新導入
+from ...db.mongodb_utils import get_db
+from ...dependencies import get_document_processing_service, get_settings, get_unified_ai_service # <--- 更新導入
 from ...models.document_models import (
     Document,
     DocumentCreate,
@@ -101,6 +102,130 @@ SUPPORTED_TEXT_TYPES_FOR_AI_PROCESSING = [
     "text/markdown" # Added markdown as it's a text format
 ]
 
+def _prepare_upload_filepath(
+    settings: Settings, 
+    current_user_id: uuid.UUID, 
+    original_filename_optional: Optional[str], 
+    content_type: Optional[str]
+) -> tuple[Path, str]:
+    """
+    Prepares the upload file path and a safe filename.
+    """
+    user_folder = Path(settings.UPLOAD_DIR) / str(current_user_id)
+    user_folder.mkdir(parents=True, exist_ok=True)
+
+    original_filename = original_filename_optional if original_filename_optional else "untitled"
+    base_name, ext = os.path.splitext(original_filename)
+    safe_base_name = secure_filename(base_name) if base_name else ""
+    
+    if ext:
+        safe_ext = ext.lower().lstrip('.')
+    else:
+        safe_ext = ""
+
+    if not safe_base_name:
+        safe_base_name = f"file_{uuid.uuid4().hex[:8]}"
+
+    guessed_ext_from_mime = mimetypes.guess_extension(content_type) if content_type else None
+    if guessed_ext_from_mime:
+        guessed_ext_from_mime = guessed_ext_from_mime.lstrip('.')
+
+    final_ext = ""
+    if safe_ext:
+        final_ext = safe_ext
+    elif guessed_ext_from_mime:
+        final_ext = guessed_ext_from_mime
+    else:
+        final_ext = "bin"
+
+    safe_filename = f"{safe_base_name}.{final_ext}"
+    file_path = user_folder / safe_filename
+    return file_path, safe_filename
+
+async def _save_uploaded_file(file: UploadFile, file_path: Path, safe_filename: str) -> int:
+    """
+    Saves the uploaded file to the specified path and returns its size.
+    Raises HTTPException if saving fails.
+    """
+    try:
+        async with aiofiles.open(file_path, 'wb') as out_file:
+            content = await file.read()  # Read file content
+            await out_file.write(content) # Write to disk
+            file_size = len(content) # Get file size
+        logger.info(f"文件 '{safe_filename}' 已保存到 '{file_path}'，大小: {file_size} bytes")
+        return file_size
+    except Exception as e:
+        logger.error(f"(_save_uploaded_file) 保存文件 '{safe_filename}' 到 '{file_path}' 失敗: {e}")
+        if file_path.exists():
+            try:
+                os.remove(str(file_path)) # Ensure file_path is string for os.remove
+                logger.info(f"(_save_uploaded_file) 已刪除部分寫入的文件: {file_path}")
+            except OSError as rm_error:
+                logger.error(f"(_save_uploaded_file) 刪除部分寫入的文件 {file_path} 失敗: {rm_error}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"無法保存文件: {safe_filename}")
+
+async def _validate_and_correct_file_type(
+    file_path: Path,
+    declared_content_type: Optional[str],
+    file_size: int,
+    safe_filename: str,
+    db: AsyncIOMotorDatabase,
+    current_user_id: uuid.UUID, # Changed from User to uuid.UUID
+    request_id: Optional[str]
+) -> tuple[Optional[str], Optional[str]]: # actual_content_type can be None if declared is None
+    """
+    Validates the file type based on its content and corrects if necessary.
+    Returns the actual content type and any warning message.
+    """
+    actual_content_type: Optional[str] = declared_content_type
+    mime_type_warning: Optional[str] = None
+    original_mime_type_for_log: Optional[str] = declared_content_type # Keep original for logging
+
+    if file_size == 0:
+        logger.warning(f"警告：上傳的文件 '{safe_filename}' 大小為 0 字節")
+        mime_type_warning = "文件大小為 0 字節，這可能不是一個有效的文件。"
+        actual_content_type = "application/octet-stream"
+    elif declared_content_type in [
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    ]:
+        try:
+            import zipfile
+            with zipfile.ZipFile(file_path, 'r') as zip_check:
+                zip_check.namelist()
+            logger.info(f"已驗證 '{safe_filename}' 是有效的 Office 文件格式 ({declared_content_type})")
+        except zipfile.BadZipFile:
+            logger.warning(f"文件 '{safe_filename}' 聲稱是 Office 格式 ({declared_content_type})，但不是有效的 ZIP 格式。")
+            actual_content_type = "application/octet-stream"
+            mime_type_warning = f"文件聲稱是 {declared_content_type}，但驗證失敗。已作為二進制文件處理。"
+            await log_event(
+                db=db,
+                level=LogLevel.WARNING,
+                message=mime_type_warning,
+                source="documents.upload.validate_file_type",
+                user_id=str(current_user_id),
+                request_id=request_id,
+                details={
+                    "filename": safe_filename,
+                    "declared_mime_type": declared_content_type,
+                    "corrected_mime_type": actual_content_type
+                }
+            )
+    elif declared_content_type == "application/pdf":
+        # Placeholder for potential PDF validation (e.g., checking PDF magic bytes or basic structure)
+        # For now, we accept it as is if declared as PDF and not 0 size.
+        pass
+    
+    # Ensure actual_content_type is a string if not None, or handle None case if declared_content_type can be None
+    # and no other condition sets it.
+    # If declared_content_type is None and file_size > 0 and not an office file, actual_content_type would still be None.
+    # This might be okay, or we might want a default like "application/octet-stream".
+    # For now, it will return None if declared_content_type was None and no specific check changed it.
+    # However, the UploadFile object usually provides a content_type.
+
+    return actual_content_type, mime_type_warning
+
 @router.post("/", response_model=Document, status_code=status.HTTP_201_CREATED, summary="上傳新文件並創建記錄")
 async def upload_document(
     request: Request, # 添加 Request 參數以獲取 request_id
@@ -119,122 +244,56 @@ async def upload_document(
     """
     logger.info(f"用戶 {current_user.email} (ID: {current_user.id}) 正在上傳文件: {file.filename}")
 
-    user_folder = Path(settings.UPLOAD_DIR) / str(current_user.id) # <--- 修改此行
-    user_folder.mkdir(parents=True, exist_ok=True)
-
-    original_filename = file.filename if file.filename else "untitled"
-    base_name, ext = os.path.splitext(original_filename)
-    safe_base_name = secure_filename(base_name) if base_name else ""
-    
-    # 嘗試從原始文件名獲取擴展名，如果沒有，則從 MIME 類型猜測
-    # secure_filename 通常會移除非 ASCII 字符，可能也會影響擴展名的點
-    # 因此，我們最好分別處理基本名稱和擴展名
-
-    # 清理原始擴展名 (去除點)
-    if ext:
-        safe_ext = ext.lower().lstrip('.')
-    else:
-        safe_ext = ""
-
-    # 如果 secure_filename 清除了基本名稱，或者原始文件名就沒有基本名稱
-    if not safe_base_name:
-        safe_base_name = f"file_{uuid.uuid4().hex[:8]}"
-
-    # 檢查 MIME 類型和擴展名是否匹配，或者是否缺少擴展名
-    guessed_ext_from_mime = mimetypes.guess_extension(file.content_type) if file.content_type else None
-    if guessed_ext_from_mime:
-        guessed_ext_from_mime = guessed_ext_from_mime.lstrip('.')
-
-    final_ext = ""
-    if safe_ext: # 如果原始文件有擴展名
-        # 可以選擇性地驗證 safe_ext 是否與 guessed_ext_from_mime 匹配或是否為已知類型
-        # 這裡我們優先使用原始擴展名（清理後），除非它看起來不對
-        final_ext = safe_ext
-        # 如果原始擴展名和MIME猜測的擴展名不一致，可能需要警告或特殊處理
-        # 例如，如果上傳 .jpg 但MIME是 png，這裡可以做決策
-        # 目前簡單化：如果原始的有，就用原始的（小寫化，去除了點）
-    elif guessed_ext_from_mime:
-        final_ext = guessed_ext_from_mime
-    else:
-        # 最後的備份，如果MIME類型未知或無法猜測擴展名
-        final_ext = "bin" # 或者 file.content_type.split('/')[-1] 如果確定 content_type 總是有值
-
-    safe_filename = f"{safe_base_name}.{final_ext}"
-
-    # 確保最終文件名仍然是安全的 (雖然各部分已經處理過，但多一層保障)
-    # 實際上，因為我們是拼接 safe_base_name 和 final_ext，這可能不需要再次調用 secure_filename
-    # safe_filename = secure_filename(safe_filename) 
-    # 註：再次調用 secure_filename 可能會把我們剛加上的點和擴展名弄亂，所以要小心
-    # 這裡我們假設 safe_base_name 和 final_ext 已經是安全的組件了。
-
-    file_path = user_folder / safe_filename
+    file_path, safe_filename = _prepare_upload_filepath(
+        settings=settings,
+        current_user_id=current_user.id,
+        original_filename_optional=file.filename,
+        content_type=file.content_type
+    )
     file_size = 0
 
     try:
-        # 使用 aiofiles 進行異步文件寫入
-        async with aiofiles.open(file_path, 'wb') as out_file:
-            content = await file.read()  # 讀取文件內容
-            await out_file.write(content) # 寫入磁盤
-            file_size = len(content) # 獲取文件大小
-        logger.info(f"文件 '{safe_filename}' 已保存到 '{file_path}'，大小: {file_size} bytes")
+        file_size = await _save_uploaded_file(file, file_path, safe_filename)
         
-        # 初始化為上傳文件的聲明內容類型
-        actual_content_type = file.content_type
-        mime_type_warning = None
-        original_mime_type = None
-        
-        # 檢查文件大小是否為 0
-        if file_size == 0:
-            logger.warning(f"警告：上傳的文件 '{safe_filename}' 大小為 0 字節")
-            mime_type_warning = "文件大小為 0 字節，這可能不是一個有效的文件。"
-            actual_content_type = "application/octet-stream" # 將空文件視為二進制文件
-        # 若文件宣稱是 Office 文件或 PDF 等格式，但實際上不是有效的格式，則進行檢查
-        elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" or \
-            file.content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" or \
-            file.content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
-            # 檢查是否是有效的 ZIP 文件（Office 文件實際上是 ZIP 格式的容器）
-            try:
-                import zipfile
-                # 同步方式直接檢查文件，因為這是驗證步驟
-                with zipfile.ZipFile(file_path, 'r') as zip_check:
-                    # 只需嘗試讀取 ZIP 內容列表，如果成功則文件有效
-                    zip_check.namelist()
-                logger.info(f"已驗證 '{safe_filename}' 是有效的 Office 文件格式")
-            except zipfile.BadZipFile:
-                logger.warning(f"文件 '{safe_filename}' 聲稱是 Office 格式，但不是有效的 ZIP 格式。MIME 類型: {file.content_type}")
-                # 不要嘗試修改 file.content_type，它是唯讀的
-                original_mime_type = file.content_type
-                actual_content_type = "application/octet-stream"
-                # 準備在之後的 document_data 中添加一個提示，以便後續處理知道文件可能不是聲稱的格式
-                mime_type_warning = f"文件聲稱是 {original_mime_type}，但驗證失敗。已作為二進制文件處理。"
-                logger.warning(mime_type_warning)
-                await log_event(
-                    db=db,
-                    level=LogLevel.WARNING,
-                    message=mime_type_warning,
-                    source="documents.upload.validate_file",
-                    user_id=str(current_user.id),
-                    request_id=request.state.request_id if hasattr(request.state, 'request_id') else None,
-                    details={"filename": safe_filename, "original_mime_type": original_mime_type, "new_mime_type": actual_content_type}
-                )
-        elif file.content_type == "application/pdf":
-            # 可選：檢查 PDF 有效性
-            pass
-    except Exception as e:
-        logger.error(f"保存文件 '{safe_filename}' 到 '{file_path}' 失敗: {e}")
-        # 考慮是否刪除部分寫入的文件
-        if file_path.exists():
-            file_path.unlink(missing_ok=True)
-        await log_event(
-            db=db, # 確保傳遞了 db session
-            level=LogLevel.ERROR,
-            message=f"保存文件 '{safe_filename}' 失敗: {str(e)}",
-            source="documents.upload.save_file",
-            user_id=str(current_user.id), # <--- 確認轉換為 str
-            request_id=request.state.request_id if hasattr(request.state, 'request_id') else None,
-            details={"filename": safe_filename, "target_path": str(file_path)}
+        request_id_for_log: Optional[str] = None
+        if hasattr(request.state, 'request_id'):
+            request_id_for_log = request.state.request_id
+        elif request.headers.get("X-Request-ID"):
+            request_id_for_log = request.headers.get("X-Request-ID")
+
+        actual_content_type, mime_type_warning = await _validate_and_correct_file_type(
+            file_path=file_path,
+            declared_content_type=file.content_type, # from UploadFile
+            file_size=file_size,
+            safe_filename=safe_filename,
+            db=db,
+            current_user_id=current_user.id, # Pass the ID
+            request_id=request_id_for_log
         )
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"無法保存文件: {safe_filename}")
+        # Store original_mime_type for metadata if a warning occurred
+        original_mime_type = file.content_type if mime_type_warning else None
+
+    except Exception as e: # This will catch HTTPException from _save_uploaded_file or other errors
+        # Log the error that occurred during the process within upload_document's try block
+        logger.error(f"(upload_document) 處理文件 '{safe_filename}' 時發生錯誤: {e}")
+
+        # Log the event of failure
+        await log_event(
+            db=db,
+            level=LogLevel.ERROR,
+            message=f"處理文件 '{safe_filename}' 時失敗: {str(e)}",
+            source="documents.upload.processing_error", # Source indicates general processing error
+            user_id=str(current_user.id),
+            request_id=request.state.request_id if hasattr(request.state, 'request_id') else None,
+            details={"filename": safe_filename, "target_path": str(file_path), "error_type": type(e).__name__, "error_detail": str(e)}
+        )
+
+        # If the exception is already an HTTPException (e.g., from _save_uploaded_file),
+        # re-raise it directly. Otherwise, wrap it in a generic 500 error.
+        if isinstance(e, HTTPException):
+            raise
+        else:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"處理文件 '{safe_filename}' 時發生意外錯誤。")
     finally:
         await file.close()
 
@@ -392,293 +451,402 @@ async def get_document_file(
         content_disposition_type=content_disposition_type
     )
 
-# 修改後的後台任務處理函數
-async def _process_document_analysis_or_extraction(
-    doc_id: str,
-    db: AsyncIOMotorDatabase, # 直接傳遞 DB 實例
-    user_id_for_log: str, # 直接傳遞用戶 ID
-    request_id_for_log: Optional[str], # 直接傳遞請求 ID
-    trigger_content_processing: bool = False,
-    ai_force_stable_model: Optional[bool] = None,
-    ai_ensure_chinese_output: Optional[bool] = True
-    # background_tasks: BackgroundTasks = None, # 不再需要，因為不會在背景任務內部再添加任務
-    # current_user: User = Depends(get_current_active_user), # 不能在背景任務中使用 Depends
-) -> None:
+async def _setup_and_validate_document_for_processing(
+    doc_id_str: str, 
+    db: AsyncIOMotorDatabase, 
+    user_id_for_log: str, 
+    request_id_for_log: Optional[str]
+) -> Optional[Document]:
     """
-    後台任務：根據文件MIME類型處理文件內容（文本提取/AI分析等）
+    Helper function to perform initial setup and validation for document processing.
+    Reloads AI config, converts doc_id to UUID, fetches document, and validates file path.
+    Returns the Document object if successful, None otherwise.
     """
-    doc_uuid: Optional[uuid.UUID] = None # Declare here for broader scope, especially for logging in final except
     try:
-        # 強制重新載入 AI 配置 - 確保從資料庫獲取最新的用戶偏好設定
         await unified_ai_config.reload_task_configs(db)
-        logger.info(f"AI配置已重新載入，全局偏好: {unified_ai_config._user_global_ai_preferences}")
-        
-        # 將字串ID轉換為UUID以確保一致性
-        try:
-            doc_uuid = uuid.UUID(doc_id)
-            logger.info(f"Background task: Converted doc_id string '{doc_id}' to UUID '{doc_uuid}'")
-        except ValueError:
-            logger.error(f"Background task: Invalid UUID string for doc_id: {doc_id}. Cannot proceed.")
-            await log_event(
-                db=db, level=LogLevel.CRITICAL, message=f"Invalid document ID format '{doc_id}' in background task, cannot update status.",
-                source="doc_processing.bg_task.id_conversion_error", 
-                user_id=user_id_for_log, # 使用傳入的 user_id
-                request_id=request_id_for_log, # 使用傳入的 request_id
-                details={"original_doc_id": str(doc_id)}
-            )
-            return
-    except Exception as e: # Handling errors from AI config reload or other initial setup issues
-        logger.error(f"處理文檔 ID {doc_id} 的後台任務時發生初始設定錯誤 (例如 AI 配置重載): {e}", exc_info=True)
+        logger.info(f"AI配置已重新載入 (task for doc_id: {doc_id_str})")
+    except Exception as e:
+        logger.error(f"後台任務初始設定錯誤 (AI 配置重載 for doc_id {doc_id_str}): {e}", exc_info=True)
+        # Not returning here, as this might not be fatal for all processing.
+        # Or, if critical, one could update status and return None. For now, just log.
+
+    doc_uuid: Optional[uuid.UUID] = None
+    try:
+        doc_uuid = uuid.UUID(doc_id_str)
+    except ValueError:
+        logger.error(f"Background task: Invalid UUID string for doc_id: {doc_id_str}. Cannot proceed.")
         await log_event(
-            db=db, level=LogLevel.CRITICAL,
-            message=f"後台任務初始設定失敗 for doc_id '{doc_id}': {str(e)}",
-            source="doc_processing.bg_task.initial_setup_error",
-            user_id=user_id_for_log,
-            request_id=request_id_for_log,
-            details={"original_doc_id": str(doc_id), "error_details": str(e)}
+            db=db, level=LogLevel.CRITICAL, message=f"Invalid document ID format '{doc_id_str}' in background task.",
+            source="doc_processing.setup.id_conversion_error", user_id=user_id_for_log, request_id=request_id_for_log,
+            details={"original_doc_id": doc_id_str}
         )
-        return
+        return None
 
-    # logger.info(f"Background task started for document ID (UUID): {doc_uuid}, Original passed ID: {doc_id}")
-    # 將此日誌移到 doc_uuid 確定有效之後
+    document_from_db = await crud_documents.get_document_by_id(db, doc_uuid)
+    if not document_from_db:
+        logger.error(f"無法獲取文檔: ID {doc_uuid}")
+        await log_event(db=db, level=LogLevel.ERROR, message=f"文件處理失敗: 文件記錄不存在 for {doc_uuid}",
+                        source="doc_processing.setup.doc_not_found", user_id=user_id_for_log, request_id=request_id_for_log)
+        return None
 
+    if not document_from_db.file_path:
+        logger.error(f"文件路徑未設定: ID {doc_uuid}")
+        await crud_documents.update_document_status(db, doc_uuid, DocumentStatus.PROCESSING_ERROR, "文件記錄缺少路徑")
+        await log_event(db=db, level=LogLevel.ERROR, message=f"文件處理失敗: 文件記錄缺少路徑 for {doc_uuid}",
+                        source="doc_processing.setup.path_missing", user_id=user_id_for_log, request_id=request_id_for_log)
+        return None
+
+    doc_path = Path(document_from_db.file_path)
+    if not doc_path.exists():
+        logger.error(f"Document file not found at path: {document_from_db.file_path} for doc ID: {doc_uuid}")
+        await crud_documents.update_document_status(db, doc_uuid, DocumentStatus.PROCESSING_ERROR, "文件未找到，無法處理")
+        await log_event(db=db, level=LogLevel.ERROR, message=f"文件處理失敗: 文件不存在 {document_from_db.file_path}",
+                        source="doc_processing.setup.file_not_found", user_id=user_id_for_log, request_id=request_id_for_log,
+                        details={"doc_id": str(doc_uuid), "path": document_from_db.file_path})
+        return None
+        
+    return document_from_db
+
+async def _process_image_document(
+    document: Document, 
+    db: AsyncIOMotorDatabase, 
+    user_id_for_log: str, 
+    request_id_for_log: Optional[str], 
+    ai_force_stable_model: Optional[bool], 
+    ai_ensure_chinese_output: Optional[bool]
+) -> tuple[Optional[Dict[str, Any]], Optional[TokenUsage], Optional[str], DocumentStatus]:
+    """
+    Helper function to process an image document for AI analysis.
+    Returns analysis data, token usage, model used, and the resulting status.
+    """
+    analysis_data_to_save: Optional[Dict[str, Any]] = None
+    token_usage_to_save: Optional[TokenUsage] = None
+    model_used_for_analysis: Optional[str] = None
+    new_status = DocumentStatus.ANALYZING # Default status if processing starts
+
+    doc_uuid = document.id
+    doc_file_path_str = str(document.file_path) if document.file_path else None
+    doc_mime_type = document.file_type
+
+    logger.info(f"Performing AI image analysis for document ID: {doc_uuid}, MIME: {doc_mime_type}")
+
+    try:
+        if not doc_file_path_str: # Should have been caught by _setup_and_validate... but double check
+            raise ValueError("File path is missing for image document.")
+
+        temp_doc_processing_service = DocumentProcessingService()
+        image_bytes = await temp_doc_processing_service.get_image_bytes(doc_file_path_str)
+        if not image_bytes:
+            logger.error(f"無法讀取圖片文件字節數據 for doc ID: {doc_uuid}")
+            new_status = DocumentStatus.PROCESSING_ERROR
+            # No specific analysis data to save, but other values are defaults
+            return analysis_data_to_save, token_usage_to_save, model_used_for_analysis, new_status
+
+        ai_response = await unified_ai_service_simplified.analyze_image(
+            image_data=image_bytes, 
+            image_mime_type=doc_mime_type, 
+            db=db,
+            force_stable=ai_force_stable_model if ai_force_stable_model is not None else True,
+            ensure_chinese_output=ai_ensure_chinese_output if ai_ensure_chinese_output is not None else True
+        )
+        
+        if not ai_response.success or not isinstance(ai_response.content, AIImageAnalysisOutput):
+            error_msg = ai_response.error_message or "AI image analysis returned unsuccessful or invalid content type."
+            logger.error(f"圖片分析失敗 for doc ID {doc_uuid}: {error_msg}")
+            new_status = DocumentStatus.ANALYSIS_FAILED # More specific than PROCESSING_ERROR for AI failure
+            # Optionally, save error message if your model supports it
+            # analysis_data_to_save = {"error": error_msg} 
+            return analysis_data_to_save, token_usage_to_save, model_used_for_analysis, new_status
+        
+        ai_image_output = ai_response.content
+        token_usage_to_save = ai_response.token_usage
+        model_used_for_analysis = ai_response.model_used
+        analysis_data_to_save = ai_image_output.model_dump()
+        
+        log_message = f"圖片 AI 分析成功完成 (doc ID: {doc_uuid})" # Will be logged by caller if needed
+        if ai_image_output.error_message or \
+           (hasattr(ai_image_output, 'content_type') and "Error" in str(ai_image_output.content_type)): # Check if content_type indicates an error
+            new_status = DocumentStatus.ANALYSIS_FAILED
+            log_message = f"圖片 AI 分析失敗或返回錯誤 (doc ID: {doc_uuid}): {ai_image_output.error_message or ai_image_output.initial_description[:100]}"
+        else:
+            new_status = DocumentStatus.ANALYSIS_COMPLETED
+        logger.info(log_message) # Log result here or let caller do it.
+
+    except ValueError as ve: # Specifically for get_image_bytes or other ValueErrors
+        logger.error(f"ValueError during image processing for doc ID {doc_uuid}: {ve}", exc_info=True)
+        new_status = DocumentStatus.PROCESSING_ERROR
+    except Exception as e:
+        logger.error(f"Unexpected error during image processing for doc ID {doc_uuid}: {e}", exc_info=True)
+        new_status = DocumentStatus.PROCESSING_ERROR
+        # analysis_data_to_save = {"error": f"Unexpected error: {str(e)}"} # Example of saving error info
+
+    return analysis_data_to_save, token_usage_to_save, model_used_for_analysis, new_status
+
+async def _process_text_document(
+    document: Document, 
+    db: AsyncIOMotorDatabase, 
+    user_id_for_log: str, 
+    request_id_for_log: Optional[str], 
+    settings_obj: Settings, 
+    ai_force_stable_model: Optional[bool], 
+    ai_ensure_chinese_output: Optional[bool]
+) -> tuple[Optional[Dict[str, Any]], Optional[TokenUsage], Optional[str], DocumentStatus]:
+    """
+    Helper function to process a text document (extraction and AI analysis).
+    Returns analysis data, token usage, model used, and the resulting status.
+    """
     analysis_data_to_save: Optional[Dict[str, Any]] = None
     token_usage_to_save: Optional[TokenUsage] = None
     model_used_for_analysis: Optional[str] = None
     new_status = DocumentStatus.ANALYZING
-    extracted_text_content: Optional[str] = None
-    processing_type = "unknown"
-    # 將 doc_uuid 的聲明提前，並在 try 塊中賦值
-    # doc_uuid: Optional[uuid.UUID] = None # 已提前
+    extracted_text_content: Optional[str] = None # Keep track of extracted text for AI input
+
+    doc_uuid = document.id
+    doc_path = Path(str(document.file_path)) if document.file_path else None
+    doc_mime_type = document.file_type
+
+    logger.info(f"Performing text extraction and AI analysis for document ID: {doc_uuid}, MIME: {doc_mime_type}")
 
     try:
-        # 在這裡重新確認 doc_uuid 是否已成功轉換，如果沒有則無法繼續
-        if doc_uuid is None: # 如果上面的 try-except 捕獲了轉換錯誤並返回，這裡不會執行
-            # 但如果上面的 try-except 結構改變，需要確保 doc_uuid 有效
-            logger.error(f"Background task: doc_uuid is None for doc_id {doc_id}, cannot proceed with processing.")
-            return # 提早退出
+        if not doc_path or not document.file_path : # file_path should be validated by caller (_setup_and_validate...)
+            logger.error(f"File path is missing for text document ID: {doc_uuid}")
+            return None, None, None, DocumentStatus.PROCESSING_ERROR # Should ideally not happen if caller validates
 
-        logger.info(f"Background task started for document ID (UUID): {doc_uuid}, Original passed ID: {doc_id}")
+        doc_processing_service_instance = get_document_processing_service()
+        extracted_text_result, extraction_status, extraction_error = \
+            await doc_processing_service_instance.extract_text_from_document(str(doc_path), doc_path.suffix)
 
-        # 獲取文檔的實際文件路徑
-        document_from_db = await crud_documents.get_document_by_id(db, doc_uuid)
-        if not document_from_db or not document_from_db.file_path:
-            logger.error(f"無法獲取文件路徑或文檔不存在於DB: ID {doc_uuid}")
-            await crud_documents.update_document_status(db, doc_uuid, DocumentStatus.PROCESSING_ERROR, "文件記錄或路徑丟失")
-            await log_event(db=db, level=LogLevel.ERROR, message=f"文件處理失敗: 文件記錄或路徑丟失 for {doc_uuid}",
-                            source="doc_processing.bg_task.path_retrieval", user_id=user_id_for_log, request_id=request_id_for_log)
-            return
+        if extraction_status == DocumentStatus.PROCESSING_ERROR or not extracted_text_result or not extracted_text_result.strip():
+            error_detail = extraction_error or "未能從文件中提取到有效文本內容"
+            logger.error(f"從文檔 {doc_uuid} ({doc_mime_type}) 提取文本時出錯或結果為空: {error_detail}", exc_info=bool(extraction_error))
+            new_status = DocumentStatus.EXTRACTION_FAILED
+            await crud_documents.update_document_status(db, doc_uuid, new_status, error_detail)
+            await log_event(
+                db=db, level=LogLevel.ERROR, message=f"文本提取失敗/結果為空: {error_detail}",
+                source="doc_processing.text_helper.extraction_error", user_id=user_id_for_log, request_id=request_id_for_log,
+                details={"doc_id": str(doc_uuid)}
+            )
+            return None, None, None, new_status
+
+        extracted_text_content = extracted_text_result
+        await crud_documents.update_document_on_extraction_success(db, doc_uuid, extracted_text_content)
+        logger.info(f"成功從 {doc_uuid} 提取 {len(extracted_text_content)} 字元的文本。開始 AI 分析...")
+
+        # Truncate text if necessary
+        max_prompt_len = settings_obj.AI_MAX_INPUT_CHARS_TEXT_ANALYSIS
+        if len(extracted_text_content) > max_prompt_len:
+            logger.warning(f"提取的文本長度 ({len(extracted_text_content)}) 超過最大允許長度 ({max_prompt_len})。將進行截斷。 Doc ID: {doc_uuid}")
+            extracted_text_content = extracted_text_content[:max_prompt_len]
+
+        ai_response = await unified_ai_service_simplified.analyze_text(
+            text_content=extracted_text_content,
+            db=db,
+            force_stable=ai_force_stable_model if ai_force_stable_model is not None else True,
+            ensure_chinese_output=ai_ensure_chinese_output if ai_ensure_chinese_output is not None else True
+        )
         
-        doc_file_path_str = document_from_db.file_path
-        doc_mime_type = document_from_db.file_type # 從數據庫獲取MIME類型
-
-        doc_path = Path(doc_file_path_str) # 使用從DB獲取的文件路徑
-        if not doc_path.exists():
-            logger.error(f"Document file not found at path: {doc_file_path_str} for doc ID: {doc_uuid}")
-            new_status = DocumentStatus.PROCESSING_ERROR
-            await crud_documents.update_document_status(
-                db=db, document_id=doc_uuid, new_status=new_status, error_details="文件未找到，無法處理"
-            )
-            await log_event(
-                db=db, level=LogLevel.ERROR, message=f"文件處理失敗: 文件不存在 {doc_file_path_str}",
-                source="doc_processing.bg_task.file_not_found", user_id=user_id_for_log, request_id=request_id_for_log,
-                details={"doc_id": str(doc_uuid), "path": doc_file_path_str}
-            )
-            return
-
-        # 使用從DB獲取的MIME類型，而不是依賴文件後綴
-        # 注意：SUPPORTED_IMAGE_TYPES_FOR_AI 之前是字典，現在需要檢查其結構或使用方法
-        # 假設 SUPPORTED_IMAGE_TYPES_FOR_AI 是一個MIME類型列表/集合
-        # 更新：SUPPORTED_IMAGE_TYPES_FOR_AI 是一個字典，鍵是後綴，值是MIME類型。
-        # 我們應該檢查 doc_mime_type 是否在該字典的值中。
-        if doc_mime_type and doc_mime_type in SUPPORTED_IMAGE_TYPES_FOR_AI.values():
-            processing_type = "image_analysis"
-            logger.info(f"Performing AI image analysis for document ID: {doc_uuid}, MIME: {doc_mime_type}")
+        if not ai_response.success or not isinstance(ai_response.content, AITextAnalysisOutput):
+            error_msg = ai_response.error_message or "AI text analysis returned unsuccessful or invalid content type."
+            logger.error(f"文本分析失敗 for doc ID {doc_uuid}: {error_msg}")
+            new_status = DocumentStatus.ANALYSIS_FAILED
+            return None, None, None, new_status # analysis_data_to_save remains None
             
-            # 獲取 DocumentProcessingService 實例 (如果尚未在頂層注入)
-            # 這裡我們假設它是可用的，或者需要調整依賴注入方式以適應背景任務
-            # 由於我們無法在背景任務中直接使用 Depends，doc_processing_service 需要被傳遞或在此處創建
-            # 暫時假設我們能在某處獲得 service 實例，或其方法是靜態/可導入的
-            # 如果 get_document_processing_service 是一個簡單的工廠函數，可以嘗試調用它
-            # 但它通常需要 settings。更安全的做法是從調用者傳遞 service 或其必要組件。
-            # 為了簡化，我們假設 get_image_bytes 可以被調用。
-            # 在實際應用中，service 的依賴需要被妥善管理。
-            temp_doc_processing_service = DocumentProcessingService() # 臨時創建實例，移除 settings 參數
-
-            image_bytes = await temp_doc_processing_service.get_image_bytes(doc_file_path_str)
-            if not image_bytes:
-                raise ValueError("無法讀取圖片文件字節數據")
-
-            ai_response = await unified_ai_service_simplified.analyze_image(
-                image_data=image_bytes, image_mime_type=doc_mime_type, db=db,
-                force_stable=ai_force_stable_model if ai_force_stable_model is not None else True,
-                ensure_chinese_output=ai_ensure_chinese_output if ai_ensure_chinese_output is not None else True
-            )
-            
-            if not ai_response.success:
-                raise ValueError(f"圖片分析失敗: {ai_response.error_message}")
-            
-            ai_image_output = ai_response.content
-            token_usage = ai_response.token_usage
-            token_usage_to_save = token_usage
-            model_used_for_analysis = ai_response.model_used
-            analysis_data_to_save = ai_image_output.model_dump()
-            log_message = f"圖片 AI 分析成功完成 (doc ID: {doc_uuid})"
-            if ai_image_output.error_message or "Error" in ai_image_output.content_type:
-                new_status = DocumentStatus.ANALYSIS_FAILED
-                log_message = f"圖片 AI 分析失敗或返回錯誤 (doc ID: {doc_uuid}): {ai_image_output.error_message or ai_image_output.initial_description[:100]}"
-            else:
-                new_status = DocumentStatus.ANALYSIS_COMPLETED
-
-        elif doc_mime_type and doc_mime_type in SUPPORTED_TEXT_TYPES_FOR_AI_PROCESSING:
-            processing_type = "text_analysis"
-            logger.info(f"Performing text extraction and AI analysis for document ID: {doc_uuid}, MIME: {doc_mime_type}")
-            extraction_status: DocumentStatus
-            extraction_error: Optional[str]
-            
-            # 獲取服務實例
-            doc_processing_service_instance = get_document_processing_service() 
-            extracted_text_result, extraction_status, extraction_error = await doc_processing_service_instance.extract_text_from_document(str(doc_path), doc_path.suffix)
-
-            if extraction_status == DocumentStatus.PROCESSING_ERROR or not extracted_text_result or not extracted_text_result.strip():
-                logger.error(f"從文檔 {doc_uuid} ({doc_mime_type}) 提取文本時出錯或結果為空: {extraction_error or '無有效文本內容'}", exc_info=bool(extraction_error))
-                new_status = DocumentStatus.EXTRACTION_FAILED
-                await crud_documents.update_document_status(
-                    db=db,
-                    document_id=doc_uuid,
-                    new_status=new_status,
-                    error_details=extraction_error or "未能從文件中提取到有效文本內容"
-                )
-                await log_event(
-                    db=db,
-                    level=LogLevel.ERROR,
-                    message=f"文本提取失敗/結果為空: {extraction_error or '無有效文本內容'}",
-                    source="doc_processing.bg_task.text_extraction",
-                    user_id=user_id_for_log,
-                    request_id=request_id_for_log,
-                    details={"doc_id": str(doc_uuid)}
-                )
-                return
-
-            extracted_text_content = extracted_text_result
-            await crud_documents.update_document_on_extraction_success(db, doc_uuid, extracted_text_content)
-            logger.info(f"成功從 {doc_uuid} 提取 {len(extracted_text_content)} 字元的文本。開始 AI 分析...")
-
-            max_prompt_len = settings.AI_MAX_INPUT_CHARS_TEXT_ANALYSIS
-            if len(extracted_text_content) > max_prompt_len:
-                logger.warning(f"提取的文本長度 ({len(extracted_text_content)}) 超過最大允許長度 ({max_prompt_len})。將進行截斷。 Doc ID: {doc_uuid}")
-                extracted_text_content = extracted_text_content[:max_prompt_len]
-
-            # 使用統一AI服務進行文本分析
-            ai_response = await unified_ai_service_simplified.analyze_text(
-                text_content=extracted_text_content,
-                db=db,
-                force_stable=ai_force_stable_model if ai_force_stable_model is not None else True,             # <--- 傳遞參數
-                ensure_chinese_output=ai_ensure_chinese_output if ai_ensure_chinese_output is not None else True  # <--- 傳遞參數
-            )
-            
-            if not ai_response.success:
-                raise ValueError(f"文本分析失敗: {ai_response.error_message}")
-            
-            ai_text_output = ai_response.content
-            token_usage = ai_response.token_usage
-            token_usage_to_save = token_usage
-            model_used_for_analysis = ai_response.model_used
-            analysis_data_to_save = ai_text_output.model_dump()
-            log_message = f"文本 AI 分析成功完成 (doc ID: {doc_uuid})"
-            if ai_text_output.error_message or "Error" in ai_text_output.content_type:
-                new_status = DocumentStatus.ANALYSIS_FAILED
-                log_message = f"文本 AI 分析失敗或返回錯誤 (doc ID: {doc_uuid}): {ai_text_output.error_message or ai_text_output.initial_summary[:100]}"
-            else:
-                new_status = DocumentStatus.ANALYSIS_COMPLETED
+        ai_text_output = ai_response.content
+        token_usage_to_save = ai_response.token_usage
+        model_used_for_analysis = ai_response.model_used
+        analysis_data_to_save = ai_text_output.model_dump()
+        
+        log_message = f"文本 AI 分析成功完成 (doc ID: {doc_uuid})"
+        if ai_text_output.error_message or \
+           (hasattr(ai_text_output, 'content_type') and "Error" in str(ai_text_output.content_type)):
+            new_status = DocumentStatus.ANALYSIS_FAILED
+            log_message = f"文本 AI 分析失敗或返回錯誤 (doc ID: {doc_uuid}): {ai_text_output.error_message or ai_text_output.initial_summary[:100]}"
         else:
-            processing_type = "unsupported"
-            logger.warning(f"Document ID: {doc_uuid} 的 MIME 類型 '{doc_mime_type}' 不支持 AI 分析。")
-            new_status = DocumentStatus.PROCESSING_ERROR
-            await crud_documents.update_document_status(
-                db=db,
-                document_id=doc_uuid, 
-                new_status=new_status,
-                error_details="不支持的文件類型進行 AI 分析"
-            )
-            await log_event(
-                db=db,
-                level=LogLevel.WARNING,
-                message=f"不支持的 AI 分析文件類型: {doc_mime_type}",
-                source="doc_processing.bg_task.unsupported_type",
-                user_id=user_id_for_log,
-                request_id=request_id_for_log,
-                details={"doc_id": str(doc_uuid), "mime_type": doc_mime_type}
-            )
-            return
+            new_status = DocumentStatus.ANALYSIS_COMPLETED
+        logger.info(log_message)
 
-        if analysis_data_to_save and token_usage_to_save and new_status in [DocumentStatus.ANALYSIS_COMPLETED, DocumentStatus.ANALYSIS_FAILED]:
+    except Exception as e:
+        logger.error(f"Unexpected error during text processing for doc ID {doc_uuid}: {e}", exc_info=True)
+        new_status = DocumentStatus.PROCESSING_ERROR
+        # analysis_data_to_save remains None
+
+    return analysis_data_to_save, token_usage_to_save, model_used_for_analysis, new_status
+
+async def _save_analysis_results(
+    document: Document, 
+    db: AsyncIOMotorDatabase, 
+    user_id_for_log: str, 
+    request_id_for_log: Optional[str], 
+    analysis_data: Optional[Dict[str, Any]], 
+    token_usage: Optional[TokenUsage], 
+    model_used: Optional[str], 
+    processing_status: DocumentStatus, 
+    processing_type: str # e.g., "image_analysis", "text_analysis", "unsupported"
+) -> None:
+    """
+    Saves the AI analysis results to the database and logs the outcome.
+    Updates document status based on the processing outcome.
+    """
+    doc_uuid = document.id
+    log_message = f"Processing for doc ID {doc_uuid} concluded with status {processing_status.value}."
+
+    try:
+        if analysis_data and token_usage and processing_status in [DocumentStatus.ANALYSIS_COMPLETED, DocumentStatus.ANALYSIS_FAILED]:
             await crud_documents.set_document_analysis(
                 db=db,
                 document_id=doc_uuid,
-                analysis_data_dict=analysis_data_to_save,
-                token_usage_dict=token_usage_to_save.model_dump(),
-                model_used_str=model_used_for_analysis,
-                analysis_status_enum=new_status,
-                analyzed_content_type_str=analysis_data_to_save.get("content_type", "Unknown")
+                analysis_data_dict=analysis_data,
+                token_usage_dict=token_usage.model_dump(),
+                model_used_str=model_used,
+                analysis_status_enum=processing_status, # This is new_status from the caller
+                analyzed_content_type_str=analysis_data.get("content_type", "Unknown")
             )
-            logger.info(log_message) # This log message uses doc_uuid
+            # Specific log message based on status was handled by callers of this function before,
+            # now we create a more generic one or pass it in.
+            # For now, using a generic one, assuming specific success/failure messages are in processing helpers.
+            if processing_status == DocumentStatus.ANALYSIS_COMPLETED:
+                log_message = f"AI {processing_type} successfully completed for doc ID {doc_uuid}."
+            else: # ANALYSIS_FAILED
+                log_message = f"AI {processing_type} failed for doc ID {doc_uuid}. Analysis data may contain error details."
+            
+            logger.info(log_message)
             await log_event(
                 db=db,
-                level=LogLevel.INFO if new_status == DocumentStatus.ANALYSIS_COMPLETED else LogLevel.ERROR,
+                level=LogLevel.INFO if processing_status == DocumentStatus.ANALYSIS_COMPLETED else LogLevel.ERROR,
                 message=log_message, 
-                source=f"doc_processing.bg_task.{processing_type}.complete",
+                source=f"doc_processing.save_results.{processing_type}.complete",
                 user_id=user_id_for_log, request_id=request_id_for_log,
-                details={"doc_id": str(doc_uuid), "status": new_status.value, "tokens": token_usage_to_save.total_tokens if token_usage_to_save else 0}
+                details={"doc_id": str(doc_uuid), "status": processing_status.value, "tokens": token_usage.total_tokens if token_usage else 0}
             )
-        elif new_status != DocumentStatus.ANALYZING and new_status not in [DocumentStatus.ANALYSIS_COMPLETED, DocumentStatus.ANALYSIS_FAILED]: # Check this condition
-            logger.info(f"Document {doc_uuid} processing concluded with status: {new_status}. No AI analysis data to save at this stage.")
-        else: # This case handles if new_status is still ANALYZING or if analysis_data/token_usage is missing when it shouldn't be.
-            logger.error(f"Document {doc_uuid} processing finished unexpectedly. Status: {new_status}. Analysis Data Present: {bool(analysis_data_to_save)}. Token Usage Present: {bool(token_usage_to_save)}. This path should ideally not be reached if status is completed/failed.")
-            if new_status == DocumentStatus.ANALYZING: 
-                new_status = DocumentStatus.PROCESSING_ERROR 
+        elif processing_status != DocumentStatus.ANALYZING: # e.g. EXTRACTION_FAILED, PROCESSING_ERROR from sub-helpers, or UNSUPPORTED
+            # This branch handles cases where processing concluded with an error before full AI analysis,
+            # or if the type was unsupported. The status might have been set by helpers, 
+            # or it's set here if it's an "unsupported" type scenario.
+            logger.info(f"Document {document.id} processing concluded with status: {processing_status.value}. No new AI analysis data saved at this stage. Ensuring status is updated.")
             await crud_documents.update_document_status(
-                db=db,
-                document_id=doc_uuid, 
-                new_status=new_status, 
-                error_details="未知的處理錯誤或狀態未最終化"
+                db, 
+                document.id, 
+                processing_status, 
+                f"Processing concluded with status: {processing_status.value}" # Or a more specific error if available and passed
             )
             await log_event(
                 db=db,
-                level=LogLevel.ERROR, 
-                message=f"未知的文檔處理錯誤或狀態問題 for doc ID: {doc_uuid}",
-                source="doc_processing.bg_task.unknown_error",
+                level=LogLevel.WARNING if processing_status not in [DocumentStatus.ANALYSIS_COMPLETED, DocumentStatus.EXTRACTION_COMPLETED] else LogLevel.INFO, # Adjust level based on status
+                message=f"Document {document.id} final status {processing_status.value} set without new AI analysis data.",
+                source=f"doc_processing.save_results.{processing_type}.status_update_only",
                 user_id=user_id_for_log,
                 request_id=request_id_for_log,
-                details={"doc_id": str(doc_uuid), "final_status_attempted": new_status.value}
+                details={"doc_id": str(document.id), "final_status": processing_status.value}
+            )
+        else: # Status is ANALYZING, but no data or token usage, or other unexpected state
+            final_status = DocumentStatus.PROCESSING_ERROR
+            error_details = "Unknown processing error or status not finalized correctly by helpers."
+            logger.error(f"Document {doc_uuid} processing finished unexpectedly. Status: {processing_status}. Analysis Data: {bool(analysis_data)}. Token Usage: {bool(token_usage)}. {error_details}")
+            await crud_documents.update_document_status(db, doc_uuid, final_status, error_details)
+            await log_event(
+                db=db, level=LogLevel.ERROR, 
+                message=f"Unknown error or state issue for doc ID {doc_uuid}: {error_details}",
+                source="doc_processing.save_results.unknown_error",
+                user_id=user_id_for_log, request_id=request_id_for_log,
+                details={"doc_id": str(doc_uuid), "attempted_status": processing_status.value, "final_status": final_status.value}
             )
     except Exception as e:
-        logging_doc_id_str = str(doc_uuid if doc_uuid is not None else doc_id) # 使用已轉換的 doc_uuid (如果成功)
-        logger.error(f"處理文檔 ID {logging_doc_id_str} 的後台任務時發生嚴重錯誤: {e}", exc_info=True)
-        
-        final_error_status = DocumentStatus.PROCESSING_ERROR
-        id_for_status_update: Optional[uuid.UUID] = doc_uuid # 使用已轉換的 doc_uuid (如果成功)
-        
-        if id_for_status_update is None and isinstance(doc_id, str): # 如果轉換失敗，嘗試再次轉換原始 doc_id
-            try: id_for_status_update = uuid.UUID(doc_id)
-            except ValueError: pass
+        logger.error(f"Error saving analysis results for doc ID {doc_uuid}: {e}", exc_info=True)
+        try:
+            await crud_documents.update_document_status(db, doc_uuid, DocumentStatus.PROCESSING_ERROR, f"Failed to save analysis results: {str(e)[:50]}")
+        except Exception as db_update_err:
+            logger.error(f"CRITICAL: Failed to update document status to error after failing to save analysis results for doc ID {doc_uuid}: {db_update_err}", exc_info=True)
+        await log_event(
+            db=db, level=LogLevel.CRITICAL, message=f"Critial error saving analysis results for doc ID {doc_uuid}: {str(e)}",
+            source="doc_processing.save_results.critical_save_failure",
+            user_id=user_id_for_log, request_id=request_id_for_log,
+            details={"doc_id": str(doc_uuid), "error": str(e)}
+        )
 
-        if id_for_status_update:
-            try:
-                await crud_documents.update_document_status(
-                    db=db, document_id=id_for_status_update, new_status=final_error_status,
-                    error_details=f"後台任務嚴重失敗: {str(e)[:100]}"
+# 修改後的後台任務處理函數
+async def _process_document_analysis_or_extraction(
+    doc_id: str, # Keep original doc_id string for the helper
+    db: AsyncIOMotorDatabase, 
+    user_id_for_log: str, 
+    request_id_for_log: Optional[str], 
+    trigger_content_processing: bool = False,
+    ai_force_stable_model: Optional[bool] = None,
+    ai_ensure_chinese_output: Optional[bool] = True
+) -> None:
+    """
+    後台任務：根據文件MIME類型處理文件內容（文本提取/AI分析等）
+    """
+    document = await _setup_and_validate_document_for_processing(
+        doc_id_str=doc_id, # Pass the original string doc_id
+        db=db,
+        user_id_for_log=user_id_for_log,
+        request_id_for_log=request_id_for_log
+    )
+
+    if document is None:
+        return # Setup and validation failed, errors already logged by helper
+
+    doc_uuid = document.id # Now a UUID
+    doc_mime_type = document.file_type
+    
+    logger.info(f"Background task starting processing for document ID (UUID): {doc_uuid}, Original passed ID: {doc_id}")
+
+    analysis_data_to_save: Optional[Dict[str, Any]] = None
+    token_usage_to_save: Optional[TokenUsage] = None
+    model_used_for_analysis: Optional[str] = None
+    # new_status will be determined by the processing helpers
+    current_processing_status = DocumentStatus.ANALYZING # Initial status before specific processing
+    processing_type = "unknown"
+    
+    try:
+        if doc_mime_type and doc_mime_type in SUPPORTED_IMAGE_TYPES_FOR_AI.values():
+            processing_type = "image_analysis"
+            analysis_data_to_save, token_usage_to_save, model_used_for_analysis, current_processing_status = \
+                await _process_image_document(
+                    document=document, db=db, user_id_for_log=user_id_for_log, request_id_for_log=request_id_for_log,
+                    ai_force_stable_model=ai_force_stable_model, ai_ensure_chinese_output=ai_ensure_chinese_output
                 )
-            except Exception as db_error_in_handler:
-                 logger.error(f"在處理嚴重錯誤後更新文檔 {id_for_status_update} 狀態時再次失敗: {db_error_in_handler}", exc_info=True)
+        elif doc_mime_type and doc_mime_type in SUPPORTED_TEXT_TYPES_FOR_AI_PROCESSING:
+            processing_type = "text_analysis"
+            analysis_data_to_save, token_usage_to_save, model_used_for_analysis, current_processing_status = \
+                await _process_text_document(
+                    document=document, db=db, user_id_for_log=user_id_for_log, request_id_for_log=request_id_for_log,
+                    settings_obj=settings, ai_force_stable_model=ai_force_stable_model, ai_ensure_chinese_output=ai_ensure_chinese_output
+                )
         else:
-            logger.error(f"CRITICAL: Could not determine a valid UUID for doc_id '{doc_id}' to update status after critical error.")
+            processing_type = "unsupported"
+            logger.warning(f"Document ID: {doc_uuid} 的 MIME 類型 '{doc_mime_type}' 不支持 AI 分析。")
+            current_processing_status = DocumentStatus.PROCESSING_ERROR # Set status before saving
+            # No specific analysis data, so pass None for data, tokens, model
+            # _save_analysis_results will handle logging and status update for unsupported type
+            # Fall through to _save_analysis_results which will handle unsupported type status update
+            
+        # Call the centralized function to save results and log events
+        await _save_analysis_results(
+            document=document, db=db, user_id_for_log=user_id_for_log, request_id_for_log=request_id_for_log,
+            analysis_data=analysis_data_to_save, 
+            token_usage=token_usage_to_save, 
+            model_used=model_used_for_analysis,
+            processing_status=current_processing_status, # Pass the determined status
+            processing_type=processing_type
+        )
+
+    except Exception as e: # Catch errors from _process_image/text_document or other unexpected issues
+        # This block is now for truly unexpected errors not caught by sub-helpers or _save_analysis_results
+        final_error_status = DocumentStatus.PROCESSING_ERROR
+        error_details = f"後台任務處理文檔 {doc_uuid} 時發生頂層嚴重錯誤: {str(e)[:100]}"
+        logger.error(error_details, exc_info=True)
+        
+        try:
+            await crud_documents.update_document_status(db, doc_uuid, final_error_status, error_details)
+        except Exception as db_error_in_handler:
+            logger.error(f"CRITICAL: 在處理頂層錯誤後更新文檔 {doc_uuid} 狀態時再次失敗: {db_error_in_handler}", exc_info=True)
 
         await log_event(
-            db=db, level=LogLevel.ERROR, message=f"文檔處理後台任務嚴重失敗 for ID '{logging_doc_id_str}': {str(e)}",
-            source=f"doc_processing.bg_task.{processing_type if processing_type != 'unknown' else 'general'}.critical_error",
+            db=db, level=LogLevel.CRITICAL, message=error_details,
+            source=f"doc_processing.bg_task.main_handler_critical_error",
             user_id=user_id_for_log, request_id=request_id_for_log,
-            details={"doc_id": logging_doc_id_str, "error": str(e)}
+            details={"doc_id": str(doc_uuid), "error": str(e)}
         )
 
 @router.patch("/{document_id}", response_model=Document, summary="更新文件信息或觸發操作")
