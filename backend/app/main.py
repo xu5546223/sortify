@@ -3,6 +3,7 @@ import logging # 新增
 from fastapi import FastAPI, Depends, HTTPException, Request # Add Request
 from fastapi.exceptions import RequestValidationError # Add RequestValidationError
 from fastapi.responses import JSONResponse # Add JSONResponse
+from fastapi import status  # 添加 status 模組導入
 from contextlib import asynccontextmanager
 from .db.mongodb_utils import db_manager # 更改為相對導入
 from .apis.v1 import api_v1_router as generic_v1_router # 引入 v1 路由並更改為相對導入, 並重命名

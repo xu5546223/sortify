@@ -2,6 +2,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.results import UpdateResult, DeleteResult
 from datetime import datetime
 from uuid import UUID
+from typing import Optional
 
 from ..models.user_models import ConnectedDevice, UserCreate, UserInDB, User, UserUpdate
 from ..core.password_utils import get_password_hash
