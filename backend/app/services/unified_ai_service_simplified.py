@@ -18,7 +18,8 @@ from app.models.ai_models_simplified import (
     AITextAnalysisOutput,
     FlexibleIntermediateAnalysis,
     FlexibleKeyInformation,
-    IntermediateAnalysisStep
+    IntermediateAnalysisStep,
+    AIGeneratedAnswerOutput # Added for ANSWER_GENERATION
 )
 from app.services.prompt_manager_simplified import prompt_manager_simplified, PromptType
 from app.services.unified_ai_config import unified_ai_config, TaskType
@@ -237,24 +238,22 @@ class UnifiedAIServiceSimplified:
                     logger.error(f"[{request.task_type}/{model_id}] Failed to parse QUERY_REWRITE output as JSON: {jde}. Falling back to raw text.")
                     model_content_for_response = generated_text # Fallback to raw text
             
-            elif request.prompt_type == PromptType.ANSWER_GENERATION: # 新增的處理分支
-                logger.info(f"[{request.task_type}/{model_id}] Parsing output for ANSWER_GENERATION as JSON containing 'answer' key.")
+            elif request.prompt_type == PromptType.ANSWER_GENERATION:
+                logger.info(f"[{request.task_type}/{model_id}] Parsing output for ANSWER_GENERATION expecting a JSON dictionary (e.g., {{'answer_text': '...'}}).")
                 try:
-                    parsed_json = json.loads(generated_text)
-                    if isinstance(parsed_json, dict) and "answer" in parsed_json:
-                        answer_str = parsed_json["answer"]
-                        if isinstance(answer_str, str):
-                            logger.info(f"[{request.task_type}/{model_id}] Successfully extracted 'answer' from JSON: {answer_str[:100]}...")
-                            model_content_for_response = answer_str # AIResponse.content 將是答案字符串
-                        else:
-                            logger.error(f"[{request.task_type}/{model_id}] 'answer' field in JSON is not a string. Type: {type(answer_str)}. Falling back to raw text.")
-                            model_content_for_response = generated_text # Fallback
+                    parsed_dict = json.loads(generated_text)
+                    if not isinstance(parsed_dict, dict):
+                        logger.error(f"[{request.task_type}/{model_id}] ANSWER_GENERATION output parsed but is not a dictionary. Type: {type(parsed_dict)}. Falling back to raw text.")
+                        model_content_for_response = generated_text # Fallback to raw text
                     else:
-                        logger.error(f"[{request.task_type}/{model_id}] Failed to find 'answer' key in parsed JSON or parsed_json is not a dict. Parsed type: {type(parsed_json)}. Falling back to raw text.")
-                        model_content_for_response = generated_text # Fallback
+                        # We expect the dictionary to conform to AIGeneratedAnswerOutput structure
+                        # For example, it should have an 'answer_text' key.
+                        # No specific key extraction here; the whole dict is the content.
+                        logger.info(f"[{request.task_type}/{model_id}] Successfully parsed ANSWER_GENERATION output as dictionary.")
+                        model_content_for_response = parsed_dict 
                 except json.JSONDecodeError as jde:
                     logger.error(f"[{request.task_type}/{model_id}] Failed to parse ANSWER_GENERATION output as JSON: {jde}. Falling back to raw text.")
-                    model_content_for_response = generated_text # Fallback
+                    model_content_for_response = generated_text # Fallback to raw text
             
             else: # 其他文本分析任務，仍使用 AITextAnalysisOutput
                 logger.info(f"[{request.task_type}/{model_id}] Parsing structured output for {request.prompt_type} with Pydantic AITextAnalysisOutput.")
