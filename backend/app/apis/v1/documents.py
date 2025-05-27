@@ -101,6 +101,130 @@ SUPPORTED_TEXT_TYPES_FOR_AI_PROCESSING = [
     "text/markdown" # Added markdown as it's a text format
 ]
 
+def _prepare_upload_filepath(
+    settings: Settings, 
+    current_user_id: uuid.UUID, 
+    original_filename_optional: Optional[str], 
+    content_type: Optional[str]
+) -> tuple[Path, str]:
+    """
+    Prepares the upload file path and a safe filename.
+    """
+    user_folder = Path(settings.UPLOAD_DIR) / str(current_user_id)
+    user_folder.mkdir(parents=True, exist_ok=True)
+
+    original_filename = original_filename_optional if original_filename_optional else "untitled"
+    base_name, ext = os.path.splitext(original_filename)
+    safe_base_name = secure_filename(base_name) if base_name else ""
+    
+    if ext:
+        safe_ext = ext.lower().lstrip('.')
+    else:
+        safe_ext = ""
+
+    if not safe_base_name:
+        safe_base_name = f"file_{uuid.uuid4().hex[:8]}"
+
+    guessed_ext_from_mime = mimetypes.guess_extension(content_type) if content_type else None
+    if guessed_ext_from_mime:
+        guessed_ext_from_mime = guessed_ext_from_mime.lstrip('.')
+
+    final_ext = ""
+    if safe_ext:
+        final_ext = safe_ext
+    elif guessed_ext_from_mime:
+        final_ext = guessed_ext_from_mime
+    else:
+        final_ext = "bin"
+
+    safe_filename = f"{safe_base_name}.{final_ext}"
+    file_path = user_folder / safe_filename
+    return file_path, safe_filename
+
+async def _save_uploaded_file(file: UploadFile, file_path: Path, safe_filename: str) -> int:
+    """
+    Saves the uploaded file to the specified path and returns its size.
+    Raises HTTPException if saving fails.
+    """
+    try:
+        async with aiofiles.open(file_path, 'wb') as out_file:
+            content = await file.read()  # Read file content
+            await out_file.write(content) # Write to disk
+            file_size = len(content) # Get file size
+        logger.info(f"文件 '{safe_filename}' 已保存到 '{file_path}'，大小: {file_size} bytes")
+        return file_size
+    except Exception as e:
+        logger.error(f"(_save_uploaded_file) 保存文件 '{safe_filename}' 到 '{file_path}' 失敗: {e}")
+        if file_path.exists():
+            try:
+                os.remove(str(file_path)) # Ensure file_path is string for os.remove
+                logger.info(f"(_save_uploaded_file) 已刪除部分寫入的文件: {file_path}")
+            except OSError as rm_error:
+                logger.error(f"(_save_uploaded_file) 刪除部分寫入的文件 {file_path} 失敗: {rm_error}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"無法保存文件: {safe_filename}")
+
+async def _validate_and_correct_file_type(
+    file_path: Path,
+    declared_content_type: Optional[str],
+    file_size: int,
+    safe_filename: str,
+    db: AsyncIOMotorDatabase,
+    current_user_id: uuid.UUID, # Changed from User to uuid.UUID
+    request_id: Optional[str]
+) -> tuple[Optional[str], Optional[str]]: # actual_content_type can be None if declared is None
+    """
+    Validates the file type based on its content and corrects if necessary.
+    Returns the actual content type and any warning message.
+    """
+    actual_content_type: Optional[str] = declared_content_type
+    mime_type_warning: Optional[str] = None
+    original_mime_type_for_log: Optional[str] = declared_content_type # Keep original for logging
+
+    if file_size == 0:
+        logger.warning(f"警告：上傳的文件 '{safe_filename}' 大小為 0 字節")
+        mime_type_warning = "文件大小為 0 字節，這可能不是一個有效的文件。"
+        actual_content_type = "application/octet-stream"
+    elif declared_content_type in [
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    ]:
+        try:
+            import zipfile
+            with zipfile.ZipFile(file_path, 'r') as zip_check:
+                zip_check.namelist()
+            logger.info(f"已驗證 '{safe_filename}' 是有效的 Office 文件格式 ({declared_content_type})")
+        except zipfile.BadZipFile:
+            logger.warning(f"文件 '{safe_filename}' 聲稱是 Office 格式 ({declared_content_type})，但不是有效的 ZIP 格式。")
+            actual_content_type = "application/octet-stream"
+            mime_type_warning = f"文件聲稱是 {declared_content_type}，但驗證失敗。已作為二進制文件處理。"
+            await log_event(
+                db=db,
+                level=LogLevel.WARNING,
+                message=mime_type_warning,
+                source="documents.upload.validate_file_type",
+                user_id=str(current_user_id),
+                request_id=request_id,
+                details={
+                    "filename": safe_filename,
+                    "declared_mime_type": declared_content_type,
+                    "corrected_mime_type": actual_content_type
+                }
+            )
+    elif declared_content_type == "application/pdf":
+        # Placeholder for potential PDF validation (e.g., checking PDF magic bytes or basic structure)
+        # For now, we accept it as is if declared as PDF and not 0 size.
+        pass
+    
+    # Ensure actual_content_type is a string if not None, or handle None case if declared_content_type can be None
+    # and no other condition sets it.
+    # If declared_content_type is None and file_size > 0 and not an office file, actual_content_type would still be None.
+    # This might be okay, or we might want a default like "application/octet-stream".
+    # For now, it will return None if declared_content_type was None and no specific check changed it.
+    # However, the UploadFile object usually provides a content_type.
+
+    return actual_content_type, mime_type_warning
+
 @router.post("/", response_model=Document, status_code=status.HTTP_201_CREATED, summary="上傳新文件並創建記錄")
 async def upload_document(
     request: Request, # 添加 Request 參數以獲取 request_id
@@ -119,122 +243,56 @@ async def upload_document(
     """
     logger.info(f"用戶 {current_user.email} (ID: {current_user.id}) 正在上傳文件: {file.filename}")
 
-    user_folder = Path(settings.UPLOAD_DIR) / str(current_user.id) # <--- 修改此行
-    user_folder.mkdir(parents=True, exist_ok=True)
-
-    original_filename = file.filename if file.filename else "untitled"
-    base_name, ext = os.path.splitext(original_filename)
-    safe_base_name = secure_filename(base_name) if base_name else ""
-    
-    # 嘗試從原始文件名獲取擴展名，如果沒有，則從 MIME 類型猜測
-    # secure_filename 通常會移除非 ASCII 字符，可能也會影響擴展名的點
-    # 因此，我們最好分別處理基本名稱和擴展名
-
-    # 清理原始擴展名 (去除點)
-    if ext:
-        safe_ext = ext.lower().lstrip('.')
-    else:
-        safe_ext = ""
-
-    # 如果 secure_filename 清除了基本名稱，或者原始文件名就沒有基本名稱
-    if not safe_base_name:
-        safe_base_name = f"file_{uuid.uuid4().hex[:8]}"
-
-    # 檢查 MIME 類型和擴展名是否匹配，或者是否缺少擴展名
-    guessed_ext_from_mime = mimetypes.guess_extension(file.content_type) if file.content_type else None
-    if guessed_ext_from_mime:
-        guessed_ext_from_mime = guessed_ext_from_mime.lstrip('.')
-
-    final_ext = ""
-    if safe_ext: # 如果原始文件有擴展名
-        # 可以選擇性地驗證 safe_ext 是否與 guessed_ext_from_mime 匹配或是否為已知類型
-        # 這裡我們優先使用原始擴展名（清理後），除非它看起來不對
-        final_ext = safe_ext
-        # 如果原始擴展名和MIME猜測的擴展名不一致，可能需要警告或特殊處理
-        # 例如，如果上傳 .jpg 但MIME是 png，這裡可以做決策
-        # 目前簡單化：如果原始的有，就用原始的（小寫化，去除了點）
-    elif guessed_ext_from_mime:
-        final_ext = guessed_ext_from_mime
-    else:
-        # 最後的備份，如果MIME類型未知或無法猜測擴展名
-        final_ext = "bin" # 或者 file.content_type.split('/')[-1] 如果確定 content_type 總是有值
-
-    safe_filename = f"{safe_base_name}.{final_ext}"
-
-    # 確保最終文件名仍然是安全的 (雖然各部分已經處理過，但多一層保障)
-    # 實際上，因為我們是拼接 safe_base_name 和 final_ext，這可能不需要再次調用 secure_filename
-    # safe_filename = secure_filename(safe_filename) 
-    # 註：再次調用 secure_filename 可能會把我們剛加上的點和擴展名弄亂，所以要小心
-    # 這裡我們假設 safe_base_name 和 final_ext 已經是安全的組件了。
-
-    file_path = user_folder / safe_filename
+    file_path, safe_filename = _prepare_upload_filepath(
+        settings=settings,
+        current_user_id=current_user.id,
+        original_filename_optional=file.filename,
+        content_type=file.content_type
+    )
     file_size = 0
 
     try:
-        # 使用 aiofiles 進行異步文件寫入
-        async with aiofiles.open(file_path, 'wb') as out_file:
-            content = await file.read()  # 讀取文件內容
-            await out_file.write(content) # 寫入磁盤
-            file_size = len(content) # 獲取文件大小
-        logger.info(f"文件 '{safe_filename}' 已保存到 '{file_path}'，大小: {file_size} bytes")
+        file_size = await _save_uploaded_file(file, file_path, safe_filename)
         
-        # 初始化為上傳文件的聲明內容類型
-        actual_content_type = file.content_type
-        mime_type_warning = None
-        original_mime_type = None
-        
-        # 檢查文件大小是否為 0
-        if file_size == 0:
-            logger.warning(f"警告：上傳的文件 '{safe_filename}' 大小為 0 字節")
-            mime_type_warning = "文件大小為 0 字節，這可能不是一個有效的文件。"
-            actual_content_type = "application/octet-stream" # 將空文件視為二進制文件
-        # 若文件宣稱是 Office 文件或 PDF 等格式，但實際上不是有效的格式，則進行檢查
-        elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" or \
-            file.content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" or \
-            file.content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
-            # 檢查是否是有效的 ZIP 文件（Office 文件實際上是 ZIP 格式的容器）
-            try:
-                import zipfile
-                # 同步方式直接檢查文件，因為這是驗證步驟
-                with zipfile.ZipFile(file_path, 'r') as zip_check:
-                    # 只需嘗試讀取 ZIP 內容列表，如果成功則文件有效
-                    zip_check.namelist()
-                logger.info(f"已驗證 '{safe_filename}' 是有效的 Office 文件格式")
-            except zipfile.BadZipFile:
-                logger.warning(f"文件 '{safe_filename}' 聲稱是 Office 格式，但不是有效的 ZIP 格式。MIME 類型: {file.content_type}")
-                # 不要嘗試修改 file.content_type，它是唯讀的
-                original_mime_type = file.content_type
-                actual_content_type = "application/octet-stream"
-                # 準備在之後的 document_data 中添加一個提示，以便後續處理知道文件可能不是聲稱的格式
-                mime_type_warning = f"文件聲稱是 {original_mime_type}，但驗證失敗。已作為二進制文件處理。"
-                logger.warning(mime_type_warning)
-                await log_event(
-                    db=db,
-                    level=LogLevel.WARNING,
-                    message=mime_type_warning,
-                    source="documents.upload.validate_file",
-                    user_id=str(current_user.id),
-                    request_id=request.state.request_id if hasattr(request.state, 'request_id') else None,
-                    details={"filename": safe_filename, "original_mime_type": original_mime_type, "new_mime_type": actual_content_type}
-                )
-        elif file.content_type == "application/pdf":
-            # 可選：檢查 PDF 有效性
-            pass
-    except Exception as e:
-        logger.error(f"保存文件 '{safe_filename}' 到 '{file_path}' 失敗: {e}")
-        # 考慮是否刪除部分寫入的文件
-        if file_path.exists():
-            file_path.unlink(missing_ok=True)
-        await log_event(
-            db=db, # 確保傳遞了 db session
-            level=LogLevel.ERROR,
-            message=f"保存文件 '{safe_filename}' 失敗: {str(e)}",
-            source="documents.upload.save_file",
-            user_id=str(current_user.id), # <--- 確認轉換為 str
-            request_id=request.state.request_id if hasattr(request.state, 'request_id') else None,
-            details={"filename": safe_filename, "target_path": str(file_path)}
+        request_id_for_log: Optional[str] = None
+        if hasattr(request.state, 'request_id'):
+            request_id_for_log = request.state.request_id
+        elif request.headers.get("X-Request-ID"):
+            request_id_for_log = request.headers.get("X-Request-ID")
+
+        actual_content_type, mime_type_warning = await _validate_and_correct_file_type(
+            file_path=file_path,
+            declared_content_type=file.content_type, # from UploadFile
+            file_size=file_size,
+            safe_filename=safe_filename,
+            db=db,
+            current_user_id=current_user.id, # Pass the ID
+            request_id=request_id_for_log
         )
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"無法保存文件: {safe_filename}")
+        # Store original_mime_type for metadata if a warning occurred
+        original_mime_type = file.content_type if mime_type_warning else None
+
+    except Exception as e: # This will catch HTTPException from _save_uploaded_file or other errors
+        # Log the error that occurred during the process within upload_document's try block
+        logger.error(f"(upload_document) 處理文件 '{safe_filename}' 時發生錯誤: {e}")
+
+        # Log the event of failure
+        await log_event(
+            db=db,
+            level=LogLevel.ERROR,
+            message=f"處理文件 '{safe_filename}' 時失敗: {str(e)}",
+            source="documents.upload.processing_error", # Source indicates general processing error
+            user_id=str(current_user.id),
+            request_id=request.state.request_id if hasattr(request.state, 'request_id') else None,
+            details={"filename": safe_filename, "target_path": str(file_path), "error_type": type(e).__name__, "error_detail": str(e)}
+        )
+
+        # If the exception is already an HTTPException (e.g., from _save_uploaded_file),
+        # re-raise it directly. Otherwise, wrap it in a generic 500 error.
+        if isinstance(e, HTTPException):
+            raise
+        else:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"處理文件 '{safe_filename}' 時發生意外錯誤。")
     finally:
         await file.close()
 
