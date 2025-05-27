@@ -48,7 +48,7 @@ class SemanticSummaryService:
                 if summary_text and len(summary_text.strip()) >= 10:
                     logger.info(f"從現有分析中成功提取摘要和標籤: {document.id}")
                     return SemanticSummary(
-                        document_id=document.id,
+                        document_id=str(document.id),
                         summary_text=summary_text,
                         file_type=document.file_type,
                         key_terms=key_terms,
@@ -70,7 +70,7 @@ class SemanticSummaryService:
                 # Fallback to simpler summary if prompt is missing
                 summary_text = self._generate_fallback_summary(document)
                 return SemanticSummary(
-                    document_id=document.id,
+                    document_id=str(document.id),
                     summary_text=summary_text,
                     file_type=document.file_type,
                     key_terms=[]
@@ -111,9 +111,9 @@ class SemanticSummaryService:
                 logger.warning(f"AI結構化摘要生成失敗: {ai_response.error_message}，使用fallback策略。文檔 ID: {document.id}")
                 summary_text = self._generate_fallback_summary(document)
                 return SemanticSummary(
-                    document_id=document.id,
-                    summary_text=summary_text,
+                    document_id=str(document.id),
                     file_type=document.file_type,
+                    summary_text=summary_text,
                     key_terms=[]
                 )
             
@@ -136,7 +136,7 @@ class SemanticSummaryService:
                     key_terms = [] # Fallback時清空AI生成的標籤
 
                 semantic_summary = SemanticSummary(
-                    document_id=document.id,
+                    document_id=str(document.id),
                     summary_text=summary_text,
                     file_type=document.file_type, # 保留原始文件類型
                     key_terms=key_terms,
@@ -151,7 +151,7 @@ class SemanticSummaryService:
                 logger.error(f"解析AI結構化摘要回應失敗: {e}。AI原始回應片段: {str(ai_response.content)[:500]}... 使用fallback策略。文檔 ID: {document.id}", exc_info=True)
                 summary_text = self._generate_fallback_summary(document)
                 return SemanticSummary(
-                    document_id=document.id,
+                    document_id=str(document.id),
                     summary_text=summary_text,
                     file_type=document.file_type,
                     key_terms=[]
@@ -161,7 +161,7 @@ class SemanticSummaryService:
             logger.error(f"生成語義摘要 (彈性模式) 失敗: {e}，文檔 ID: {document.id}", exc_info=True)
             summary_text = self._generate_fallback_summary(document)
             return SemanticSummary(
-                document_id=document.id,
+                document_id=str(document.id),
                 summary_text=summary_text,
                 file_type=document.file_type,
                 key_terms=[]
@@ -213,8 +213,12 @@ class SemanticSummaryService:
         5. 存儲到向量資料庫
         6. 更新文檔狀態 (VECTORIZED 或 FAILED)
         """
-        doc_id_str = document.id # Assuming document.id is already a string, if not, str(document.id)
-        doc_id_uuid = uuid.UUID(doc_id_str) # For crud operations
+        # doc_id_str = document.id # Assuming document.id is already a string, if not, str(document.id)
+        # doc_id_uuid = uuid.UUID(doc_id_str) # For crud operations
+
+        # 修正UUID處理：document.id 是 uuid.UUID 對象
+        doc_id_uuid: uuid.UUID = document.id 
+        doc_id_str: str = str(document.id)
 
         try:
             logger.info(f"開始處理文檔 {doc_id_str} 以添加到向量資料庫")

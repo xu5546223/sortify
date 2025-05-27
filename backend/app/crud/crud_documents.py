@@ -76,30 +76,39 @@ async def create_document(
 
 async def get_document_by_id(db: AsyncIOMotorDatabase, document_id: uuid.UUID) -> Optional[Document]:
     """按 ID 檢索文件。"""
+    logger.info(f"[get_document_by_id] Attempting to find document with input UUID: {document_id}")
     document_raw = await db[DOCUMENT_COLLECTION].find_one({"_id": document_id})
     if document_raw:
+        actual_id_in_db = document_raw.get('_id')
+        logger.info(f"[get_document_by_id] Found document using UUID object. _id in DB: {actual_id_in_db} (type: {type(actual_id_in_db)})")
         try:
             doc = Document(**document_raw)
             return doc
         except Exception as e: # Catches Pydantic ValidationError and other potential errors
-            logger.error(f"Error validating document data for ID {document_id} in get_document_by_id: {e}", exc_info=True)
+            logger.error(f"[get_document_by_id] Error validating document data (found by UUID) for ID {document_id}: {e}", exc_info=True)
             return None
     else:
+        logger.warning(f"[get_document_by_id] Document not found using input UUID {document_id}. Attempting with string ID.")
         # Fallback for string ID check (existing logic, ensure it's also safe or updated if needed)
         try:
             # Attempt to find by string version of the UUID, in case it was stored/passed incorrectly
             document_id_str = str(document_id)
+            logger.info(f"[get_document_by_id] Attempting to find document with string ID: {document_id_str}")
             document_raw_str_check = await db[DOCUMENT_COLLECTION].find_one({"_id": document_id_str})
             if document_raw_str_check:
+                actual_id_in_db_str = document_raw_str_check.get('_id')
+                logger.info(f"[get_document_by_id] Found document using string ID. _id in DB: {actual_id_in_db_str} (type: {type(actual_id_in_db_str)})")
                 try:
                     doc_str = Document(**document_raw_str_check)
-                    logger.info(f"Document with ID {document_id_str} (originally queried as UUID {document_id}) found using string fallback.")
+                    logger.info(f"[get_document_by_id] Document with ID {document_id_str} (originally queried as UUID {document_id}) found using string fallback.")
                     return doc_str
                 except Exception as e_str:
-                    logger.error(f"Error validating document data for string ID {document_id_str} in get_document_by_id (fallback for {document_id}): {e_str}", exc_info=True)
+                    logger.error(f"[get_document_by_id] Error validating document data (found by string) for string ID {document_id_str} (fallback for {document_id}): {e_str}", exc_info=True)
                     return None
+            else:
+                logger.warning(f"[get_document_by_id] Document not found using string ID {document_id_str} either.")
         except Exception as fallback_err: # Catch errors during the fallback find_one itself
-            logger.error(f"Error during string ID fallback find_one for {document_id_str} (originally {document_id}) in get_document_by_id: {fallback_err}", exc_info=True)
+            logger.error(f"[get_document_by_id] Error during string ID fallback find_one for {document_id_str} (originally {document_id}): {fallback_err}", exc_info=True)
             # pass # Or return None, depending on desired behavior for find_one error
         return None
 
@@ -176,10 +185,23 @@ async def update_document(
 
 async def delete_document_by_id(db: AsyncIOMotorDatabase, document_id: uuid.UUID) -> bool:
     """按 ID 刪除文件記錄。"""
+    logger.info(f"Attempting to delete document with UUID: {document_id} (type: {type(document_id)}))")
     # 注意：這裡只刪除資料庫記錄，實際的文件刪除需要在服務層處理
     result = await db[DOCUMENT_COLLECTION].delete_one({"_id": document_id})
     if result.deleted_count == 1:
+        logger.info(f"Successfully deleted document with UUID: {document_id}")
         return True
+    
+    # 如果使用 UUID 對象刪除失敗，嘗試使用其字符串表示形式
+    logger.warning(f"Failed to delete document with UUID: {document_id}. Delete result: {result.raw_result}. Attempting with string ID.")
+    document_id_str = str(document_id)
+    logger.info(f"Attempting to delete document with string ID: {document_id_str} (type: {type(document_id_str)}))")
+    result_str = await db[DOCUMENT_COLLECTION].delete_one({"_id": document_id_str})
+    if result_str.deleted_count == 1:
+        logger.info(f"Successfully deleted document with string ID: {document_id_str} (original UUID: {document_id})")
+        return True
+    
+    logger.error(f"Failed to delete document with UUID {document_id} and string ID {document_id_str}. Last delete result: {result_str.raw_result}")
     return False
 
 async def get_documents_by_ids(

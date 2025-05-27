@@ -104,22 +104,34 @@ class EnhancedAIQAService:
             # 過濾用戶有權限訪問的文檔
             if user_id:
                 try:
-                    user_uuid = uuid.UUID(user_id)
+                    # user_uuid = uuid.UUID(user_id)
+                    # 修正 user_uuid 的獲取方式
+                    if isinstance(user_id, uuid.UUID):
+                        user_uuid = user_id
+                    elif isinstance(user_id, str):
+                        user_uuid = uuid.UUID(user_id)
+                    else:
+                        # 如果 user_id 不是 UUID 也不是 str，記錄錯誤並可能跳過權限檢查或拋出配置錯誤
+                        logger.error(f"無法識別的 user_id 類型: {type(user_id)}，值: {user_id}. 無法執行權限檢查。")
+                        full_documents = [] # 或者根據策略決定是否拋出異常
+                        # raise TypeError(f"Invalid user_id type: {type(user_id)}") 
+
                     accessible_documents = []
-                    for doc in full_documents:
-                        # Ensure doc.owner_id is also a UUID object for comparison
-                        # (It should be if retrieved from DB correctly and model types are right)
-                        if hasattr(doc, 'owner_id') and isinstance(doc.owner_id, uuid.UUID) and doc.owner_id == user_uuid:
-                            accessible_documents.append(doc)
-                        else:
-                            # Log if owner_id is not a UUID for debugging data issues
-                            if hasattr(doc, 'owner_id') and not isinstance(doc.owner_id, uuid.UUID):
-                                logger.warning(f"Document ID {doc.id} has owner_id of type {type(doc.owner_id)}, expected UUID.")
-                            logger.debug(f"用戶 {user_id} (UUID: {user_uuid}) 無權訪問文檔 {doc.id} (Owner: {doc.owner_id})")
-                    full_documents = accessible_documents
-                except ValueError:
-                    logger.error(f"無效的 user_id 格式: {user_id}，無法執行權限過濾。")
-                    full_documents = [] # Treat as no accessible documents if user_id is invalid
+                    if full_documents: # 確保 full_documents 不是 None 或空列表
+                        for doc in full_documents:
+                            # Ensure doc.owner_id is also a UUID object for comparison
+                            # (It should be if retrieved from DB correctly and model types are right)
+                            if hasattr(doc, 'owner_id') and isinstance(doc.owner_id, uuid.UUID) and doc.owner_id == user_uuid:
+                                accessible_documents.append(doc)
+                            else:
+                                # Log if owner_id is not a UUID for debugging data issues
+                                if hasattr(doc, 'owner_id') and not isinstance(doc.owner_id, uuid.UUID):
+                                    logger.warning(f"Document ID {getattr(doc, 'id', 'N/A')} has owner_id of type {type(doc.owner_id)}, expected UUID.")
+                                logger.debug(f"用戶 {user_id} (UUID: {user_uuid if 'user_uuid' in locals() else 'N/A'}) 無權訪問文檔 {getattr(doc, 'id', 'N/A')} (Owner: {getattr(doc, 'owner_id', 'N/A')})")
+                        full_documents = accessible_documents
+                except ValueError as e_uuid:
+                    logger.error(f"無效的 user_id 格式: {user_id} (錯誤: {e_uuid})，無法執行權限過濾。")
+                    full_documents = [] # Treat as no accessible documents if user_id is invalid string
             
             if not full_documents:
                 logger.warning("用戶無權限訪問相關文檔或獲取文檔內容失敗")
@@ -146,14 +158,14 @@ class EnhancedAIQAService:
             
             return AIQAResponse(
                 answer=answer,
-                source_documents=[doc.id for doc in full_documents],
+                source_documents=[str(doc.id) for doc in full_documents],
                 confidence_score=confidence,
                 tokens_used=total_tokens,
                 processing_time=processing_time,
                 query_rewrite_result=query_rewrite_result,
                 semantic_search_contexts=semantic_contexts_for_response, # 傳遞
                 session_id=request.session_id,
-                actual_context_used_for_llm=actual_contexts_for_llm
+                llm_context_documents=actual_contexts_for_llm
             )
             
         except Exception as e:

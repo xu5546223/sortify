@@ -806,9 +806,13 @@ async def update_document_details(
     if updated_document: # If fields were updated
         return updated_document
     elif doc_update.trigger_content_processing: # If only trigger was processed and no other fields
+        # Fetch the document again to reflect its current state (e.g., status might have changed to ANALYZING)
         doc_after_trigger = await crud_documents.get_document_by_id(db, document_id)
-        if doc_after_trigger: return doc_after_trigger
-        return existing_document # Fallback
+        if doc_after_trigger: 
+            return doc_after_trigger
+        # If somehow the document is not found after triggering, it's an issue
+        logger.error(f"Document {document_id} not found after triggering processing, though it existed before.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"文件 {document_id} 在觸發處理後未找到。")
     else: # No updates and no trigger
         return existing_document
 
@@ -840,6 +844,7 @@ async def delete_document_route(
 
     file_path_to_delete = existing_document.file_path
 
+    logger.info(f"[delete_document_route] Preparing to delete document. existing_document.id: {existing_document.id} (type: {type(existing_document.id)})")
     deleted_from_db = await crud_documents.delete_document_by_id(db, existing_document.id)
     
     if not deleted_from_db:
@@ -852,6 +857,43 @@ async def delete_document_route(
             details={"document_id": str(document_id), "file_path": file_path_to_delete}
         )
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="刪除文件記錄時發生錯誤")
+
+    # 從向量數據庫中刪除向量化數據
+    try:
+        document_id_str = str(document_id)
+        logger.info(f"嘗試從向量數據庫刪除文檔 {document_id_str} 的向量...")
+        vector_delete_success = vector_db_service.delete_by_document_id(document_id_str)
+        if vector_delete_success:
+            logger.info(f"成功從向量數據庫刪除文檔 {document_id_str} 的向量")
+            await log_event(
+                db=db, level=LogLevel.INFO, 
+                message=f"向量數據已成功刪除: 文檔 {document_id_str} (user {user_id_for_log_str})",
+                source="documents_api_delete_vector", 
+                user_id=user_id_for_log_str, 
+                request_id=request_id_for_log, 
+                details={"document_id": document_id_str}
+            )
+        else:
+            logger.warning(f"從向量數據庫刪除文檔 {document_id_str} 的向量時可能遇到問題")
+            await log_event(
+                db=db, level=LogLevel.WARNING, 
+                message=f"向量數據刪除可能不完整: 文檔 {document_id_str} (user {user_id_for_log_str})",
+                source="documents_api_delete_vector_warning", 
+                user_id=user_id_for_log_str, 
+                request_id=request_id_for_log, 
+                details={"document_id": document_id_str}
+            )
+    except Exception as e:
+        logger.error(f"從向量數據庫刪除文檔 {document_id} 的向量時發生錯誤: {e}")
+        await log_event(
+            db=db, level=LogLevel.ERROR, 
+            message=f"向量數據刪除失敗: 文檔 {document_id} 錯誤: {str(e)} (user {user_id_for_log_str})",
+            source="documents_api_delete_vector_error", 
+            user_id=user_id_for_log_str, 
+            request_id=request_id_for_log, 
+            details={"document_id": str(document_id), "error": str(e)}
+        )
+        # 不會因為向量刪除失敗而中斷整個刪除流程，只記錄錯誤
 
     if file_path_to_delete and os.path.exists(file_path_to_delete):
         try:
@@ -977,13 +1019,30 @@ async def batch_delete_documents_route(
             delete_vector_success = vector_db_service.delete_by_document_id(doc_id_str)
             if delete_vector_success:
                 logger.info(f"批量刪除：成功從向量數據庫移除文檔 {doc_id_str} 的向量。")
+                # 在這裡添加日誌，記錄每個成功刪除的向量
+                await log_event(
+                    db=db, level=LogLevel.INFO, 
+                    message=f"批量刪除：成功從向量數據庫移除文檔 {doc_id_str} 的向量 (user {user_id_for_log_str})",
+                    source="batch_delete_documents_vector_success", 
+                    user_id=user_id_for_log_str, 
+                    request_id=None, # 批量操作可能沒有明確的 request_id
+                    details={"document_id": doc_id_str}
+                )
             else:
                 # 這可能意味著刪除操作在ChromaDB內部失敗，或者文檔本來就不在裡面
                 # delete_by_document_id 目前的實現是如果未找到也返回 True
                 logger.info(f"批量刪除：從向量數據庫移除文檔 {doc_id_str} 的向量（可能本來就不存在或操作未成功）。")
         except Exception as e_vector:
             logger.error(f"批量刪除：從向量數據庫移除文檔 {doc_id_str} 的向量時發生錯誤: {e_vector}")
-            # 記錄錯誤，但不一定將其視為此文件刪除操作的完全失敗
+            # 記錄向量刪除錯誤，但不將其視為整個文件刪除操作的失敗
+            await log_event(
+                db=db, level=LogLevel.ERROR, 
+                message=f"批量刪除：從向量數據庫移除文檔 {doc_id_str} 的向量時發生錯誤: {str(e_vector)} (user {user_id_for_log_str})",
+                source="batch_delete_documents_vector_error", 
+                user_id=user_id_for_log_str, 
+                request_id=None, 
+                details={"document_id": doc_id_str, "error": str(e_vector)}
+            )
 
         if not delete_error: # 如果核心的DB刪除成功了
             success_count += 1

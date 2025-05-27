@@ -48,7 +48,7 @@ class DocumentAnalysis(BaseModel):
     analysis_model_used: Optional[str] = Field(None, description="用於本次分析的AI模型")
 
 class DocumentInDBBase(DocumentBase):
-    id: str = Field(description="文件唯一ID (字符串形式)")
+    id: uuid.UUID = Field(description="文件唯一ID")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="文件記錄創建時間")
     updated_at: datetime = Field(default_factory=datetime.utcnow, description="文件記錄最後更新時間")
     
@@ -72,37 +72,36 @@ class DocumentInDBBase(DocumentBase):
         underscore_id = values.pop("_id", None)
         object_id = values.pop("id", None)
 
-        if underscore_id:
-            if isinstance(underscore_id, uuid.UUID):
-                values["id"] = str(underscore_id)
-            elif isinstance(underscore_id, str):
-                 values["id"] = underscore_id
-            else:
-                values["id"] = str(underscore_id)
-        elif object_id:
-            if isinstance(object_id, uuid.UUID):
-                values["id"] = str(object_id)
-            elif isinstance(object_id, str):
-                values["id"] = object_id
-            else:
-                values["id"] = str(object_id)
+        target_id_value = None
+        if underscore_id is not None:
+            target_id_value = underscore_id
+        elif object_id is not None:
+            target_id_value = object_id
         
-        if values.get("id") is None:
-            # 如果沒有 _id 或 id，Pydantic 在後續驗證中可能會根據是否有 default_factory 來處理
-            # 但對於 id 欄位，我們期望它總是被填充
-            pass # 或 raise ValueError("ID field is missing and could not be derived.")
+        if target_id_value is not None:
+            if isinstance(target_id_value, uuid.UUID):
+                values["id"] = target_id_value
+            elif isinstance(target_id_value, str):
+                try:
+                    values["id"] = uuid.UUID(target_id_value)
+                except ValueError:
+                    raise ValueError(f"ID field '{target_id_value}' is a string but not a valid UUID.")
+            else:
+                try:
+                    values["id"] = uuid.UUID(str(target_id_value))
+                except ValueError:
+                    raise ValueError(f"ID field '{target_id_value}' (type: {type(target_id_value)}) could not be converted to UUID.")
+        
+        if values.get("id") is None and underscore_id is None and object_id is None:
+            pass
         return values
 
     class Config:
         populate_by_name = True
         json_encoders = {
             datetime: lambda v: v.isoformat(),
-            uuid.UUID: lambda v: str(v) # 確保 UUID 也被正確序列化
+            uuid.UUID: lambda v: str(v)
         }
-        # Pydantic v2
-        # from pydantic import ConfigDict
-        # model_config = ConfigDict(populate_by_name=True, json_encoders={datetime: lambda v: v.isoformat(), uuid.UUID: lambda v: str(v)})
-
 
 class Document(DocumentInDBBase):
     """用於API響應的模型"""

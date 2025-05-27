@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // 從環境變數讀取 API 基礎 URL，若無則使用預設值
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '';
+const API_BASE_URL = process.env.REACT_APP_API_URL || '';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
