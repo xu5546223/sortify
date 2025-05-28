@@ -98,8 +98,8 @@ if not os.path.exists(settings.UPLOAD_DIR):
 SUPPORTED_TEXT_TYPES_FOR_AI_PROCESSING = [
     "text/plain",
     "application/pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "text/markdown" # Added markdown as it's a text format
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document", # .docx
+    "text/markdown"
 ]
 
 def _prepare_upload_filepath(
@@ -731,7 +731,7 @@ async def _save_analysis_results(
             )
             await log_event(
                 db=db,
-                level=LogLevel.WARNING if processing_status not in [DocumentStatus.ANALYSIS_COMPLETED, DocumentStatus.EXTRACTION_COMPLETED] else LogLevel.INFO, # Adjust level based on status
+                level=LogLevel.WARNING if processing_status not in [DocumentStatus.ANALYSIS_COMPLETED, DocumentStatus.TEXT_EXTRACTED] else LogLevel.INFO, # Adjust level based on status
                 message=f"Document {document.id} final status {processing_status.value} set without new AI analysis data.",
                 source=f"doc_processing.save_results.{processing_type}.status_update_only",
                 user_id=user_id_for_log,

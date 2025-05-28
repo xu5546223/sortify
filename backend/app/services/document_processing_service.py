@@ -8,7 +8,6 @@ from typing import Optional, Tuple
 
 import fitz  # PyMuPDF
 from docx import Document as DocxDocument
-# from markdownify import markdownify as md # No longer converting to Markdown here
 
 from ..models.document_models import DocumentStatus
 

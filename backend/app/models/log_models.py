@@ -15,6 +15,7 @@ class LogLevel(str, Enum):
     WARNING = "WARNING"
     ERROR = "ERROR"
     DEBUG = "DEBUG"
+    CRITICAL = "CRITICAL"
 
 class LogEntryBase(BaseModel):
     timestamp: datetime = Field(default_factory=utc_now)  # Use UTC time
