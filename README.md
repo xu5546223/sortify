@@ -1,3 +1,5 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/xu5546223/sortify)
+
 # Sortify AI Assistant / Sortify AI 智能助手
 
 [English](#english-version) | [中文](#chinese-version)
