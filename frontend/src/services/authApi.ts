@@ -1,4 +1,4 @@
-import apiClient from './api';
+import { apiClient } from './apiClient';
 
 // --- 介面定義 (根據 frontend_data_types.md) ---
 

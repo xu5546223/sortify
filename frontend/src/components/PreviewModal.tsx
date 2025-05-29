@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Card, Button, Input } from '.'; // Added Input for page number
-import { Document as DocumentType } from '../services/api'; // Renamed to avoid conflict with react-pdf Document
-import apiClient from '../services/api';
+import type { Document as DocumentType } from '../types/apiTypes'; // Renamed to avoid conflict with react-pdf Document
+import { apiClient } from '../services/apiClient';
 import { Document, Page, pdfjs } from 'react-pdf'; // react-pdf components
 import { formatBytes } from '../utils/documentUtils'; // 添加 formatBytes 導入
 

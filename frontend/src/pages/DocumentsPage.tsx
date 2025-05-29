@@ -15,17 +15,19 @@ import {
   UploadAndFilterControls
 } from '../components';
 import { HeaderConfig } from '../components/Table';
-import { 
-  Document, 
-  getDocuments, 
-  deleteDocuments, 
-  uploadDocument, 
-  DocumentStatus, 
+import type {
+  Document,
+  DocumentStatus,
+  TriggerDocumentProcessingOptions
+} from '../types/apiTypes';
+import {
+  getDocuments,
+  deleteDocuments,
+  uploadDocument,
   triggerDocumentProcessing,
   getDocumentsByIds,
-  TriggerDocumentProcessingOptions,
   deleteDocument
-} from '../services/api';
+} from '../services/documentService';
 import { formatBytes, formatDate, mapMimeTypeToSimpleType, canPreview } from '../utils/documentUtils';
 import PreviewModal from '../components/PreviewModal';
 import { SettingsContext, SettingsContextType } from '../contexts/SettingsContext';

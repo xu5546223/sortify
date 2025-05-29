@@ -9,12 +9,12 @@ import {
   CheckCircleOutlined,
   LoadingOutlined
 } from '@ant-design/icons';
-import { 
-  getEmbeddingModelConfig, 
-  loadEmbeddingModel, 
-  configureEmbeddingModel,
-  EmbeddingModelConfig
-} from '../services/api';
+import type { EmbeddingModelConfig } from '../types/apiTypes';
+import {
+  getEmbeddingModelConfig,
+  loadEmbeddingModel,
+  configureEmbeddingModel
+} from '../services/embeddingService';
 
 const { Title, Text, Paragraph } = Typography;
 

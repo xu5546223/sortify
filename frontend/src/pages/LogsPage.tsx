@@ -10,7 +10,8 @@ import {
   TableCell
 } from '../components';
 import { HeaderConfig } from '../components/Table';
-import { getLogs, LogEntry, LogLevel } from '../services/api';
+import type { LogEntry, LogLevel } from '../types/apiTypes';
+import { getLogs } from '../services/logService';
 
 interface LogsPageProps {
   showPCMessage: (message: string, type?: 'success' | 'error' | 'info') => void;

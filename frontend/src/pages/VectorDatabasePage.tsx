@@ -44,10 +44,14 @@ import {
   DesktopOutlined,
   EyeOutlined
 } from '@ant-design/icons';
-import {
+import type {
   VectorDatabaseStats,
   DatabaseConnectionStatus,
   BatchProcessDocumentsRequest,
+  Document,
+  BasicResponse
+} from '../types/apiTypes';
+import {
   getVectorDatabaseStats,
   getDatabaseConnectionStatus,
   batchProcessDocuments,
@@ -55,11 +59,11 @@ import {
   processDocumentToVector,
   deleteDocumentFromVectorDB,
   deleteDocumentsFromVectorDB,
+} from '../services/vectorDBService';
+import {
   getDocuments,
   getDocumentById,
-  Document,
-  BasicResponse
-} from '../services/api';
+} from '../services/documentService';
 import ModelConfigCard from '../components/ModelConfigCard';
 import SemanticSearchInterface from '../components/SemanticSearchInterface';
 

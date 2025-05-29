@@ -1,17 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { PageHeader, Card, Input, Button, ToggleSwitch, Select } from '../components';
-import { 
-    SettingsData, 
-    getSettings, 
-    updateSettings, 
-    UpdatableSettingsPayload, 
-    getGoogleAIModels,
-    testGoogleApiKey,
+import type {
+    SettingsData,
+    UpdatableSettingsPayload,
     TestApiKeyResponse,
-    testDBConnection,
     TestDBConnectionRequest,
     TestDBConnectionResponse
-} from '../services/api';
+} from '../types/apiTypes';
+import {
+    getSettings,
+    updateSettings,
+    getGoogleAIModels,
+    testGoogleApiKey,
+    testDBConnection,
+} from '../services/systemService';
 
 interface SettingsPageProps {
   showPCMessage: (message: string, type: 'success' | 'error' | 'info') => void;

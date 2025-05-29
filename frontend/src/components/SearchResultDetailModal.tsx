@@ -1,7 +1,7 @@
 import React from 'react';
 import { Modal, Tabs, Typography, Spin, Empty, Tag, Button, Descriptions, Alert } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
-import { Document, SemanticSearchResult } from '../services/api';
+import type { Document, SemanticSearchResult } from '../types/apiTypes';
 
 const { Title, Paragraph, Text } = Typography;
 const { TabPane } = Tabs;

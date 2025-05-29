@@ -1,13 +1,15 @@
 import React, { createContext, useState, useEffect, ReactNode, useCallback } from 'react';
-import { 
-  getSettings as apiGetSettings, 
-  updateSettings as apiUpdateSettings, 
-  SettingsData, // Changed from SystemSettings
+import type {
+  SettingsData,
   AIServiceSettings,
   DatabaseSettings,
   AIServiceSettingsUpdate,
-  UpdatableSettingsPayload // Added for update function
-} from '../services/api';
+  UpdatableSettingsPayload
+} from '../types/apiTypes';
+import {
+  getSettings as apiGetSettings,
+  updateSettings as apiUpdateSettings
+} from '../services/systemService';
 
 // Define the shape of the AI settings as part of the context
 // This should align with what SettingsPage uses and what api.ts expects

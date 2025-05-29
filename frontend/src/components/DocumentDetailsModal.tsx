@@ -1,7 +1,7 @@
 import React from 'react';
 import { Card, Button } from './index';
 import { Descriptions, Alert, Collapse, Tag, Tooltip } from 'antd';
-import { Document, DocumentAnalysis, AITextAnalysisOutput, AITextAnalysisIntermediateStep } from '../services/api';
+import type { Document, DocumentAnalysis, AITextAnalysisOutput, AITextAnalysisIntermediateStep } from '../types/apiTypes';
 import {
   InfoCircleOutlined,
   CloudUploadOutlined,

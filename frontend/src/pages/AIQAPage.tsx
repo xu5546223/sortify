@@ -45,17 +45,19 @@ import {
   RetweetOutlined,
   SlidersOutlined
 } from '@ant-design/icons';
-import {
+import type {
   AIQARequest,
   AIQAResponse,
   VectorDatabaseStats,
-  askAIQuestion,
-  getVectorDatabaseStats,
   Document,
   QueryRewriteResult,
   LLMContextDocument,
-  SemanticContextDocument
-} from '../services/api';
+  SemanticContextDocument,
+  AIQARequestUnified,
+  AIResponse
+} from '../types/apiTypes';
+import { askAIQuestionUnified } from '../services/unifiedAIService';
+import { getVectorDatabaseStats } from '../services/vectorDBService';
 import SemanticSearchInterface from '../components/SemanticSearchInterface';
 
 const { Text, Title, Paragraph } = Typography;
@@ -135,34 +137,50 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
 
     try {
       setIsAsking(true);
-      const response = await askAIQuestion(
-        question.trim(),
-        currentSessionId || undefined
-      );
+      const request: AIQARequestUnified = {
+        question: question.trim(),
+        session_id: currentSessionId || undefined,
+        use_semantic_search: true,
+        context_limit: 10,
+        force_stable_model: true,
+        ensure_chinese_output: true
+      };
+      const unifiedResponse: AIResponse<AIQAResponse> = await askAIQuestionUnified(request);
       
+      if (!unifiedResponse.success || !unifiedResponse.content) {
+        const errorMessage = unifiedResponse.error_message || 'AI 問答失敗，未收到預期內容。';
+        console.error('AI 問答失敗:', errorMessage, unifiedResponse);
+        showPCMessage(errorMessage, 'error');
+        setIsAsking(false);
+        return;
+      }
+      
+      const responseContent = unifiedResponse.content;
+
       const newSession: QASession = {
         id: `qa_${Date.now()}`,
         question: question.trim(),
-        answer: response.answer,
+        answer: responseContent.answer,
         timestamp: new Date(),
-        sourceDocuments: response.source_documents,
-        tokensUsed: response.tokens_used,
-        processingTime: response.processing_time,
-        confidenceScore: response.confidence_score || undefined,
-        queryRewriteResult: response.query_rewrite_result || null,
-        llmContextDocuments: response.llm_context_documents || null,
-        semanticSearchContexts: response.semantic_search_contexts || null,
-        sessionId: response.session_id || undefined
+        sourceDocuments: responseContent.source_documents,
+        tokensUsed: responseContent.tokens_used,
+        processingTime: responseContent.processing_time,
+        confidenceScore: responseContent.confidence_score || undefined,
+        queryRewriteResult: responseContent.query_rewrite_result || null,
+        llmContextDocuments: responseContent.llm_context_documents || null,
+        semanticSearchContexts: responseContent.semantic_search_contexts || null,
+        sessionId: responseContent.session_id || undefined
       };
 
       setQAHistory(prev => [newSession, ...prev]);
-      setCurrentSessionId(response.session_id || null);
+      setCurrentSessionId(responseContent.session_id || null);
       setQuestion('');
       
-      showPCMessage(`問答完成，使用了 ${response.tokens_used} 個 token`, 'success');
+      showPCMessage(`問答完成，使用了 ${responseContent.tokens_used} 個 token`, 'success');
     } catch (error) {
       console.error('AI 問答失敗:', error);
-      showPCMessage('AI 問答失敗', 'error');
+      const message = error instanceof Error ? error.message : 'AI 問答時發生未知錯誤';
+      showPCMessage(message, 'error');
     } finally {
       setIsAsking(false);
     }

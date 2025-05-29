@@ -19,12 +19,9 @@ import {
   ClockCircleOutlined,
   FileTextOutlined
 } from '@ant-design/icons';
-import {
-  SemanticSearchResult,
-  performSemanticSearch,
-  getDocumentById,
-  Document
-} from '../services/api';
+import type { SemanticSearchResult, Document } from '../types/apiTypes';
+import { performSemanticSearch } from '../services/vectorDBService';
+import { getDocumentById } from '../services/documentService';
 import SearchResultDetailModal from './SearchResultDetailModal';
 
 const { Text, Paragraph } = Typography;

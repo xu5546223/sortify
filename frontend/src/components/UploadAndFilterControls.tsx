@@ -1,6 +1,6 @@
 import React from 'react';
 import { Input, Select, Button, Card } from './index';
-import { DocumentStatus } from '../services/api';
+import type { DocumentStatus } from '../types/apiTypes';
 
 interface QuickFilterOption {
   id: string;

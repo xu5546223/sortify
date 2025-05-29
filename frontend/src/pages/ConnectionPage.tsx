@@ -1,10 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import apiClient, { 
-  // ConnectionInfo, // Removed unused type
-  TunnelStatus,
-  ConnectedUser as ApiConnectedUser,
-  ConnectionAPI
-} from '../services/api';
+import { apiClient } from '../services/apiClient';
+import type { TunnelStatus, ConnectedUser as ApiConnectedUser } from '../types/apiTypes';
+import { ConnectionAPI } from '../services/connectionService';
 
 import { PageHeader, Card, Button } from '../components';
 

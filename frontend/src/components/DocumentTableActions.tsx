@@ -1,7 +1,7 @@
 import React from 'react';
 import { Button } from './index';
 import { Space } from 'antd';
-import { Document, DocumentStatus } from '../services/api';
+import type { Document, DocumentStatus } from '../types/apiTypes';
 
 interface DocumentTableActionsProps {
   document: Document;
