@@ -189,6 +189,10 @@ Sortify AI Assistant is a powerful intelligent document analysis and Q&A system 
 | Database   | MongoDB + ChromaDB                             | Document storage + Vector search   |
 | AI Service | Google Gemini / OpenAI API                     | LLM integration                    |
 
+"Here is our system's architecture diagram:"
+
+![System Architecture Diagram](images/SystemArchitecture.jpg)
+
 ## 🚀 Quick Start
 
 ### 📋 Prerequisites
@@ -312,4 +316,4 @@ This project is licensed under the MIT License. See the LICENSE file for details
 
 For questions or suggestions, please contact us through GitHub Issues.
 
-```
+---
