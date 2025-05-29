@@ -33,6 +33,10 @@ Sortify AI Assistant 是一個功能強大的智能文件分析和問答系統�
 | 資料庫   | MongoDB + ChromaDB                             | 文檔存儲 + 向量搜索        |
 | AI 服務  | Google Gemini / OpenAI API                     | 大型語言模型集成           |
 
+以下是我們系統的架構圖：
+
+![系統架構圖](images/SystemArchitecture.jpg)
+
 ## 🚀 快速開始
 
 ### 📋 環境要求
