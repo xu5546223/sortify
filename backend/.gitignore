@@ -167,7 +167,7 @@ Thumbs.db
 *.pth
 *.onnx
 embeddings/
-models/
+# models/
 
 # MongoDB
 *.mongodb
