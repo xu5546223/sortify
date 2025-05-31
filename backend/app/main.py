@@ -276,7 +276,6 @@ try:
     if python_backend_sdk:
         # 同時註冊有無斜線的路徑
         add_fastapi_endpoint(app, python_backend_sdk, "/api/v1/copilotkit_actions")
-        add_fastapi_endpoint(app, python_backend_sdk, "/api/v1/copilotkit_actions/")
         std_logger.info("CopilotKit Actions 端點已直接註冊到 app，路徑為 /api/v1/copilotkit_actions 及 /api/v1/copilotkit_actions/")
 except ImportError as e:
     std_logger.error(f"無法導入 CopilotKit SDK 或相關函數: {e}")
