@@ -160,3 +160,20 @@ logs/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# AI models and embeddings
+*.bin
+*.pt
+*.pth
+*.onnx
+embeddings/
+models/
+
+# MongoDB
+*.mongodb
+mongodb/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
