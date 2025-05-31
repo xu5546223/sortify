@@ -274,35 +274,6 @@ async def list_available_prompts(
             "error_message": f"獲取提示詞列表失敗: {str(e)}"
         }
 
-# === API Key配置端點 ===
-@router.post("/config/api-key")
-async def update_api_key(
-    api_key: str,
-    current_user: User = Depends(get_current_active_user)
-):
-    """
-    更新API Key - 兼容簡化版本
-    """
-    try:
-        from app.core.config import settings
-        
-        # 這裡可以添加API Key驗證邏輯
-        # 暫時只是更新配置
-        settings.GOOGLE_API_KEY = api_key
-        
-        return {
-            "success": True,
-            "message": "API Key已更新",
-            "simplified_version": True
-        }
-        
-    except Exception as e:
-        logger.error(f"更新API Key失敗: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"更新API Key失敗: {str(e)}"
-        )
-
 # === 系統狀態端點（簡化版） ===
 @router.get("/status")
 async def ai_system_status(

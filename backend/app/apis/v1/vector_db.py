@@ -320,29 +320,17 @@ async def semantic_search(
         # 將查詢轉換為向量
         query_vector = embedding_service.encode_text(request.query)
         
-        # 執行向量搜索
+        # 執行向量搜索，傳入 owner_id 進行過濾
         vector_db_service_instance = get_vector_db_service()
         results = vector_db_service_instance.search_similar_vectors(
             query_vector=query_vector,
             top_k=request.top_k,
-            similarity_threshold=request.similarity_threshold
+            similarity_threshold=request.similarity_threshold,
+            owner_id_filter=str(current_user.id)
         )
         
-        # Filter results to include only documents owned by the current user
-        owned_results = []
-        if results:
-            for res in results:
-                # Ensure metadata exists and contains owner_id
-                if hasattr(res, 'metadata') and isinstance(res.metadata, dict) and \
-                   res.metadata.get('owner_id') == str(current_user.id):
-                    owned_results.append(res)
-                elif hasattr(res, 'payload') and isinstance(res.payload, dict) and \
-                     res.payload.get('owner_id') == str(current_user.id): # qdrant uses 'payload'
-                     owned_results.append(res)
-
-
-        logger.info(f"用戶 {current_user.username} 語義搜索完成，查詢: '{request.query}', 返回 {len(owned_results)} 個結果 (已過濾)")
-        return owned_results
+        logger.info(f"用戶 {current_user.username} 語義搜索完成，查詢: '{request.query}', 返回 {len(results)} 個結果 (已在服務層過濾)")
+        return results
     except ValueError as ve:
         logger.error(f"語義搜索失敗 for user {current_user.username}: {ve}", exc_info=True)
         raise HTTPException(

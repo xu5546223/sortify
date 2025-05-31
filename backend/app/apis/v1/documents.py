@@ -6,48 +6,50 @@ from fastapi import (
     UploadFile, 
     File, 
     Form,
-    Request, # 新增
+    Request, 
     Query,
-    BackgroundTasks # <--- 新增 BackgroundTasks
+    BackgroundTasks
 )
-from fastapi.responses import FileResponse # 導入 FileResponse
+from fastapi.responses import FileResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from typing import List, Optional, Any, Dict # <--- 新增 Dict
+from typing import List, Optional, Any, Dict
 import uuid
 import os
-import shutil # 用於文件操作
+import shutil
 import aiofiles
 from werkzeug.utils import secure_filename
-import logging # Import logging module
-from pathlib import Path # <--- 新增導入
-import json # <--- 新增 json
+import logging
+from pathlib import Path
+import json
 from datetime import datetime
-import mimetypes # <--- 新增導入 mimetypes
+import mimetypes
+import io
+from PIL import Image
 
 from ...db.mongodb_utils import get_db
-from ...dependencies import get_document_processing_service, get_settings, get_unified_ai_service # <--- 更新導入
+from ...dependencies import get_document_processing_service, get_settings, get_unified_ai_service
 from ...models.document_models import (
     Document,
     DocumentCreate,
     DocumentUpdate,
     DocumentStatus,
     PaginatedDocumentResponse,
-    DocumentAnalysis, # <--- 導入 DocumentAnalysis
-    BatchDeleteRequest, # 這是我們剛才創建的
-    BatchDeleteResponseDetail, # <--- 恢復導入
-    BatchDeleteDocumentsResponse # <--- 恢復導入
+    DocumentAnalysis,
+    BatchDeleteRequest,
+    BatchDeleteResponseDetail,
+    BatchDeleteDocumentsResponse
 )
 from ...models.user_models import User
-from ...models.ai_models_simplified import AIImageAnalysisOutput, TokenUsage, AITextAnalysisOutput, AIPromptRequest # <--- 導入 AIPromptRequest
+from ...models.ai_models_simplified import AIImageAnalysisOutput, TokenUsage, AITextAnalysisOutput, AIPromptRequest
 from ...crud import crud_documents
-from ...core.config import settings, Settings # Import Settings type and settings instance
+from ...core.config import settings, Settings
 from ...core.logging_utils import log_event, LogLevel
 from ...core.security import get_current_active_user
-from ...services.document_processing_service import DocumentProcessingService, SUPPORTED_IMAGE_TYPES_FOR_AI # <--- 導入 SUPPORTED_IMAGE_TYPES_FOR_AI
-from ...services.unified_ai_service_simplified import unified_ai_service_simplified # <--- 導入簡化版統一AI服務
-from ...services.unified_ai_config import unified_ai_config # <--- 導入 unified_ai_config
-from app.services.vector_db_service import vector_db_service # 確保導入
-from .vector_db import BatchDeleteRequest as VectorDBBatchDeleteRequest # 可能需要區分或重用
+from ...services.document_processing_service import DocumentProcessingService, SUPPORTED_IMAGE_TYPES_FOR_AI
+from ...services.unified_ai_service_simplified import unified_ai_service_simplified, AIRequest, TaskType as AIServiceTaskType
+from ...services.unified_ai_config import unified_ai_config
+from app.services.vector_db_service import vector_db_service
+from .vector_db import BatchDeleteRequest as VectorDBBatchDeleteRequest
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -109,7 +111,7 @@ def _prepare_upload_filepath(
     content_type: Optional[str]
 ) -> tuple[Path, str]:
     """
-    Prepares the upload file path and a safe filename.
+    Prepares the upload file path and a unique, safe filename.
     """
     user_folder = Path(settings.UPLOAD_DIR) / str(current_user_id)
     user_folder.mkdir(parents=True, exist_ok=True)
@@ -123,8 +125,11 @@ def _prepare_upload_filepath(
     else:
         safe_ext = ""
 
-    if not safe_base_name:
-        safe_base_name = f"file_{uuid.uuid4().hex[:8]}"
+    if not safe_base_name: # 如果清理後的基礎名稱為空 (例如，檔名是 ".bashrc")
+        safe_base_name = f"file"
+
+    # 生成一個短的唯一標識符，以避免檔名衝突
+    unique_suffix = uuid.uuid4().hex[:8]
 
     guessed_ext_from_mime = mimetypes.guess_extension(content_type) if content_type else None
     if guessed_ext_from_mime:
@@ -136,9 +141,10 @@ def _prepare_upload_filepath(
     elif guessed_ext_from_mime:
         final_ext = guessed_ext_from_mime
     else:
-        final_ext = "bin"
+        final_ext = "bin" # 保留一個預設的副檔名以防萬一
 
-    safe_filename = f"{safe_base_name}.{final_ext}"
+    # 更新檔名結構以包含唯一標識符
+    safe_filename = f"{safe_base_name}_{unique_suffix}.{final_ext}"
     file_path = user_folder / safe_filename
     return file_path, safe_filename
 
@@ -228,13 +234,13 @@ async def _validate_and_correct_file_type(
 
 @router.post("/", response_model=Document, status_code=status.HTTP_201_CREATED, summary="上傳新文件並創建記錄")
 async def upload_document(
-    request: Request, # 添加 Request 參數以獲取 request_id
+    request: Request,
     file: UploadFile = File(...),
     tags: Optional[List[str]] = Form(None),
     db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
-    settings: Settings = Depends(get_settings), # <--- 更新為 get_settings
-    # background_tasks: BackgroundTasks # 如果日誌操作需要較長時間，可以考慮後台任務
+    settings: Settings = Depends(get_settings),
+    background_tasks: BackgroundTasks = BackgroundTasks() # <--- 提供預設值
 ):
     """
     上傳新文件並在數據庫中創建相應的記錄。
@@ -255,26 +261,21 @@ async def upload_document(
     try:
         file_size = await _save_uploaded_file(file, file_path, safe_filename)
         
-        request_id_for_log: Optional[str] = None
-        if hasattr(request.state, 'request_id'):
-            request_id_for_log = request.state.request_id
-        elif request.headers.get("X-Request-ID"):
-            request_id_for_log = request.headers.get("X-Request-ID")
+        request_id_for_log = request.headers.get("X-Request-ID")
 
         actual_content_type, mime_type_warning = await _validate_and_correct_file_type(
             file_path=file_path,
-            declared_content_type=file.content_type, # from UploadFile
+            declared_content_type=file.content_type,
             file_size=file_size,
             safe_filename=safe_filename,
             db=db,
-            current_user_id=current_user.id, # Pass the ID
+            current_user_id=current_user.id,
             request_id=request_id_for_log
         )
         # Store original_mime_type for metadata if a warning occurred
         original_mime_type = file.content_type if mime_type_warning else None
 
-    except Exception as e: # This will catch HTTPException from _save_uploaded_file or other errors
-        # Log the error that occurred during the process within upload_document's try block
+    except Exception as e:
         logger.error(f"(upload_document) 處理文件 '{safe_filename}' 時發生錯誤: {e}")
 
         # Log the event of failure
@@ -282,7 +283,7 @@ async def upload_document(
             db=db,
             level=LogLevel.ERROR,
             message=f"處理文件 '{safe_filename}' 時失敗: {str(e)}",
-            source="documents.upload.processing_error", # Source indicates general processing error
+            source="documents.upload.processing_error",
             user_id=str(current_user.id),
             request_id=request.state.request_id if hasattr(request.state, 'request_id') else None,
             details={"filename": safe_filename, "target_path": str(file_path), "error_type": type(e).__name__, "error_detail": str(e)}
@@ -300,16 +301,14 @@ async def upload_document(
     # 創建 DocumentCreate Pydantic 模型實例
     document_data = DocumentCreate(
         filename=safe_filename,
-        owner_id=current_user.id, # DocumentCreate 繼承自 DocumentBase，其中包含 owner_id
-        file_type=actual_content_type, # 使用實際檢測到的內容類型，而不是 file.content_type
-        size=file_size, # 使用計算得到的文件大小
+        owner_id=current_user.id,
+        file_type=actual_content_type,
+        size=file_size,
         tags=tags if tags else [],
-        # 添加 metadata 以包含有關文件的額外信息，例如 MIME 類型驗證結果
         metadata={
-            "mime_type_verified": True, # 默認假設已驗證
-            "upload_warnings": [] # 用於存儲任何上傳警告
+            "mime_type_verified": True,
+            "upload_warnings": []
         }
-        # uploader_device_id: Optional[str] = Field(None, description="上傳設備的ID") # 可選，看是否需要從 request 中獲取
     )
 
     # 如果在前面的代碼中檢測到 MIME 類型問題，則更新 metadata
@@ -325,9 +324,8 @@ async def upload_document(
         created_document = await crud_documents.create_document(
             db=db, 
             document_data=document_data, 
-            owner_id=current_user.id, # 根據 crud_documents.create_document 函數簽名傳遞
-            file_path=str(file_path)  # 根據 crud_documents.create_document 函數簽名傳遞
-            # uploader_device_id=None # 如果需要，從 request 或其他地方獲取並傳遞
+            owner_id=current_user.id,
+            file_path=str(file_path)
         )
         logger.info(f"文件 '{safe_filename}' (ID: {created_document.id}) 的數據庫記錄已創建")
     except Exception as e:
@@ -337,11 +335,11 @@ async def upload_document(
             file_path.unlink(missing_ok=True)
             logger.info(f"因數據庫錯誤，已刪除物理文件: {file_path}")
         await log_event(
-            db=db, # 確保傳遞了 db session
+            db=db,
             level=LogLevel.ERROR,
             message=f"為文件 '{safe_filename}' 創建數據庫記錄失敗: {str(e)}",
             source="documents.upload.create_record",
-            user_id=str(current_user.id), # <--- 確認轉換為 str
+            user_id=str(current_user.id),
             request_id=request.state.request_id if hasattr(request.state, 'request_id') else None,
             details={"filename": safe_filename, "document_data": document_data.model_dump_json(exclude_none=True)}
         )
@@ -349,11 +347,11 @@ async def upload_document(
 
     # 異步記錄操作日誌 (可以考慮放入 background_tasks)
     await log_event(
-        db=db, # 確保傳遞了 db session
+        db=db,
         level=LogLevel.INFO,
         message=f"文件 '{safe_filename}' (ID: {created_document.id}) 已成功上傳並記錄。",
         source="documents.upload.success",
-        user_id=str(current_user.id), # <--- 確認轉換為 str
+        user_id=str(current_user.id),
         request_id=request.state.request_id if hasattr(request.state, 'request_id') else None,
         details={"document_id": str(created_document.id), "filename": safe_filename, "file_size": file_size, "file_type": file.content_type}
     )
@@ -512,8 +510,9 @@ async def _process_image_document(
     db: AsyncIOMotorDatabase, 
     user_id_for_log: str, 
     request_id_for_log: Optional[str], 
-    ai_force_stable_model: Optional[bool], 
-    ai_ensure_chinese_output: Optional[bool]
+    ai_ensure_chinese_output: Optional[bool],
+    ai_model_preference: Optional[str] = None, # Added
+    ai_max_output_tokens: Optional[int] = None  # Added
 ) -> tuple[Optional[Dict[str, Any]], Optional[TokenUsage], Optional[str], DocumentStatus]:
     """
     Helper function to process an image document for AI analysis.
@@ -542,15 +541,15 @@ async def _process_image_document(
             # No specific analysis data to save, but other values are defaults
             return analysis_data_to_save, token_usage_to_save, model_used_for_analysis, new_status
 
+        pil_image = Image.open(io.BytesIO(image_bytes)) # Convert bytes to PIL Image
+
         ai_response = await unified_ai_service_simplified.analyze_image(
-            image_data=image_bytes, 
-            image_mime_type=doc_mime_type, 
-            db=db,
-            force_stable=ai_force_stable_model if ai_force_stable_model is not None else True,
-            ensure_chinese_output=ai_ensure_chinese_output if ai_ensure_chinese_output is not None else True
+            image=pil_image,
+            model_preference=ai_model_preference,
+            db=db  # Pass db instance
         )
         
-        if not ai_response.success or not isinstance(ai_response.content, AIImageAnalysisOutput):
+        if not ai_response.success or not isinstance(ai_response.output_data, AIImageAnalysisOutput): # output_data 而非 content
             error_msg = ai_response.error_message or "AI image analysis returned unsuccessful or invalid content type."
             logger.error(f"圖片分析失敗 for doc ID {doc_uuid}: {error_msg}")
             new_status = DocumentStatus.ANALYSIS_FAILED # More specific than PROCESSING_ERROR for AI failure
@@ -558,7 +557,7 @@ async def _process_image_document(
             # analysis_data_to_save = {"error": error_msg} 
             return analysis_data_to_save, token_usage_to_save, model_used_for_analysis, new_status
         
-        ai_image_output = ai_response.content
+        ai_image_output = ai_response.output_data # output_data 而非 content
         token_usage_to_save = ai_response.token_usage
         model_used_for_analysis = ai_response.model_used
         analysis_data_to_save = ai_image_output.model_dump()
@@ -588,8 +587,9 @@ async def _process_text_document(
     user_id_for_log: str, 
     request_id_for_log: Optional[str], 
     settings_obj: Settings, 
-    ai_force_stable_model: Optional[bool], 
-    ai_ensure_chinese_output: Optional[bool]
+    ai_ensure_chinese_output: Optional[bool],
+    ai_model_preference: Optional[str] = None, # Added
+    ai_max_output_tokens: Optional[int] = None  # Added
 ) -> tuple[Optional[Dict[str, Any]], Optional[TokenUsage], Optional[str], DocumentStatus]:
     """
     Helper function to process a text document (extraction and AI analysis).
@@ -639,19 +639,18 @@ async def _process_text_document(
             extracted_text_content = extracted_text_content[:max_prompt_len]
 
         ai_response = await unified_ai_service_simplified.analyze_text(
-            text_content=extracted_text_content,
-            db=db,
-            force_stable=ai_force_stable_model if ai_force_stable_model is not None else True,
-            ensure_chinese_output=ai_ensure_chinese_output if ai_ensure_chinese_output is not None else True
+            text=extracted_text_content,
+            model_preference=ai_model_preference,
+            db=db  # Pass db instance
         )
         
-        if not ai_response.success or not isinstance(ai_response.content, AITextAnalysisOutput):
+        if not ai_response.success or not isinstance(ai_response.output_data, AITextAnalysisOutput): # output_data 而非 content
             error_msg = ai_response.error_message or "AI text analysis returned unsuccessful or invalid content type."
             logger.error(f"文本分析失敗 for doc ID {doc_uuid}: {error_msg}")
             new_status = DocumentStatus.ANALYSIS_FAILED
             return None, None, None, new_status # analysis_data_to_save remains None
             
-        ai_text_output = ai_response.content
+        ai_text_output = ai_response.output_data # output_data 而非 content
         token_usage_to_save = ai_response.token_usage
         model_used_for_analysis = ai_response.model_used
         analysis_data_to_save = ai_text_output.model_dump()
@@ -769,9 +768,11 @@ async def _process_document_analysis_or_extraction(
     db: AsyncIOMotorDatabase, 
     user_id_for_log: str, 
     request_id_for_log: Optional[str], 
-    trigger_content_processing: bool = False,
-    ai_force_stable_model: Optional[bool] = None,
-    ai_ensure_chinese_output: Optional[bool] = True
+    trigger_content_processing: bool = False, # 雖然此參數存在，但下方調用似乎未使用它來決定是否執行
+    ai_ensure_chinese_output: Optional[bool] = True,
+    # 新增從 doc_update 傳入的 AI 選項
+    ai_model_preference: Optional[str] = None,
+    ai_max_output_tokens: Optional[int] = None
 ) -> None:
     """
     後台任務：根據文件MIME類型處理文件內容（文本提取/AI分析等）
@@ -804,14 +805,21 @@ async def _process_document_analysis_or_extraction(
             analysis_data_to_save, token_usage_to_save, model_used_for_analysis, current_processing_status = \
                 await _process_image_document(
                     document=document, db=db, user_id_for_log=user_id_for_log, request_id_for_log=request_id_for_log,
-                    ai_force_stable_model=ai_force_stable_model, ai_ensure_chinese_output=ai_ensure_chinese_output
+                    ai_ensure_chinese_output=ai_ensure_chinese_output,
+                    ai_model_preference=ai_model_preference,
+                    ai_max_output_tokens=ai_max_output_tokens
+                    # db is already part of the signature and passed
                 )
         elif doc_mime_type and doc_mime_type in SUPPORTED_TEXT_TYPES_FOR_AI_PROCESSING:
             processing_type = "text_analysis"
             analysis_data_to_save, token_usage_to_save, model_used_for_analysis, current_processing_status = \
                 await _process_text_document(
                     document=document, db=db, user_id_for_log=user_id_for_log, request_id_for_log=request_id_for_log,
-                    settings_obj=settings, ai_force_stable_model=ai_force_stable_model, ai_ensure_chinese_output=ai_ensure_chinese_output
+                    settings_obj=settings, 
+                    ai_ensure_chinese_output=ai_ensure_chinese_output,
+                    ai_model_preference=ai_model_preference,
+                    ai_max_output_tokens=ai_max_output_tokens
+                    # db is already part of the signature and passed
                 )
         else:
             processing_type = "unsupported"
@@ -857,7 +865,7 @@ async def update_document_details(
     existing_document: Document = Depends(get_owned_document), # Use the dependency
     db: AsyncIOMotorDatabase = Depends(get_db), # Still needed for operations
     current_user: User = Depends(get_current_active_user), # Still needed for logging user
-    settings_di: Settings = Depends(get_settings) # Still needed for settings
+    settings_di: Settings = Depends(get_settings), # Still needed for settings
     # document_id is now part of existing_document.id
 ):
     # existing_document is now provided by the get_owned_document dependency
@@ -867,11 +875,7 @@ async def update_document_details(
     update_fields = doc_update.model_dump(exclude_unset=True)
     
     # 獲取 request_id
-    request_id_for_log: Optional[str] = None
-    if hasattr(request.state, 'request_id'):
-        request_id_for_log = request.state.request_id
-    elif request.headers.get("X-Request-ID"): # 作為備份
-        request_id_for_log = request.headers.get("X-Request-ID")
+    request_id_for_log = request.headers.get("X-Request-ID")
 
     logger.info(f"用戶 {current_user.email} 請求更新文件 ID: {document_id}，更新內容: {update_fields}")
     await log_event(
@@ -906,8 +910,9 @@ async def update_document_details(
                 user_id_for_log=str(current_user.id), # 傳遞用戶 ID
                 request_id_for_log=request_id_for_log, # 傳遞請求 ID
                 trigger_content_processing=doc_update.trigger_content_processing,
-                ai_force_stable_model=doc_update.ai_force_stable_model if doc_update.ai_force_stable_model is not None else True,
-                ai_ensure_chinese_output=doc_update.ai_ensure_chinese_output if doc_update.ai_ensure_chinese_output is not None else True
+                ai_ensure_chinese_output=doc_update.ai_ensure_chinese_output if doc_update.ai_ensure_chinese_output is not None else True,
+                ai_model_preference=doc_update.ai_model_preference if doc_update.ai_model_preference is not None else None,
+                ai_max_output_tokens=doc_update.ai_max_output_tokens if doc_update.ai_max_output_tokens is not None else None
             )
             await log_event(
                 db=db, level=LogLevel.INFO, message=f"後台文件處理任務已為文件 {document_id} 啟動。", 
@@ -1239,8 +1244,437 @@ async def batch_delete_documents_route(
 # async def trigger_text_extraction_endpoint(...):
 #     ...
 
-# @router.post("/{document_id}/trigger-analysis", response_model=Document, summary="觸發AI分析")
-# async def trigger_ai_analysis_endpoint(...):
-#     ... 
+async def trigger_document_analysis_internal(
+    db: AsyncIOMotorDatabase, 
+    doc_processor: DocumentProcessingService, 
+    document_id: uuid.UUID, 
+    current_user_id: uuid.UUID,
+    settings_obj: Settings, 
+    processing_strategy: Optional[str] = None, 
+    custom_prompt_id: Optional[str] = None, 
+    analysis_type: Optional[str] = None, 
+    task_type_str: Optional[str] = None, 
+    request_id: Optional[str] = None,
+    ai_model_preference: Optional[str] = None,
+    ai_ensure_chinese_output: Optional[bool] = None,
+    ai_max_output_tokens: Optional[int] = None
+) -> Document:
+    logger.debug(f"(Internal) Triggering analysis for doc ID: {document_id}, strategy: {processing_strategy}, type: {analysis_type}, task: {task_type_str}, model_pref: {ai_model_preference}")
+    document: Optional[Document] = None # 在 try 外部定義 document
+    try:
+        document = await crud_documents.get_document_by_id(db, document_id)
+        if not document:
+            logger.error(f"(Internal) Document {document_id} not found for analysis.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文檔不存在")
+        if document.owner_id != current_user_id:
+            logger.warning(f"(Internal) User {current_user_id} attempt to analyze document {document_id} owned by {document.owner_id}")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="無權限分析此文件")
+
+        # 準備傳遞給文檔處理服務或AI服務的選項
+        # 這些選項現在直接從 unified_ai_service_simplified 內部獲取，或通過 AIRequest 傳遞
+        # 此處的 ai_options 主要是為了日誌或傳遞給 DocumentProcessingService 的某個方法（如果它需要這些細化控制）
+
+        effective_task_type: Optional[AIServiceTaskType] = None
+        if task_type_str:
+            try:
+                effective_task_type = AIServiceTaskType[task_type_str.upper()]
+            except KeyError:
+                logger.warning(f"無效的 task_type_str: {task_type_str}, 將回退到根據文件類型決定。")
+        
+        if not effective_task_type: # 如果 task_type_str 無效或未提供，則根據文件類型決定
+            if document.file_type and document.file_type in SUPPORTED_IMAGE_TYPES_FOR_AI.values():
+                effective_task_type = AIServiceTaskType.IMAGE_ANALYSIS
+            elif document.file_type and document.file_type in SUPPORTED_TEXT_TYPES_FOR_AI_PROCESSING:
+                effective_task_type = AIServiceTaskType.TEXT_GENERATION # 或者更特定的文本任務類型
+            else:
+                logger.error(f"無法確定文檔 {document_id} 的 AI 任務類型 (MIME: {document.file_type})。")
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"不支持的文件類型 ({document.file_type}) 或無法確定任務類型。")
+
+        # 更新文檔狀態為分析中
+        await crud_documents.update_document_status(db, document.id, DocumentStatus.ANALYZING, "Analysis triggered internally.")
+        
+        # 實際的分析邏輯:
+        # 這裡的邏輯應該類似於 _process_document_analysis_or_extraction 中的調用結構，
+        # 但使用傳入的 ai_model_preference, ai_ensure_chinese_output, ai_max_output_tokens
+        # 來構造 AIRequest 並調用 unified_ai_service_simplified.process_request
+
+        content_for_ai: Any
+        if effective_task_type == AIServiceTaskType.IMAGE_ANALYSIS:
+            if not document.file_path or not os.path.exists(document.file_path):
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="圖片文件路徑不存在。")
+            # 此處的 doc_processor 用於獲取圖片字節
+            image_bytes = await doc_processor.get_image_bytes(document.file_path)
+            if not image_bytes:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="無法讀取圖片文件。")
+            # Pillow Image 物件是期望的 content
+            from PIL import Image # 確保導入
+            content_for_ai = Image.open(io.BytesIO(image_bytes))
+
+        elif effective_task_type == AIServiceTaskType.TEXT_GENERATION:
+            if not document.extracted_text: # 確保文本已提取
+                 # 嘗試提取文本
+                extracted_text_result, extraction_status, extraction_error = \
+                    await doc_processor.extract_text_from_document(str(document.file_path), Path(str(document.file_path)).suffix if document.file_path else "")
+                if extraction_status == DocumentStatus.PROCESSING_ERROR or not extracted_text_result:
+                    error_detail = extraction_error or "未能從文件中提取到有效文本內容以進行分析"
+                    await crud_documents.update_document_status(db, document.id, DocumentStatus.EXTRACTION_FAILED, error_detail)
+                    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_detail)
+                document.extracted_text = extracted_text_result # 更新內存中的文檔對象
+                await crud_documents.update_document_on_extraction_success(db, document.id, extracted_text_result)
+
+            content_for_ai = document.extracted_text
+            if not content_for_ai:
+                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文檔無提取文本可供分析。")
+             # 截斷文本
+            max_prompt_len = settings_obj.AI_MAX_INPUT_CHARS_TEXT_ANALYSIS
+            if len(content_for_ai) > max_prompt_len:
+                logger.warning(f"提取的文本長度 ({len(content_for_ai)}) 超過最大允許長度 ({max_prompt_len})。將進行截斷。 Doc ID: {document_id}")
+                content_for_ai = content_for_ai[:max_prompt_len]
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"不支持的AI任務類型進行內部觸發: {effective_task_type}")
+
+        ai_request = AIRequest(
+            task_type=effective_task_type,
+            content=content_for_ai,
+            model_preference=ai_model_preference,
+            require_language_consistency=ai_ensure_chinese_output if ai_ensure_chinese_output is not None else True,
+            generation_params_override={"max_output_tokens": ai_max_output_tokens} if ai_max_output_tokens else None,
+            prompt_params={"user_query": custom_prompt_id} if custom_prompt_id else None, # 簡化，實際可能更複雜
+            user_id=str(current_user_id)
+        )
+        
+        ai_response = await unified_ai_service_simplified.process_request(ai_request, db)
+
+        final_status: DocumentStatus
+        analysis_data_to_save: Optional[dict] = None
+        
+        if ai_response.success and ai_response.output_data:
+            analysis_data_to_save = ai_response.output_data.model_dump()
+            final_status = DocumentStatus.ANALYSIS_COMPLETED
+            logger.info(f"文檔 {document_id} 的 AI 分析成功完成。")
+        else:
+            final_status = DocumentStatus.ANALYSIS_FAILED
+            logger.error(f"文檔 {document_id} 的 AI 分析失敗: {ai_response.error_message}")
+            # 可以考慮將 ai_response.error_message 存儲到文檔的某個錯誤字段
+
+        await crud_documents.set_document_analysis(
+            db=db,
+            document_id=document.id,
+            analysis_data_dict=analysis_data_to_save if analysis_data_to_save else {"error": ai_response.error_message or "Unknown AI error"},
+            token_usage_dict=ai_response.token_usage.model_dump() if ai_response.token_usage else None,
+            model_used_str=ai_response.model_used,
+            analysis_status_enum=final_status,
+            analyzed_content_type_str=document.file_type # 或者從 analysis_data_to_save 中獲取更精確的類型
+        )
+        
+        # 返回更新後的文檔
+        updated_document = await crud_documents.get_document_by_id(db, document_id)
+        if not updated_document: # 應該不會發生，但作為防禦
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="分析後無法重新獲取文檔。")
+        return updated_document
+
+    except HTTPException: # 重新拋出已知的 HTTP 異常
+        raise
+    except Exception as e:
+        logger.error(f"(Internal Trigger) 分析文檔 {document_id} 時發生錯誤: {e}", exc_info=True)
+        if document and document.id: # 確保 document_id 有效 (或 document 已獲取)
+            try:
+                await crud_documents.update_document_status(db, document.id, DocumentStatus.ANALYSIS_FAILED, f"內部觸發分析錯誤: {str(e)[:100]}")
+            except Exception as status_update_err:
+                 logger.error(f"更新文檔 {document_id} 狀態為失敗時再次發生錯誤: {status_update_err}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"觸發文件分析時發生意外錯誤: {str(e)}")
+
+@router.put("/documents/{document_id}", response_model=Document, summary="更新文檔屬性或觸發處理")
+async def update_document_endpoint(
+    document_id: uuid.UUID, # 從路徑獲取
+    doc_update: DocumentUpdate, # 從請求體獲取 (之前為 DocumentUpdateRequest)
+    background_tasks: BackgroundTasks,
+    request: Request, 
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    doc_processor: DocumentProcessingService = Depends(get_document_processing_service),
+    settings_obj: Settings = Depends(get_settings)
+):
+    # 檢查文件是否存在及所有權
+    existing_document = await crud_documents.get_document_by_id(db, document_id)
+    if not existing_document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文檔不存在")
+    if existing_document.owner_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="無權限修改此文件")
+
+    request_id_for_log = request.headers.get("X-Request-ID") # Simplified as request is no longer Optional
+    
+    updated_doc: Optional[Document] = None
+
+    # 處理觸發分析/重新分析的邏輯
+    # 注意：DocumentUpdate 模型中需要有 trigger_processing, trigger_reanalysis 等欄位
+    should_trigger_analysis = False
+    if hasattr(doc_update, 'trigger_processing') and doc_update.trigger_processing:
+        should_trigger_analysis = True
+    if hasattr(doc_update, 'trigger_reanalysis') and doc_update.trigger_reanalysis:
+        should_trigger_analysis = True
+        if hasattr(doc_update, 'processing_strategy') and not doc_update.processing_strategy:
+            doc_update.processing_strategy = "full_reanalysis" # 如果是 reanalysis，設置一個策略
+
+    if should_trigger_analysis:
+        if existing_document.status == DocumentStatus.ANALYZING:
+            logger.warning(f"文件 {document_id} 已在分析中，跳過重複觸發。")
+            # 即使跳過，也可能需要更新其他欄位，所以流程繼續
+        else:
+            logger.info(f"為文件 {document_id} 觸發內部同步分析...")
+            # 異步觸發內部函數，但不阻塞當前請求的返回
+            # 注意：如果 trigger_document_analysis_internal 內部有長時間操作，
+            # 並且此端點需要快速響應，則應考慮將其放入 background_tasks
+            # 但批處理端點似乎是同步等待此函數結果的
+
+            # 為了與批處理端點的行為一致（它們 await trigger_document_analysis_internal），
+            # 這裡也 await 它。如果希望非阻塞，則應使用 background_tasks.add_task
+            try:
+                updated_doc = await trigger_document_analysis_internal(
+                    db=db,
+                    doc_processor=doc_processor,
+                    document_id=document_id,
+                    current_user_id=current_user.id,
+                    settings_obj=settings_obj,
+                    processing_strategy=doc_update.processing_strategy if hasattr(doc_update, 'processing_strategy') else None,
+                    custom_prompt_id=doc_update.custom_prompt_id if hasattr(doc_update, 'custom_prompt_id') else None,
+                    analysis_type=doc_update.analysis_type if hasattr(doc_update, 'analysis_type') else None,
+                    task_type_str=doc_update.task_type if hasattr(doc_update, 'task_type') else None, # task_type 來自 DocumentUpdate
+                    request_id=request_id_for_log,
+                    ai_model_preference=doc_update.ai_model_preference if hasattr(doc_update, 'ai_model_preference') else None,
+                    ai_ensure_chinese_output=doc_update.ai_ensure_chinese_output if hasattr(doc_update, 'ai_ensure_chinese_output') else None,
+                    ai_max_output_tokens=doc_update.ai_max_output_tokens if hasattr(doc_update, 'ai_max_output_tokens') else None
+                )
+            except HTTPException as e: # 如果 trigger_document_analysis_internal 拋出 HTTP 異常，直接拋出
+                raise e
+            except Exception as e: # 其他異常，包裝成 HTTP 500
+                logger.error(f"觸發文件 {document_id} 分析時發生錯誤: {e}", exc_info=True)
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"觸發分析時發生錯誤: {str(e)}")
+
+
+    # 更新其他常規文檔欄位
+    # 創建一個不包含觸發標誌的更新字典
+    update_data_dict = doc_update.model_dump(exclude_unset=True, exclude_none=True)
+    trigger_flags = ["trigger_processing", "trigger_reanalysis", "processing_strategy", "custom_prompt_id", "analysis_type", "task_type",
+                     "ai_model_preference", "ai_ensure_chinese_output", "ai_max_output_tokens"] # 也排除AI選項，因為它們用於觸發
+    
+    regular_update_data = {k: v for k, v in update_data_dict.items() if k not in trigger_flags}
+
+    if regular_update_data:
+        logger.info(f"更新文件 {document_id} 的常規欄位: {regular_update_data}")
+        db_updated_doc = await crud_documents.update_document(db, document_id, regular_update_data)
+        if not db_updated_doc:
+            # 如果 trigger_analysis 成功但常規更新失敗或未找到文檔，updated_doc 可能是分析後的版本
+            # 如果 trigger_analysis 未執行，則這是主要錯誤
+            if not updated_doc:
+                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="更新常規欄位後未找到文檔。")
+        else:
+            updated_doc = db_updated_doc # 常規更新成功，這是最新的文檔版本
+
+    if not updated_doc: # 如果既沒有觸發分析，也沒有常規更新，或更新失敗
+        # 返回現有文檔（如果沒有任何操作被執行）或拋出錯誤（如果更新失敗）
+        # 為安全起見，重新獲取一次以確保狀態最新
+        current_doc_state = await crud_documents.get_document_by_id(db, document_id)
+        if not current_doc_state: # 這不應該發生，因為我們開始時檢查了它
+             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文檔在操作過程中消失。")
+        return current_doc_state
+
+    return updated_doc
+
+@router.post("/documents/process-batch", response_model=List[Document], summary="處理一批文檔")
+async def process_batch_documents_endpoint(
+    background_tasks: BackgroundTasks, 
+    request: Request, 
+    # Depends() 參數
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    doc_processor: DocumentProcessingService = Depends(get_document_processing_service),
+    settings_obj: Settings = Depends(get_settings),
+    # Form 參數 (帶隱式預設值)
+    document_ids: List[uuid.UUID] = Form(...),
+    processing_strategy: Optional[str] = Form(None),
+    custom_prompt_id: Optional[str] = Form(None),
+    analysis_type: Optional[str] = Form(None),
+    task_type: Optional[str] = Form(None),
+    ai_model_preference: Optional[str] = Form(None),
+    ai_ensure_chinese_output: Optional[bool] = Form(None),
+    ai_max_output_tokens: Optional[int] = Form(None)
+):
+    results: List[Document] = []
+    request_id_for_log = request.headers.get("X-Request-ID") # Simplified
+
+    for doc_id in document_ids:
+        try:
+            logger.info(f"開始批量處理文檔 ID: {doc_id}")
+            result_doc = await trigger_document_analysis_internal(
+                db=db,
+                doc_processor=doc_processor,
+                document_id=doc_id,
+                current_user_id=current_user.id,
+                settings_obj=settings_obj, # 傳遞 settings_obj
+                processing_strategy=processing_strategy,
+                custom_prompt_id=custom_prompt_id,
+                analysis_type=analysis_type,
+                task_type_str=task_type, # 傳遞 task_type (即 task_type_str)
+                request_id=request_id_for_log, # 傳遞 request_id
+                ai_model_preference=ai_model_preference,
+                ai_ensure_chinese_output=ai_ensure_chinese_output,
+                ai_max_output_tokens=ai_max_output_tokens
+            )
+            results.append(result_doc)
+        except HTTPException as e:
+            logger.error(f"批量處理文檔 {doc_id} 時發生 HTTP 錯誤 (狀態: {e.status_code}): {e.detail}")
+            # 根據需要決定是否要將錯誤的文檔信息加入 results 列表，或者僅記錄錯誤
+            # 為了簡單起見，這裡我們跳過錯誤的文檔，只記錄
+            # results.append({"id": doc_id, "status": "error", "detail": e.detail}) # 如果 DocumentResponse 結構允許
+        except Exception as e:
+            logger.error(f"批量處理文檔 {doc_id} 時發生未知錯誤: {e}", exc_info=True)
+            # 同上，決定如何處理錯誤
+    return results
+
+@router.post("/documents/process-unprocessed", summary="處理所有未處理的文檔")
+async def process_unprocessed_documents_endpoint(
+    background_tasks: BackgroundTasks, 
+    request: Request, 
+    # Depends() 參數
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    doc_processor: DocumentProcessingService = Depends(get_document_processing_service),
+    settings_obj: Settings = Depends(get_settings),
+    # Form 參數 (帶隱式預設值)
+    ai_model_preference: Optional[str] = Form(None),
+    ai_ensure_chinese_output: Optional[bool] = Form(None),
+    ai_max_output_tokens: Optional[int] = Form(None)
+):
+    # 1. 查找所有狀態為 PENDING 或 EXTRACTION_FAILED 或 ANALYSIS_FAILED 的文檔
+    #    或者，根據您的定義，"未處理"可能意味著其他狀態
+    unprocessed_statuses = [
+        DocumentStatus.PENDING, 
+        DocumentStatus.UPLOADED, # 假設剛上傳也是未處理
+        DocumentStatus.EXTRACTION_FAILED, 
+        DocumentStatus.ANALYSIS_FAILED
+    ]
+    
+    # 獲取符合條件的文檔 ID 列表
+    # crud_documents 中可能需要一個新方法 get_documents_by_statuses
+    # 這裡假設我們有一個方法可以獲取這些文檔的 ID
+    # documents_to_process = await crud_documents.get_documents_by_statuses(db, current_user.id, unprocessed_statuses)
+    # 簡化：假設我們直接獲取ID列表
+    
+    # 為了演示，我們將使用更簡單的方法：獲取所有 PENDING 的文檔
+    # 在實際應用中，您需要一個更健壯的方法來獲取未處理的文檔ID
+    documents_to_process_full = await crud_documents.get_documents(
+        db, owner_id=current_user.id, status_in=unprocessed_statuses, limit=1000 # 限制以防過多
+    )
+    
+    document_ids_to_process = [doc.id for doc in documents_to_process_full if doc.id is not None]
+
+    if not document_ids_to_process:
+        return {"message": "沒有找到需要處理的文檔。", "processed_count": 0}
+
+    logger.info(f"找到 {len(document_ids_to_process)} 個未處理的文檔，將開始處理...")
+    
+    results: List[Document] = []
+    processed_count = 0
+    failed_count = 0
+    request_id_for_log = request.headers.get("X-Request-ID") # Simplified
+
+    for doc_id in document_ids_to_process:
+        try:
+            result_doc = await trigger_document_analysis_internal(
+                db=db,
+                doc_processor=doc_processor,
+                document_id=doc_id,
+                current_user_id=current_user.id,
+                settings_obj=settings_obj,
+                request_id=request_id_for_log,
+                ai_model_preference=ai_model_preference,
+                ai_ensure_chinese_output=ai_ensure_chinese_output,
+                ai_max_output_tokens=ai_max_output_tokens
+                # processing_strategy, custom_prompt_id, analysis_type, task_type 留空或設預設
+            )
+            results.append(result_doc)
+            processed_count +=1
+        except Exception as e:
+            logger.error(f"處理未處理文檔 {doc_id} 時發生錯誤: {e}", exc_info=True)
+            failed_count += 1
+            # 可以選擇更新文檔狀態為某種錯誤狀態
+            try:
+                await crud_documents.update_document_status(db, doc_id, DocumentStatus.ANALYSIS_FAILED, f"自動批量處理失敗: {str(e)[:50]}")
+            except Exception as status_err:
+                 logger.error(f"更新文檔 {doc_id} 狀態為失敗時再次發生錯誤: {status_err}")
+
+
+    return {
+        "message": f"處理了 {processed_count} 個文檔，{failed_count} 個失敗。",
+        "processed_documents": results # 返回處理過的文檔列表 (如果需要)
+    }
+
+
+# from ...models.user_models import User as UserDB # UserDB 似乎是舊的或特定用途的別名
+@router.post("/documents/retry-failed-analysis", summary="重試所有分析失敗的文檔")
+async def retry_failed_documents_endpoint(
+    background_tasks: BackgroundTasks, 
+    request: Request, 
+    # Depends() 參數
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: User = Depends(get_current_active_user), # 使用 User 而非 UserDB
+    doc_processor: DocumentProcessingService = Depends(get_document_processing_service), # 新增
+    settings_obj: Settings = Depends(get_settings), # 新增
+    # Form 參數 (帶隱式預設值)
+    ai_model_preference: Optional[str] = Form(None),
+    ai_ensure_chinese_output: Optional[bool] = Form(None),
+    ai_max_output_tokens: Optional[int] = Form(None)
+):
+    failed_statuses = [DocumentStatus.ANALYSIS_FAILED, DocumentStatus.EXTRACTION_FAILED] # 也重試提取失敗的
+    
+    # 獲取符合條件的文檔 ID 列表
+    documents_to_retry_full = await crud_documents.get_documents(
+        db, owner_id=current_user.id, status_in=failed_statuses, limit=1000 # 限制以防過多
+    )
+    document_ids_to_retry = [doc.id for doc in documents_to_retry_full if doc.id is not None]
+
+    if not document_ids_to_retry:
+        return {"message": "沒有找到分析失敗需要重試的文檔。", "retried_count": 0}
+
+    logger.info(f"找到 {len(document_ids_to_retry)} 個分析失敗的文檔，將開始重試...")
+    
+    results: List[Document] = []
+    retried_count = 0
+    newly_failed_count = 0
+    request_id_for_log = request.headers.get("X-Request-ID") # Simplified
+
+    for doc_id in document_ids_to_retry:
+        try:
+            # 重試時，可能需要特定的 strategy 或 analysis_type，這裡簡化
+            result_doc = await trigger_document_analysis_internal(
+                db=db,
+                doc_processor=doc_processor,
+                document_id=doc_id,
+                current_user_id=current_user.id,
+                settings_obj=settings_obj,
+                request_id=request_id_for_log,
+                ai_model_preference=ai_model_preference,
+                ai_ensure_chinese_output=ai_ensure_chinese_output,
+                ai_max_output_tokens=ai_max_output_tokens,
+                processing_strategy="full_reanalysis" # 例如，指定一個重試策略
+            )
+            results.append(result_doc)
+            if result_doc.status == DocumentStatus.ANALYSIS_COMPLETED or result_doc.status == DocumentStatus.TEXT_EXTRACTED:
+                retried_count += 1
+            else: # 如果重試後狀態仍然是失敗或錯誤
+                newly_failed_count +=1
+        except Exception as e:
+            logger.error(f"重試分析失敗的文檔 {doc_id} 時發生錯誤: {e}", exc_info=True)
+            newly_failed_count += 1
+            try:
+                await crud_documents.update_document_status(db, doc_id, DocumentStatus.ANALYSIS_FAILED, f"重試分析失敗: {str(e)[:50]}")
+            except Exception as status_err:
+                 logger.error(f"更新文檔 {doc_id} 狀態為重試失敗時再次發生錯誤: {status_err}")
+
+    return {
+        "message": f"嘗試重試 {len(document_ids_to_retry)} 個文檔。成功重試 {retried_count} 個，仍然失敗 {newly_failed_count} 個。",
+        "retried_documents": results # 返回處理過的文檔列表 (如果需要)
+    }
 
 # ... (其他後續代碼如觸發端點註釋保持不變) 
