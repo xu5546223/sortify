@@ -142,7 +142,6 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
         session_id: currentSessionId || undefined,
         use_semantic_search: true,
         context_limit: 10,
-        force_stable_model: true,
         ensure_chinese_output: true
       };
       const unifiedResponse: AIResponse<AIQAResponse> = await askAIQuestionUnified(request);

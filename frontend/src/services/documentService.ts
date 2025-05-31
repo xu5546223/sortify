@@ -124,7 +124,6 @@ export const triggerDocumentProcessing = async (documentId: string, options?: Tr
   try {
     const payload: DocumentUpdateRequest = { 
       trigger_content_processing: true,
-      ai_force_stable_model: options?.ai_force_stable_model,
       ai_ensure_chinese_output: options?.ai_ensure_chinese_output
     };
     const response = await apiClient.patch<Document>(`/documents/${documentId}`, payload);

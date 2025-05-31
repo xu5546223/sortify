@@ -3,7 +3,6 @@ import { PageHeader, Card, Input, Button, ToggleSwitch, Select } from '../compon
 import type {
     SettingsData,
     UpdatableSettingsPayload,
-    TestApiKeyResponse,
     TestDBConnectionRequest,
     TestDBConnectionResponse
 } from '../types/apiTypes';
@@ -11,7 +10,6 @@ import {
     getSettings,
     updateSettings,
     getGoogleAIModels,
-    testGoogleApiKey,
     testDBConnection,
 } from '../services/systemService';
 
@@ -26,7 +24,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
       temperature: 0.7,
       is_api_key_configured: false,
       provider: 'google',
-      force_stable_model: true,
       ensure_chinese_output: true,
       max_output_tokens: null,
     },
@@ -38,10 +35,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
     autoSync: false,
   };
   const [settings, setSettings] = useState<SettingsData>(initialSettings);
-  const [apiKeyInput, setApiKeyInput] = useState<string>('');
-  const [isApiKeyVerified, setIsApiKeyVerified] = useState<boolean>(false);
-  const [apiKeyTestMessage, setApiKeyTestMessage] = useState<string | null>(null);
-  const [isTestingApiKey, setIsTestingApiKey] = useState<boolean>(false);
   const [availableAIModels, setAvailableAIModels] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -63,13 +56,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
         // Explicitly set boolean fields if they exist in data.aiService
         // If they are explicitly null or undefined in data.aiService, they might keep prev values or default.
         // We want to prioritize the value from 'data' if it's a boolean.
-        if (typeof data.aiService?.force_stable_model === 'boolean') {
-          newAiServiceSettings.force_stable_model = data.aiService.force_stable_model;
-        } else {
-          // If not a boolean (e.g. undefined, null), keep previous or default to true
-          newAiServiceSettings.force_stable_model = prev.aiService?.force_stable_model ?? true;
-        }
-
         if (typeof data.aiService?.ensure_chinese_output === 'boolean') {
           newAiServiceSettings.ensure_chinese_output = data.aiService.ensure_chinese_output;
         } else {
@@ -89,8 +75,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
           database: { ...prev.database, ...(data.database || {}) },
         };
       });
-      setIsApiKeyVerified(data.aiService?.is_api_key_configured || false);
-      
       const models = await getGoogleAIModels();
       setAvailableAIModels(models);
       showPCMessage('成功獲取目前設定與AI模型列表', 'success');
@@ -104,37 +88,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
   useEffect(() => {
     fetchInitialData();
   }, [fetchInitialData]);
-
-  const handleApiKeyInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setApiKeyInput(e.target.value);
-    setIsApiKeyVerified(false);
-    setApiKeyTestMessage(null);
-  };
-
-  const handleTestApiKey = async () => {
-    if (!apiKeyInput) {
-      setApiKeyTestMessage("請先輸入 API 金鑰");
-      return;
-    }
-    setIsTestingApiKey(true);
-    setApiKeyTestMessage(null);
-    try {
-      const response = await testGoogleApiKey(apiKeyInput);
-      setApiKeyTestMessage(response.message);
-      setIsApiKeyVerified(response.is_valid);
-      if(response.is_valid) {
-        showPCMessage('API 金鑰驗證成功！', 'success');
-      } else {
-        showPCMessage(`API 金鑰驗證失敗: ${response.message}`, 'error');
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "測試API金鑰時發生未知錯誤";
-      setApiKeyTestMessage(message);
-      setIsApiKeyVerified(false);
-      showPCMessage(`測試失敗: ${message}`, 'error');
-    }
-    setIsTestingApiKey(false);
-  };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
@@ -152,7 +105,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
         let newValue;
 
         // Explicitly handle boolean toggles for aiService
-        if (section === 'aiService' && (field === 'force_stable_model' || field === 'ensure_chinese_output')) {
+        if (section === 'aiService' && field === 'ensure_chinese_output') {
           newValue = newBooleanState;
         } else if (type === 'number' || name === 'aiService.max_output_tokens') {
           newValue = parseInt(value, 10);
@@ -224,12 +177,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (apiKeyInput && !isApiKeyVerified) {
-      showPCMessage("請先測試並驗證您輸入的 API 金鑰，或清除 API 金鑰欄位以保留現有金鑰。", "error");
-      setApiKeyTestMessage("請先測試此 API 金鑰或清空此欄位。");
-      return;
-    }
-
     const dbUri = settings.database?.uri;
     const dbName = settings.database?.dbName;
 
@@ -247,7 +194,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
         provider: settings.aiService?.provider || 'google',
         model: settings.aiService?.model || null,
         temperature: settings.aiService?.temperature ?? 0.7,
-        force_stable_model: settings.aiService?.force_stable_model ?? true,
         ensure_chinese_output: settings.aiService?.ensure_chinese_output ?? true,
         max_output_tokens: settings.aiService?.max_output_tokens ?? null,
       },
@@ -258,13 +204,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
       autoConnect: settings.autoConnect ?? false,
       autoSync: settings.autoSync ?? false,
     };
-
-    if (apiKeyInput && isApiKeyVerified) {
-      if (payload.aiService) {
-        payload.aiService.apiKey = apiKeyInput;
-      }
-    } else if (!apiKeyInput && settings.aiService?.is_api_key_configured) {
-    }
 
     try {
       const updatedSettingsData = await updateSettings(payload);
@@ -277,14 +216,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
         }
       }));
       
-      if (apiKeyInput && isApiKeyVerified) {
-        showPCMessage('設定已成功儲存 (包含新的 API 金鑰)', 'success');
-        setApiKeyInput('');
-        setIsApiKeyVerified(true);
-        setApiKeyTestMessage("新的 API 金鑰已儲存並驗證。");
-      } else {
-        showPCMessage('設定已成功儲存', 'success');
-      }
+      showPCMessage('設定已成功儲存', 'success');
       await fetchInitialData();
 
     } catch (error) {
@@ -305,37 +237,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
       <form onSubmit={handleSubmit}>
         <Card title="AI 服務設定" className="mb-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
-            <div className="flex flex-col space-y-1">
-              <Input
-                label="API 金鑰 (Google AI)"
-                name="aiService.apiKeyInput"
-                type="password"
-                value={apiKeyInput}
-                onChange={handleApiKeyInputChange}
-                placeholder="輸入新的 API 金鑰以更新"
-              />
-              <Button 
-                type="button" 
-                onClick={handleTestApiKey} 
-                disabled={isTestingApiKey || !apiKeyInput}
-                className="mt-1 w-full md:w-auto"
-              >
-                {isTestingApiKey ? '測試中...' : '測試連線'}
-              </Button>
-              {apiKeyTestMessage && (
-                <p className={`text-sm mt-1 ${isApiKeyVerified ? 'text-green-600' : 'text-red-600'}`}>
-                  {apiKeyTestMessage}
-                </p>
-              )}
-              {!apiKeyTestMessage && settings.aiService?.is_api_key_configured !== undefined && (
-                <p className="text-sm text-gray-500 mt-1">
-                  系統目前 API 金鑰狀態: {settings.aiService.is_api_key_configured ? 
-                    <span className="text-green-600">已配置</span> : 
-                    <span className="text-red-600">未配置</span>}
-                </p>
-              )}
-            </div>
-            
             <Select
               label="AI 模型 (Google)"
               name="aiService.model"
@@ -377,12 +278,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
             </div>
 
             <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <ToggleSwitch
-                label="AI 強制穩定模型"
-                name="aiService.force_stable_model"
-                checked={settings.aiService?.force_stable_model ?? true}
-                onChange={handleChange}
-              />
               <ToggleSwitch
                 label="AI 強制中文輸出"
                 name="aiService.ensure_chinese_output"
@@ -446,7 +341,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
           <Button 
             type="submit" 
             className="bg-blue-600 hover:bg-blue-700 text-white" 
-            disabled={isSaving || isTestingApiKey || (apiKeyInput !== '' && !isApiKeyVerified) || (settings.database?.uri !== '' && settings.database?.dbName !== '' && !isDBVerified) }
+            disabled={isSaving || (settings.database?.uri !== '' && settings.database?.dbName !== '' && !isDBVerified) }
           >
             {isSaving ? '儲存中...' : '儲存設定'}
           </Button>

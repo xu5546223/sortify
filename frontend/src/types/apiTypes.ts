@@ -111,8 +111,6 @@ export interface AIServiceSettings {
   model?: string | null;
   temperature?: number | null;
   is_api_key_configured?: boolean | null;
-  apiKey?: string | null;
-  force_stable_model?: boolean | null;
   ensure_chinese_output?: boolean | null;
   max_output_tokens?: number | null;
 }
@@ -120,9 +118,7 @@ export interface AIServiceSettings {
 export interface AIServiceSettingsUpdate {
   provider?: string;
   model?: string | null;
-  apiKey?: string | null;
   temperature?: number | null;
-  force_stable_model?: boolean | null;
   ensure_chinese_output?: boolean | null;
   max_output_tokens?: number | null;
 }
@@ -131,7 +127,6 @@ export interface DatabaseSettings {
   uri?: string | null;
   dbName?: string | null;
   trigger_content_processing?: boolean | null;
-  ai_force_stable_model?: boolean | null;
   ai_ensure_chinese_output?: boolean | null;
 }
 
@@ -242,28 +237,16 @@ export interface DocumentUpdateRequest {
   tags?: string[] | null;
   metadata?: Record<string, any> | null;
   trigger_content_processing?: boolean | null;
-  ai_force_stable_model?: boolean | null;
   ai_ensure_chinese_output?: boolean | null;
 }
 
 export interface TriggerDocumentProcessingOptions {
   trigger_content_processing?: boolean;
-  ai_force_stable_model?: boolean;
   ai_ensure_chinese_output?: boolean;
 }
 
 export interface UploadDocumentOptions {
   tags?: string[];
-}
-
-export interface TestApiKeyRequest {
-  api_key: string;
-}
-
-export interface TestApiKeyResponse {
-  status: "success" | "error";
-  message: string;
-  is_valid: boolean;
 }
 
 // BackendLogEntry is specific to getLogs, so it can stay with logService.ts or be defined here if preferred globally.
@@ -306,7 +289,6 @@ export interface AIQARequestUnified extends AIRequest {
   use_semantic_search?: boolean;
   use_structured_filter?: boolean;
   session_id?: string | null;
-  force_stable_model?: boolean | null;
   ensure_chinese_output?: boolean | null;
 }
 

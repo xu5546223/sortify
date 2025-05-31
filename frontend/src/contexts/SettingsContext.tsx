@@ -19,8 +19,8 @@ const defaultAiSettings: AIServiceSettings = {
   model: '', // Default to empty, fetched from API
   temperature: 0.7,
   is_api_key_configured: false,
-  force_stable_model: true,
   ensure_chinese_output: true,
+  max_output_tokens: null,
 };
 
 const defaultDbSettings: DatabaseSettings = {

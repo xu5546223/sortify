@@ -116,15 +116,6 @@ const SearchResultDetailModal: React.FC<SearchResultDetailModalProps> = ({
                 <Title level={5}>向量化詳細內容</Title>
                 <div className="bg-gray-50 p-3 rounded border border-gray-200">
                   <Tabs type="card" size="small">
-                    <TabPane tab="初始描述" key="initialDesc">
-                      {typeof document.analysis.ai_analysis_output.initial_description === 'string' ? (
-                        <Paragraph copyable className="whitespace-pre-wrap">
-                          {document.analysis.ai_analysis_output.initial_description}
-                        </Paragraph>
-                      ) : (
-                        <Empty description="無初始描述信息" />
-                      )}
-                    </TabPane>
                     <TabPane tab="文本摘要" key="textSummary">
                       {document.analysis.ai_analysis_output.initial_summary ||
                        document.analysis.ai_analysis_output.key_information?.content_summary ? (

@@ -4,8 +4,8 @@ import type {
   UpdatableSettingsPayload,
   TestDBConnectionRequest,
   TestDBConnectionResponse,
-  TestApiKeyRequest, // Added for testGoogleApiKey
-  TestApiKeyResponse // Added for testGoogleApiKey
+  // TestApiKeyRequest, // Removed as per previous step
+  // TestApiKeyResponse // Removed as per previous step
 } from '../types/apiTypes';
 import axios from 'axios'; // Import axios for isAxiosError check
 
@@ -70,29 +70,29 @@ export const getGoogleAIModels = async (): Promise<string[]> => {
   }
 };
 
-export const testGoogleApiKey = async (apiKey: string): Promise<TestApiKeyResponse> => {
-  console.log(`API: Testing Google AI API Key ending with ...${apiKey.slice(-4)}`);
-  try {
-    const payload: TestApiKeyRequest = { api_key: apiKey };
-    const response = await apiClient.post<TestApiKeyResponse>('/system/test-ai-api-key', payload);
-    console.log('API: API Key test response:', response.data);
-    return response.data;
-  } catch (error: any) {
-    console.error('API: Failed to test API Key:', error);
-    if (axios.isAxiosError(error) && error.response) {
-      if (error.response.data && typeof error.response.data.is_valid === 'boolean') {
-        return error.response.data as TestApiKeyResponse;
-      }
-      return {
-        status: "error",
-        message: error.response.data?.detail || error.message || "測試 API 金鑰時發生未知網路或伺服器錯誤",
-        is_valid: false
-      };
-    }
-    return {
-      status: "error",
-      message: error.message || "測試 API 金鑰時發生未知錯誤",
-      is_valid: false
-    };
-  }
-}; 
+// export const testGoogleApiKey = async (apiKey: string): Promise<TestApiKeyResponse> => {
+//   console.log(`API: Testing Google AI API Key ending with ...${apiKey.slice(-4)}`);
+//   try {
+//     const payload: TestApiKeyRequest = { api_key: apiKey };
+//     const response = await apiClient.post<TestApiKeyResponse>('/system/test-ai-api-key', payload);
+//     console.log('API: API Key test response:', response.data);
+//     return response.data;
+//   } catch (error: any) {
+//     console.error('API: Failed to test API Key:', error);
+//     if (axios.isAxiosError(error) && error.response) {
+//       if (error.response.data && typeof error.response.data.is_valid === 'boolean') {
+//         return error.response.data as TestApiKeyResponse;
+//       }
+//       return {
+//         status: "error",
+//         message: error.response.data?.detail || error.message || "測試 API 金鑰時發生未知網路或伺服器錯誤",
+//         is_valid: false
+//       };
+//     }
+//     return {
+//       status: "error",
+//       message: error.message || "測試 API 金鑰時發生未知錯誤",
+//       is_valid: false
+//     };
+//   }
+// }; 

@@ -34,7 +34,6 @@ export const askAIQuestion = async (question: string, session_id?: string): Prom
       session_id,
       use_semantic_search: true,
       context_limit: 10,
-      force_stable_model: true, // Default values from original api.ts
       ensure_chinese_output: true // Default values from original api.ts
     };
     

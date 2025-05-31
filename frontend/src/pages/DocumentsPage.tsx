@@ -422,46 +422,68 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
   const documentFilterOptions = useMemo(() => [ { value: 'all', label: '所有狀態' }, { value: 'uploaded', label: '已上傳' }, { value: 'pending_extraction', label: '待提取' }, { value: 'text_extracted', label: '已提取' }, { value: 'pending_analysis', label: '待分析' }, { value: 'analysis_completed', label: '分析完成' }, { value: 'completed', label: '已完成' }, { value: 'processing_error', label: '處理錯誤' }, ], []);
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) {
+    const files = event.target.files;
+    if (!files || files.length === 0) {
       showPCMessage('未選擇任何文件', 'info');
       return;
     }
+
     setIsUploading(true);
-    showPCMessage(`正在上傳 ${file.name}...`, 'info');
-    try {
-      const uploadedDoc = await uploadDocument(file);
-      showPCMessage(`文件 ${uploadedDoc.filename} 上傳成功!`, 'success');
-      if (currentPage !== 1) {
-        setCurrentPage(1);
-      } else {
-        fetchDocumentsData();
-      }
-    } catch (error: any) {
-      console.error('Failed to upload document:', error);
-      if (error.response) {
-        console.error('API Error Response Data:', error.response.data);
-        console.error('API Error Response Status:', error.response.status);
-        console.error('API Error Response Headers:', error.response.headers);
-        if (error.response.data && error.response.data.detail) {
-          console.error('FastAPI Validation Error Detail:', error.response.data.detail);
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      showPCMessage(`正在上傳第 ${i + 1}/${files.length} 個文件: ${file.name}...`, 'info');
+      try {
+        const uploadedDoc = await uploadDocument(file);
+        showPCMessage(`文件 ${uploadedDoc.filename} 上傳成功!`, 'success');
+        successCount++;
+      } catch (error: any) {
+        errorCount++;
+        console.error('Failed to upload document:', file.name, error);
+        if (error.response) {
+          console.error('API Error Response Data:', error.response.data);
+          console.error('API Error Response Status:', error.response.status);
+          console.error('API Error Response Headers:', error.response.headers);
+          if (error.response.data && error.response.data.detail) {
+            console.error('FastAPI Validation Error Detail:', error.response.data.detail);
+          }
+        } else if (error.request) {
+          console.error('API Error Request Data:', error.request);
+        } else {
+          console.error('API Error Message:', error.message);
         }
-      } else if (error.request) {
-        console.error('API Error Request Data:', error.request);
+        const errorDetail = error.response?.data?.detail || error.message || '上傳失敗，請稍後再試';
+        let displayError = errorDetail;
+        if (Array.isArray(errorDetail)) {
+          displayError = errorDetail.map(err => `Field: ${err.loc.join(' -> ')}, Error: ${err.msg}`).join('\n');
+        }
+        showPCMessage(`上傳 ${file.name} 失敗: ${displayError}`, 'error');
+      }
+    }
+
+    setIsUploading(false);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''; // 清空選擇，以便下次能觸發 change 事件
+    }
+
+    if (successCount > 0) {
+      if (currentPage !== 1) {
+        setCurrentPage(1); // 如果有成功上傳的，且不在第一頁，跳轉到第一頁
       } else {
-        console.error('API Error Message:', error.message);
+        fetchDocumentsData(); // 否則，直接刷新當前頁數據
       }
-      const errorDetail = error.response?.data?.detail || error.message || '上傳失敗，請稍後再試';
-      let displayError = errorDetail;
-      if (Array.isArray(errorDetail)) {
-        displayError = errorDetail.map(err => `Field: ${err.loc.join(' -> ')}, Error: ${err.msg}`).join('\n');
-      }
-      showPCMessage(`上傳 ${file.name} 失敗: ${displayError}`, 'error');
-    } finally {
-      setIsUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
+    }
+    
+    if (files.length > 1) { // 如果上傳了多個檔案，給一個總結提示
+        let summaryMessage = `批量上傳完成：${successCount} 個成功`;
+        if (errorCount > 0) {
+            summaryMessage += `，${errorCount} 個失敗。`;
+        } else {
+            summaryMessage += `。`;
+        }
+        showPCMessage(summaryMessage, errorCount > 0 ? 'info' : 'success');
     }
   };
 
@@ -482,11 +504,6 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
     try {
       // 從全局設定獲取 AI 選項
       const aiOptions: TriggerDocumentProcessingOptions = {};
-      if (globalSettings.aiService?.force_stable_model !== null && globalSettings.aiService?.force_stable_model !== undefined) {
-        aiOptions.ai_force_stable_model = globalSettings.aiService.force_stable_model;
-      } else {
-        aiOptions.ai_force_stable_model = undefined;
-      }
       if (globalSettings.aiService?.ensure_chinese_output !== null && globalSettings.aiService?.ensure_chinese_output !== undefined) {
         aiOptions.ai_ensure_chinese_output = globalSettings.aiService.ensure_chinese_output;
       } else {
@@ -525,11 +542,6 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
     try {
       // 從全局設定獲取 AI 選項
       const aiOptions: TriggerDocumentProcessingOptions = {};
-      if (globalSettings.aiService?.force_stable_model !== null && globalSettings.aiService?.force_stable_model !== undefined) {
-        aiOptions.ai_force_stable_model = globalSettings.aiService.force_stable_model;
-      } else {
-        aiOptions.ai_force_stable_model = undefined;
-      }
       if (globalSettings.aiService?.ensure_chinese_output !== null && globalSettings.aiService?.ensure_chinese_output !== undefined) {
         aiOptions.ai_ensure_chinese_output = globalSettings.aiService.ensure_chinese_output;
       } else {
