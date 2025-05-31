@@ -10,7 +10,6 @@ class AIServiceSettingsInput(BaseModel):
     # apiKey is received here but will be stored in .env, not directly in DB model if this input model is part of UpdatableSettingsData.
     api_key: Optional[str] = Field(None, alias="apiKey", title="AI 服務 API 金鑰") 
     temperature: Optional[float] = Field(None, title="AI 模型 Temperature", ge=0, le=1, description="控制模型輸出的隨機性，0-1 之間")
-    force_stable_model: Optional[bool] = Field(None, alias="forceStableModel", title="強制使用穩定模型")
     ensure_chinese_output: Optional[bool] = Field(None, alias="ensureChineseOutput", title="確保中文輸出")
     max_output_tokens: Optional[int] = Field(None, alias="maxOutputTokens", title="最大輸出Token數量", ge=1)
 
@@ -23,7 +22,6 @@ class AIServiceSettingsStored(BaseModel):
     model: Optional[str] = Field(None, description="AI 模型名稱")
     temperature: Optional[float] = Field(None, title="AI 模型 Temperature", ge=0, le=1)
     is_api_key_configured: bool = Field(False, description="指示 AI API Key 是否已在環境變數中設定")
-    force_stable_model: Optional[bool] = Field(default=False, title="強制使用穩定模型")
     ensure_chinese_output: Optional[bool] = Field(default=False, title="確保中文輸出")
     max_output_tokens: Optional[int] = Field(None, title="最大輸出Token數量", ge=1)
 
@@ -71,7 +69,6 @@ class StoredAISettings(BaseModel):
     provider: Optional[str] = Field("google")
     model: Optional[str] = None
     temperature: Optional[float] = None
-    force_stable_model: Optional[bool] = Field(default=False, title="強制使用穩定模型")
     ensure_chinese_output: Optional[bool] = Field(default=False, title="確保中文輸出")
     max_output_tokens: Optional[int] = Field(None, title="最大輸出Token數量", ge=1)
 

@@ -24,7 +24,8 @@ class SemanticSummary(BaseModel):
 class VectorRecord(BaseModel):
     """向量記錄模型"""
     document_id: str = Field(..., description="對應的MongoDB文檔ID")
-    vector_id: Optional[str] = Field(None, description="Milvus中的向量ID")
+    owner_id: str = Field(..., description="文檔所有者的ID")
+    vector_id: Optional[str] = Field(None, description="向量資料庫中的內部向量ID")
     embedding_vector: Optional[List[float]] = Field(None, description="向量數據")
     chunk_text: Optional[str] = Field(None, description="被向量化的原始文本塊或其摘要")
     embedding_model: str = Field(..., description="使用的Embedding模型")

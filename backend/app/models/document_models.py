@@ -143,7 +143,8 @@ class DocumentUpdate(BaseModel):
     
     trigger_content_processing: Optional[bool] = Field(None, description="設為true以觸發文件內容處理(文本提取或AI圖片分析)")
 
-    ai_force_stable_model: Optional[bool] = Field(None, description="是否強制使用AI穩定模型")
     ai_ensure_chinese_output: Optional[bool] = Field(None, description="是否確保AI使用中文輸出")
+    ai_model_preference: Optional[str] = Field(None, description="AI模型偏好")
+    ai_max_output_tokens: Optional[int] = Field(None, description="AI最大輸出Token數")
 
     updated_at: datetime = Field(default_factory=datetime.utcnow) 
