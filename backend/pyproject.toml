@@ -7,6 +7,7 @@ requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.100.0",
     "uvicorn[standard]>=0.20.0",
+    "copilotkit",
     "motor>=3.0.0",
     "python-dotenv>=1.0.0",
     # "httpx>=0.28.1", # 主要用於測試，已在 test optional-dependencies 中

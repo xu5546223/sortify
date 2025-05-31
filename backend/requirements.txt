@@ -17,6 +17,7 @@ charset-normalizer==3.4.1
 chromadb>=0.4.0
 click==8.1.8
 colorama==0.4.6
+copilotkit
 coloredlogs==15.0.1
 cryptography==44.0.3
 Deprecated==1.2.18
@@ -47,7 +48,7 @@ grpcio-status==1.71.0
 h11==0.14.0
 httpcore==1.0.7
 httplib2==0.22.0
-httpx==0.28.1
+httpx<0.28.0,>=0.27.2
 httpx-sse==0.4.0
 huggingface-hub==0.32.0
 humanfriendly==10.0

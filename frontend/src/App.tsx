@@ -19,6 +19,9 @@ import VectorDatabasePage from './pages/VectorDatabasePage'; // 新增
 import AIQAPage from './pages/AIQAPage'; // 新增
 import { ThemeShowcasePage } from './pages/ThemeShowcasePage'; // 主題展示頁面
 
+import { CopilotPopup } from '@copilotkit/react-ui'; // 新增導入
+import "@copilotkit/react-ui/styles.css"; // 新增導入樣式
+
 // Props 類型定義，用於期望 showPCMessage 的頁面組件
 interface PageWithMessageHandlerProps {
   showPCMessage: (message: string, type?: string, duration?: number) => () => void;
@@ -189,6 +192,7 @@ const AppWithTheme: React.FC = () => {
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
       <MessageBoxPC message={messageBox.message} type={messageBox.type} visible={messageBox.visible} />
+      <CopilotPopup /> {/* 新增 Copilot Popup */}
     </ConfigProvider>
   );
 };
