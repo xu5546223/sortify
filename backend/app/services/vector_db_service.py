@@ -102,7 +102,7 @@ class VectorDatabaseService:
                 embeddings.append(record.embedding_vector)
                 metadatas.append({
                     "document_id": record.document_id,
-                    # TODO: "file_type" 應該從文檔元數據中獲取並填充
+                    "owner_id": record.owner_id,
                     "file_type": record.metadata.get("file_type", "") if record.metadata else "", 
                     "created_at": record.created_at.isoformat()
                 })
@@ -129,19 +129,26 @@ class VectorDatabaseService:
         self, 
         query_vector: List[float], 
         top_k: int = 10,
-        similarity_threshold: float = 0.5
+        similarity_threshold: float = 0.5,
+        owner_id_filter: Optional[str] = None
     ) -> List[SemanticSearchResult]:
-        """搜索相似向量"""
+        """搜索相似向量，可選根據 owner_id 過濾"""
         try:
             if not self.collection:
                 raise ValueError("集合未初始化")
             
+            # 準備查詢參數
+            query_params: Dict[str, Any] = {
+                "query_embeddings": [query_vector],
+                "n_results": top_k,
+                "include": ["documents", "metadatas", "distances"]
+            }
+
+            if owner_id_filter:
+                query_params["where"] = {"owner_id": owner_id_filter}
+            
             # 執行搜索
-            results = self.collection.query(
-                query_embeddings=[query_vector],
-                n_results=top_k,
-                include=["documents", "metadatas", "distances"]
-            )
+            results = self.collection.query(**query_params)
             
             # 處理搜索結果
             search_results = []
@@ -162,12 +169,13 @@ class VectorDatabaseService:
                             metadata={
                                 "file_type": metadata.get("file_type", ""),
                                 "created_at": metadata.get("created_at", ""),
+                                "owner_id": metadata.get("owner_id", ""),
                                 "vector_id": doc_id
                             }
                         )
                         search_results.append(search_result)
             
-            logger.info(f"搜索完成，找到 {len(search_results)} 個相似結果")
+            logger.info(f"搜索完成，找到 {len(search_results)} 個相似結果。Owner filter: {'applied' if owner_id_filter else 'not applied'}")
             return search_results
             
         except Exception as e:

@@ -19,8 +19,8 @@ DEFAULT_GOOGLE_AI_MODELS = [
     "gemini-1.0-pro",
     "gemini-pro",
     "gemini-2.0-flash",
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
+    "gemini-2.5-flash-preview-05-20",
+    "gemini-2.5-pro-preview-05-06",
 ]
 
 def _fetch_dynamic_google_models() -> Optional[List[str]]:
@@ -56,57 +56,47 @@ def get_google_ai_models() -> List[str]:
     all_models_from_api = _fetch_dynamic_google_models()
     
     if all_models_from_api:
-        # 直接返回可用的API模型名稱，按優先級排序
         preferred_models = []
-        
-        # 定義模型優先級順序 - 從最新到最舊，優先選擇穩定版本
         priority_order = [
-            # Gemini 2.5 系列（預覽版本）
-            "gemini-2.5-pro-preview-05-06",
-            "gemini-2.5-pro-preview-03-25", 
-            "gemini-2.5-pro-exp-03-25",
-            "gemini-2.5-flash-preview-05-20",
-            "gemini-2.5-flash-preview-04-17",
-            
-            # Gemini 2.0 系列
-            "gemini-2.0-flash",
-            "gemini-2.0-flash-001",
-            "gemini-2.0-flash-exp",
-            
-            # Gemini 1.5 系列
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-002",
-            "gemini-1.5-flash-001",
-            "gemini-1.5-pro",
-            "gemini-1.5-pro-002",
-            "gemini-1.5-pro-001",
-            
-            # 舊版本
-            "gemini-1.0-pro",
-            "gemini-1.0-pro-vision-latest",
-            "gemini-pro",
-            "gemini-pro-vision",
+            "gemini-2.5-pro-preview-05-06", "gemini-2.5-pro-preview-03-25", "gemini-2.5-pro-exp-03-25",
+            "gemini-2.5-flash-preview-05-20", "gemini-2.5-flash-preview-04-17",
+            "gemini-2.0-flash", "gemini-2.0-flash-001", "gemini-2.0-flash-exp",
+            "gemini-1.5-flash", "gemini-1.5-flash-002", "gemini-1.5-flash-001",
+            "gemini-1.5-pro", "gemini-1.5-pro-002", "gemini-1.5-pro-001",
+            "gemini-1.0-pro", "gemini-1.0-pro-vision-latest", "gemini-pro", "gemini-pro-vision",
         ]
-        
-        # 按優先級順序添加可用的模型（避免重複）
         added_models = set()
         for model_name in priority_order:
             if model_name in all_models_from_api and model_name not in added_models:
                 preferred_models.append(model_name)
                 added_models.add(model_name)
         
-        # 添加其他在API中可用但不在優先級列表中的DEFAULT模型
+        # Ensure models from DEFAULT_GOOGLE_AI_MODELS that are in the dynamic list are added
         for model in DEFAULT_GOOGLE_AI_MODELS:
             if model in all_models_from_api and model not in added_models:
                 preferred_models.append(model)
                 added_models.add(model)
         
+        # Add any remaining models from DEFAULT_GOOGLE_AI_MODELS that were not in the dynamic list
+        # but are defined in our defaults, ensuring they are available.
+        for model in DEFAULT_GOOGLE_AI_MODELS:
+            if model not in added_models:
+                # We might want to check if these are *actually* available via a quick API call,
+                # or trust our DEFAULT_GOOGLE_AI_MODELS list. For now, let's add them.
+                # If they are not truly available, later calls using them will fail,
+                # which is existing behavior for misconfigured models.
+                # Or, only add them if all_models_from_api already contains *some* variant (e.g. preview)
+                # For simplicity and to ensure user_global_preference for "gemini-2.5-flash" can be picked up
+                # if it's in DEFAULT_GOOGLE_AI_MODELS even if not in dynamic list.
+                preferred_models.append(model)
+                added_models.add(model)
+                logger.info(f"Added model '{model}' from DEFAULT_GOOGLE_AI_MODELS as it was not in the dynamic list or priority order but is a known default.")
+
         if preferred_models:
-            logger.info(f"Using dynamically fetched Google AI models: {preferred_models}")
-            return preferred_models
+            logger.info(f"Using dynamically fetched and default Google AI models: {sorted(list(set(preferred_models)))}") # Sort and unique
+            return sorted(list(set(preferred_models))) # Return unique sorted list
         else:
             logger.warning("Dynamic fetch succeeded but no preferred models found.")
-            # 回退：返回所有可用的DEFAULT模型
             fallback_models = [model for model in all_models_from_api if model in DEFAULT_GOOGLE_AI_MODELS]
             if fallback_models:
                 logger.info(f"Using fallback matched models: {fallback_models}")
@@ -236,7 +226,6 @@ class TaskConfig:
     generation_params: GenerationParams
     timeout_seconds: int = 30
     retry_attempts: int = 3
-    stability_priority: bool = True  # 優先穩定性而非最新功能
     expected_token_range: tuple = (2000, 4000)  # 預期Token範圍
     token_variance_alert_threshold: float = 0.3  # 30%變異告警
 
@@ -247,18 +236,15 @@ class UnifiedAIConfig:
         self._models: Dict[str, AIModelConfig] = {}
         self._task_configs: Dict[TaskType, TaskConfig] = {}
         self._current_provider = AIProvider.GOOGLE
-        # 新增：儲存從資料庫讀取的用戶AI偏好
         self._user_global_ai_preferences: Dict[str, Any] = {
             "model": None,
-            "force_stable_model": True, # 預設值
-            "ensure_chinese_output": True, # 預設值
-            "max_output_tokens": None # 新增預設值
+            "ensure_chinese_output": True,
+            "max_output_tokens": None
         }
         self._initialize_default_configs()
     
     def _initialize_default_configs(self):
         """初始化預設配置"""
-        # 初始化Google模型配置
         google_models = get_google_ai_models()
         for model_id in google_models:
             self._models[model_id] = AIModelConfig(
@@ -272,7 +258,6 @@ class UnifiedAIConfig:
                 is_available=True
             )
         
-        # 初始化任務配置
         self._initialize_task_configs()
     
     def _get_model_max_input(self, model_id: str) -> int:
@@ -298,287 +283,112 @@ class UnifiedAIConfig:
     
     def _initialize_task_configs(self):
         """初始化任務配置"""
-        # 從 self._user_global_ai_preferences 獲取用戶偏好模型，如果不存在或無效，則使用環境變數的預設值
         user_preferred_model_from_db = self._user_global_ai_preferences.get("model")
-        
-        if user_preferred_model_from_db and user_preferred_model_from_db in self._models:
-            user_preferred_model = user_preferred_model_from_db
-            logger.info(f"初始化任務配置時，使用來自DB的用戶偏好模型: {user_preferred_model}")
-        else:
-            user_preferred_model = settings.DEFAULT_AI_MODEL
-            logger.info(f"初始化任務配置時，DB中無有效用戶偏好模型或模型不存在，回退到預設模型: {user_preferred_model} (DB值: {user_preferred_model_from_db})")
+        user_preferred_model = user_preferred_model_from_db if user_preferred_model_from_db and user_preferred_model_from_db in self._models else settings.DEFAULT_AI_MODEL
+        if user_preferred_model != user_preferred_model_from_db : logger.info(f"初始化任務配置時，DB中無有效用戶偏好模型 ('{user_preferred_model_from_db}') 或模型不存在，回退到預設模型: {user_preferred_model}")
+        else: logger.info(f"初始化任務配置時，使用來自DB的用戶偏好模型: {user_preferred_model}")
 
-        # 構建偏好模型列表：用戶偏好模型優先，然後是其他可用模型
-        def get_preferred_models_for_task(supports_images: bool = False) -> List[str]:
+        def get_preferred_models_for_task_init(supports_images: bool = False) -> List[str]:
             preferred = []
-            
-            # 首先添加用戶偏好模型（如果適合任務）
-            if user_preferred_model in self._models:
-                model_config = self._models[user_preferred_model]
-                if not supports_images or model_config.supports_images:
-                    preferred.append(user_preferred_model)
-            
-            # 然後添加其他適合的模型
+            if user_preferred_model and user_preferred_model in self._models:
+                model_cfg = self._models[user_preferred_model]
+                if not supports_images or model_cfg.supports_images: preferred.append(user_preferred_model)
             for model_id in ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash", "gemini-1.5-pro"]:
                 if model_id not in preferred and model_id in self._models:
-                    model_config = self._models[model_id]
-                    if not supports_images or model_config.supports_images:
-                        preferred.append(model_id)
-            
-            return preferred if preferred else ["gemini-1.5-flash"]  # 最後的後備選擇
+                    model_cfg = self._models[model_id]
+                    if not supports_images or model_cfg.supports_images: preferred.append(model_id)
+            return preferred if preferred else ["gemini-1.5-flash"]
         
-        # 文本生成任務配置
+        common_safety_settings = {
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+        }
         self._task_configs[TaskType.TEXT_GENERATION] = TaskConfig(
-            task_type=TaskType.TEXT_GENERATION,
-            preferred_models=get_preferred_models_for_task(supports_images=False),
-            generation_params=GenerationParams(
-                temperature=settings.AI_TEMPERATURE,
-                top_p=settings.AI_TOP_P,
-                top_k=settings.AI_TOP_K,
-                max_output_tokens=settings.AI_MAX_OUTPUT_TOKENS,
-                response_mime_type="application/json",
-                safety_settings={
-                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                }
-            ),
-            timeout_seconds=30,
-            retry_attempts=3
-        )
-        
-        # 圖片分析任務配置
+            task_type=TaskType.TEXT_GENERATION, preferred_models=get_preferred_models_for_task_init(False),
+            generation_params=GenerationParams(temperature=settings.AI_TEMPERATURE, top_p=settings.AI_TOP_P, top_k=settings.AI_TOP_K,
+                                           max_output_tokens=settings.AI_MAX_OUTPUT_TOKENS, response_mime_type="application/json",
+                                           safety_settings=common_safety_settings), timeout_seconds=30, retry_attempts=3)
         self._task_configs[TaskType.IMAGE_ANALYSIS] = TaskConfig(
-            task_type=TaskType.IMAGE_ANALYSIS,
-            preferred_models=get_preferred_models_for_task(supports_images=True),
-            generation_params=GenerationParams(
-                temperature=settings.AI_TEMPERATURE,
-                top_p=settings.AI_TOP_P,
-                top_k=settings.AI_TOP_K,
-                max_output_tokens=settings.AI_MAX_OUTPUT_TOKENS_IMAGE,
-                response_mime_type="application/json",
-                safety_settings={
-                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                }
-            ),
-            timeout_seconds=45,
-            retry_attempts=2
-        )
-    
-    async def get_preferred_model_for_task(
-        self, 
-        task_type: TaskType,
-        # db: Optional[AsyncIOMotorDatabase] = None, # 不再總是需要DB，因為偏好已載入
-        user_preference_override: Optional[str] = None # 允許外部調用覆蓋DB中設定的模型
-    ) -> Optional[str]:
-        """獲取任務的首選模型"""
-        try:
-            # 1. 優先使用外部傳入的 user_preference_override
-            if user_preference_override and user_preference_override in self._models:
-                model_config_override = self._models[user_preference_override]
-                if self._is_model_suitable_for_task(model_config_override, task_type):
-                    logger.debug(f"使用外部覆蓋模型: {user_preference_override} 適用於任務 {task_type.value}")
-                    return user_preference_override
-            
-            # 2. 使用內部存儲的用戶全局偏好模型 (已通過 reload_task_configs 從 DB 或 env 載入)
-            user_preferred_model_from_global_prefs = self._user_global_ai_preferences.get("model")
-            logger.debug(f"[GetPrefModel Step 2] Global pref model from self._user_global_ai_preferences: '{user_preferred_model_from_global_prefs}'")
-            if user_preferred_model_from_global_prefs and user_preferred_model_from_global_prefs in self._models:
-                model_config_global = self._models[user_preferred_model_from_global_prefs]
-                logger.debug(f"[GetPrefModel Step 2] Model config for '{user_preferred_model_from_global_prefs}': supports_images={model_config_global.supports_images}, is_available={model_config_global.is_available}")
-                is_suitable = self._is_model_suitable_for_task(model_config_global, task_type)
-                logger.debug(f"[GetPrefModel Step 2] Is '{user_preferred_model_from_global_prefs}' suitable for task '{task_type.value}'? {is_suitable}")
-                if is_suitable:
-                    logger.info(f"選用[全局偏好模型]: {user_preferred_model_from_global_prefs} (適用於任務 {task_type.value})")
-                    return user_preferred_model_from_global_prefs
-                else:
-                    logger.debug(f"[GetPrefModel Step 2] Global pref model '{user_preferred_model_from_global_prefs}' is NOT suitable for task '{task_type.value}'.")
-            else:
-                logger.debug(f"[GetPrefModel Step 2] Global pref model '{user_preferred_model_from_global_prefs}' not found in self._models or is None.")
-            
-            # 3. 使用任務配置中定義的偏好模型列表 (這些列表也應該在 reload_task_configs 中被用戶偏好影響)
-            task_config = self._task_configs.get(task_type)
-            if task_config:
-                for model_id in task_config.preferred_models:
-                    if model_id in self._models and self._models[model_id].is_available:
-                        if self._is_model_suitable_for_task(self._models[model_id], task_type):
-                            logger.debug(f"使用任務配置模型: {model_id} 適用於任務 {task_type.value}")
-                            return model_id
-            
-            # 4. 如果上述都沒有，但全局偏好中有模型（即使不適合任務，作為最後手段，如果沒有更合適的）
-            #    這一步可能需要重新考慮，通常應該返回 None 如果沒有適合的模型
-            if user_preferred_model_from_global_prefs and user_preferred_model_from_global_prefs in self._models:
-                logger.debug(f"回退到全局偏好模型 (可能不完全適合任務): {user_preferred_model_from_global_prefs}")
-                return user_preferred_model_from_global_prefs
-            
-            # 5. 返回第一個可用的且適合任務的模型 (作為最後的後備)
-            available_models = self.list_available_models(task_type=task_type)
-            if available_models:
-                logger.debug(f"回退到第一個可用且適合任務的模型: {available_models[0].model_id}")
-                return available_models[0].model_id
-                
-            logger.warning(f"沒有找到適用於任務 {task_type.value} 的偏好模型。")
-            return None
-        
-        except Exception as e:
-            logger.error(f"獲取首選模型失敗: {e}")
-            # 使用已儲存的全局偏好模型或最終後備
-            return self._user_global_ai_preferences.get("model") or "gemini-1.5-flash"
+            task_type=TaskType.IMAGE_ANALYSIS, preferred_models=get_preferred_models_for_task_init(True),
+            generation_params=GenerationParams(temperature=settings.AI_TEMPERATURE, top_p=settings.AI_TOP_P, top_k=settings.AI_TOP_K,
+                                           max_output_tokens=settings.AI_MAX_OUTPUT_TOKENS_IMAGE, response_mime_type="application/json",
+                                           safety_settings=common_safety_settings), timeout_seconds=45, retry_attempts=2)
     
     def _is_model_suitable_for_task(self, model_config: AIModelConfig, task_type: TaskType) -> bool:
         """檢查模型是否適合指定任務"""
-        if task_type == TaskType.IMAGE_ANALYSIS:
-            return model_config.supports_images
+        if task_type == TaskType.IMAGE_ANALYSIS: return model_config.supports_images
         return True
     
-    async def _get_user_model_preference(
-        self, 
-        db: AsyncIOMotorDatabase
-    ) -> Dict[str, Any]: # 返回包含完整偏好的字典
-        """從資料庫獲取用戶全局AI偏好 (模型, force_stable, ensure_chinese, max_output_tokens)"""
+    async def _get_user_model_preference(self, db: AsyncIOMotorDatabase) -> Dict[str, Any]:
+        """從資料庫獲取用戶全局AI偏好 (模型, ensure_chinese, max_output_tokens)"""
         default_prefs = {
-            "model": settings.DEFAULT_AI_MODEL, # 從環境變數讀取基礎模型偏好
-            "force_stable_model": True, # 預設為 True
-            "ensure_chinese_output": True, # 預設為 True
-            "max_output_tokens": settings.AI_MAX_OUTPUT_TOKENS # 從全局配置獲取預設最大Token
+            "model": settings.DEFAULT_AI_MODEL,
+            "ensure_chinese_output": True,
+            "max_output_tokens": settings.AI_MAX_OUTPUT_TOKENS
         }
         try:
             config_doc = await db.system_config.find_one({"_id": "main_system_settings"})
             if config_doc and "ai_service" in config_doc and isinstance(config_doc["ai_service"], dict):
                 ai_settings_db = config_doc["ai_service"]
                 
-                # 獲取原始值
-                raw_model_pref = ai_settings_db.get("model") # 可能為 None, 'None' string, or actual model string
-                force_stable_pref = ai_settings_db.get("force_stable_model", default_prefs["force_stable_model"])
+                raw_model_pref = ai_settings_db.get("model")
                 ensure_chinese_pref = ai_settings_db.get("ensure_chinese_output", default_prefs["ensure_chinese_output"])
-                max_tokens_pref = ai_settings_db.get("max_output_tokens") # 新增獲取
+                max_tokens_pref = ai_settings_db.get("max_output_tokens")
                 
-                # 處理 model_pref
-                processed_model_pref = default_prefs["model"] # 預設值
-                if isinstance(raw_model_pref, str) and raw_model_pref != 'None':
-                    processed_model_pref = raw_model_pref # 使用DB中的有效模型名稱
-                elif raw_model_pref is None: # 如果DB中明確是null/None，則表示不指定模型，應使用環境變數預設或任務預設
-                    processed_model_pref = None # 或者 default_prefs["model"]，取決於 None 的確切含義
-                    logger.debug(f"Model preference from DB is Python None. Effective model preference will be None (task/global default will apply).")
-                elif raw_model_pref == 'None': # 如果是字串 'None'
-                    processed_model_pref = None # 視為 Python None
-                    logger.debug(f"Model preference from DB was string 'None', converting to Python None. Effective model preference will be None.")
-                # 如果 raw_model_pref 是其他非字串類型且非 None，則堅持使用 default_prefs["model"]
+                processed_model_pref = default_prefs["model"]
+                if isinstance(raw_model_pref, str) and raw_model_pref != 'None': processed_model_pref = raw_model_pref
+                elif raw_model_pref is None: processed_model_pref = None; logger.debug("Model preference from DB is Python None.")
+                elif raw_model_pref == 'None': processed_model_pref = None; logger.debug("Model preference from DB was string 'None'.")
 
-                # 確保布林值被正確處理
-                if not isinstance(force_stable_pref, bool):
-                    force_stable_pref = default_prefs["force_stable_model"]
-                if not isinstance(ensure_chinese_pref, bool):
-                    ensure_chinese_pref = default_prefs["ensure_chinese_output"]
-
-                logger.debug(f"從資料庫獲取用戶AI偏好: model_raw='{raw_model_pref}', model_processed='{processed_model_pref}', force_stable={force_stable_pref}, ensure_chinese={ensure_chinese_pref}")
-                
                 user_prefs = {
                     "model": processed_model_pref,
-                    "force_stable_model": force_stable_pref,
                     "ensure_chinese_output": ensure_chinese_pref,
-                    "max_output_tokens": int(max_tokens_pref) if max_tokens_pref is not None else default_prefs["max_output_tokens"] # 新增處理
+                    "max_output_tokens": int(max_tokens_pref) if max_tokens_pref is not None else default_prefs["max_output_tokens"]
                 }
-                logger.info(f"從資料庫加載的用戶AI偏好: {user_prefs}")
+                logger.info(f"從資料庫加載的用戶AI偏好 (無穩定模式): {user_prefs}")
                 return user_prefs
-            else:
-                logger.info("資料庫中未找到AI服務設定，將使用全局預設AI偏好。")
-                return default_prefs
-        except Exception as e:
-            logger.error(f"獲取用戶模型偏好失敗: {e}")
-            return default_prefs
+            else: logger.info("資料庫中未找到AI服務設定，將使用全局預設AI偏好 (無穩定模式)。"); return default_prefs
+        except Exception as e: logger.error(f"獲取用戶模型偏好失敗: {e}"); return default_prefs
     
-    def get_generation_config(
-        self, 
-        task_type: TaskType, 
-        custom_params: Optional[Dict[str, Any]] = None
-    ) -> genai.types.GenerationConfigDict:
+    def get_generation_config(self, task_type: TaskType, custom_params: Optional[Dict[str, Any]] = None) -> genai.types.GenerationConfigDict:
         """獲取指定任務的生成配置，並允許自定義參數覆蓋。"""
         
-        base_config_dict = {
-            "temperature": 0.7,
-            "top_p": 0.95,
-            "top_k": 40,
-        }
-
+        base_config_dict = {"temperature": 0.7, "top_p": 0.95, "top_k": 40}
         task_specific_dict = {}
         current_task_config = self._task_configs.get(task_type)
-        
-        # 從用戶偏好或任務配置或全局配置獲取 max_output_tokens
         user_max_tokens = self._user_global_ai_preferences.get("max_output_tokens")
-        
-        default_max_tokens_for_task = settings.AI_MAX_OUTPUT_TOKENS # 通用預設
-        if task_type == TaskType.IMAGE_ANALYSIS:
-            default_max_tokens_for_task = settings.AI_MAX_OUTPUT_TOKENS_IMAGE
-        elif current_task_config:
-            default_max_tokens_for_task = current_task_config.generation_params.max_output_tokens
-            
-        # 優先順序: custom_params -> user_pref -> task_config -> global_settings
-        # effective_max_tokens 會在下面 merged_config_dict.update(custom_params) 時被 custom_params 覆蓋 (如果有的話)
-        # 如果 custom_params 沒有，則使用 user_max_tokens (如果存在且有效)
-        # 否則使用 default_max_tokens_for_task
-        effective_max_tokens = default_max_tokens_for_task # 先設定一個基礎預設值
-        if user_max_tokens is not None and isinstance(user_max_tokens, int) and user_max_tokens > 0:
-            effective_max_tokens = user_max_tokens
-            logger.debug(f"應用用戶設定的 max_output_tokens: {user_max_tokens} (任務類型: {task_type.value})")
-        elif current_task_config: # 如果用戶沒設，但任務有設
-             effective_max_tokens = current_task_config.generation_params.max_output_tokens
-
-        if current_task_config: # 從 TaskConfig 獲取預設參數
+        default_max_tokens_for_task = settings.AI_MAX_OUTPUT_TOKENS
+        if task_type == TaskType.IMAGE_ANALYSIS: default_max_tokens_for_task = settings.AI_MAX_OUTPUT_TOKENS_IMAGE
+        elif current_task_config: default_max_tokens_for_task = current_task_config.generation_params.max_output_tokens
+        effective_max_tokens = default_max_tokens_for_task
+        if user_max_tokens is not None and isinstance(user_max_tokens, int) and user_max_tokens > 0: effective_max_tokens = user_max_tokens; logger.debug(f"應用用戶設定的 max_output_tokens: {user_max_tokens} (任務: {task_type.value if isinstance(task_type, Enum) else task_type})")
+        elif current_task_config: effective_max_tokens = current_task_config.generation_params.max_output_tokens
+        if current_task_config:
             task_specific_dict["temperature"] = current_task_config.generation_params.temperature
-            task_specific_dict["max_output_tokens"] = effective_max_tokens # 使用計算後的 effective_max_tokens
-            if current_task_config.generation_params.response_mime_type:
-                 task_specific_dict["response_mime_type"] = current_task_config.generation_params.response_mime_type
-            # top_p, top_k 等也可以從 current_task_config.generation_params 獲取
-        else: # 如果沒有特定任務配置，提供一些通用預設值
-            task_specific_dict["max_output_tokens"] = effective_max_tokens # 即使沒有task_config，也使用計算後的effective_max_tokens
-            if task_type == TaskType.IMAGE_ANALYSIS:
-                task_specific_dict["temperature"] = 0.4
-                # max_output_tokens 已在上面處理
-            elif task_type == TaskType.TEXT_GENERATION:
-                task_specific_dict["temperature"] = 0.8
-                # max_output_tokens 已在上面處理
-            # ... 其他 TaskType 的預設 ...
-
-        # 合併配置：基礎 -> 任務特定
+            task_specific_dict["max_output_tokens"] = effective_max_tokens
+            if current_task_config.generation_params.response_mime_type: task_specific_dict["response_mime_type"] = current_task_config.generation_params.response_mime_type
+        else: 
+            task_specific_dict["max_output_tokens"] = effective_max_tokens
+            if task_type == TaskType.IMAGE_ANALYSIS: task_specific_dict["temperature"] = 0.4
+            elif task_type == TaskType.TEXT_GENERATION: task_specific_dict["temperature"] = 0.8
         merged_config_dict = {**base_config_dict, **task_specific_dict}
-
-        # 根據全局用戶偏好調整語言相關設定
-        if self._user_global_ai_preferences.get("ensure_chinese_output", True):
-            # 這裡的設定依賴於 GenerationParams 的實際意義
-            # 以及 Google API 是否有直接控制輸出語言的參數。
-            # 假設我們的 GenerationParams.preferred_language 和 enforce_language_consistency
-            # 是我們在提示工程中會用到的。
-            # merged_config_dict['preferred_language'] = "zh-TW" # 示例
-            # merged_config_dict['enforce_language_consistency'] = True # 示例
-            logger.debug(f"應用中文輸出偏好設定於任務 {task_type.value}")
-            # 注意：Google GenAI 的 GenerationConfigDict 可能不直接包含這些自定義語言欄位。
-            # 這些更可能影響 prompt 的構建，或者需要在更上層的服務邏輯中處理。
-            # 暫時，我們只記錄這個意圖。
-
-        if custom_params: # 自定義參數具有最高優先級
-            merged_config_dict.update(custom_params)
-
+        if self._user_global_ai_preferences.get("ensure_chinese_output", True): logger.debug(f"應用中文輸出偏好設定於任務 {task_type.value if isinstance(task_type, Enum) else task_type}")
+        if custom_params: merged_config_dict.update(custom_params)
         logger.debug(f"為任務類型 '{task_type.value if isinstance(task_type, Enum) else task_type}' 生成的AI配置: {merged_config_dict}")
-        return genai.types.GenerationConfigDict(**merged_config_dict)
+        final_generation_config = {}
+        allowed_google_config_keys = ["temperature", "top_p", "top_k", "max_output_tokens", "candidate_count", "stop_sequences", "response_mime_type"]
+        for key, value in merged_config_dict.items():
+            if key in allowed_google_config_keys: final_generation_config[key] = value
+        return genai.types.GenerationConfigDict(**final_generation_config)
 
     def get_safety_settings(self, task_type: TaskType) -> Dict[HarmCategory, HarmBlockThreshold]:
         """獲取安全設定"""
         task_config = self._task_configs.get(task_type)
-        if task_config and task_config.generation_params.safety_settings:
-            return task_config.generation_params.safety_settings
-        
-        # 預設安全設定
-        return {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-        }
+        if task_config and task_config.generation_params.safety_settings: return task_config.generation_params.safety_settings
+        return {HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE, HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE, HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,}
     
     def get_model_config(self, model_id: str) -> Optional[AIModelConfig]:
         """獲取模型配置"""
@@ -635,7 +445,6 @@ class UnifiedAIConfig:
                     task_config.generation_params.temperature = gen_params["temperature"]
                 if "max_output_tokens" in gen_params:
                     task_config.generation_params.max_output_tokens = gen_params["max_output_tokens"]
-                # 可以添加更多參數更新邏輯
             
             logger.info(f"任務配置已更新: {task_type}")
             return True
@@ -647,95 +456,117 @@ class UnifiedAIConfig:
     async def reload_task_configs(self, db: Optional[AsyncIOMotorDatabase] = None) -> bool:
         """重新載入任務配置以應用新的用戶偏好設定"""
         try:
-            if db is not None:
-                self._user_global_ai_preferences = await self._get_user_model_preference(db)
-            else:
-                 # 如果沒有DB，則使用目前的內部預設或上次從env初始化的值
-                logger.warning("reload_task_configs 在沒有 DB 實例的情況下被調用，可能無法獲取最新的用戶DB設定。")
-                # 維持 self._user_global_ai_preferences 不變或用env重新初始化
-                self._user_global_ai_preferences["model"] = settings.DEFAULT_AI_MODEL
-                # force_stable_model 和 ensure_chinese_output 保持其在 __init__ 或上次 DB 讀取時的狀態
+            if db is not None: self._user_global_ai_preferences = await self._get_user_model_preference(db)
+            else: 
+                logger.warning("reload_task_configs 在沒有 DB 實例的情況下被調用。用戶設定可能不是最新的。")
+                # 如果沒有DB，至少使用一個合理的預設，而不是依賴可能未初始化的 user_global_ai_preferences
+                self._user_global_ai_preferences = {
+                    "model": settings.DEFAULT_AI_MODEL,
+                    "ensure_chinese_output": True,
+                    "max_output_tokens": settings.AI_MAX_OUTPUT_TOKENS
+                }
 
+            user_preferred_model_from_db = self._user_global_ai_preferences.get("model")
+
+            # 新增：映射通用名稱到具體的預覽版名稱
+            model_mapping = {
+                "gemini-2.5-flash": "gemini-2.5-flash-preview-05-20",
+                "gemini-2.5-pro": "gemini-2.5-pro-preview-05-06",
+                "gemini-1.5-pro": "gemini-1.5-pro-latest", # 假設 "gemini-1.5-pro-latest" 是我們在 DEFAULT_GOOGLE_AI_MODELS 中使用的 ID
+                "gemini-1.5-flash": "gemini-1.5-flash-latest" # 假設 "gemini-1.5-flash-latest" 是我們在 DEFAULT_GOOGLE_AI_MODELS 中使用的 ID
+                # 如果 DEFAULT_GOOGLE_AI_MODELS 使用的是 "gemini-1.5-pro" 和 "gemini-1.5-flash"，則不需要這兩條映射
+            }
+            
+            # 校驗映射目標是否存在於 self._models (確保映射到的是系統已知的模型)
+            # 並更新 DEFAULT_GOOGLE_AI_MODELS 以匹配這些映射目標，如果它們還沒完全一致
+            # 例如, 確保 "gemini-1.5-pro-latest" 在 DEFAULT_GOOGLE_AI_MODELS 中 (如果它是映射目標)
+            # 為了簡化，這裡假設 DEFAULT_GOOGLE_AI_MODELS 已經包含了正確的映射目標ID
+
+            if user_preferred_model_from_db in model_mapping:
+                mapped_model = model_mapping[user_preferred_model_from_db]
+                # 只有當映射後的模型存在於系統已知的模型列表 (_models) 中時才進行更新
+                if mapped_model in self._models:
+                    original_pref = user_preferred_model_from_db
+                    self._user_global_ai_preferences["model"] = mapped_model
+                    logger.info(f"用戶偏好模型 '{original_pref}' 已映射到系統已知的具體版本 '{mapped_model}'")
+                else:
+                    logger.warning(f"用戶偏好模型 '{user_preferred_model_from_db}' 的映射目標 '{mapped_model}' 未在系統配置中找到。將保留原始偏好或回退。")
+            
+            # 更新後，user_preferred_model 將使用 self._user_global_ai_preferences 中可能已被映射的值
             user_preferred_model = self._user_global_ai_preferences.get("model")
             
-            logger.info(f"重新載入任務配置，使用全局AI偏好: {self._user_global_ai_preferences}")
+            logger.info(f"重新載入任務配置，使用全局AI偏好 (無穩定模式): {self._user_global_ai_preferences}")
             
-            # 構建偏好模型列表的輔助函數
-            def get_preferred_models_for_task(supports_images: bool = False) -> List[str]:
+            def get_preferred_models_for_task_reload(supports_images: bool = False) -> List[str]:
                 preferred = []
-                
-                # 首先添加用戶偏好模型（如果適合任務）
                 if user_preferred_model and user_preferred_model in self._models:
-                    model_config = self._models[user_preferred_model]
-                    if not supports_images or model_config.supports_images:
-                        preferred.append(user_preferred_model)
-                
-                # 然後添加其他適合的模型作為後備
+                    model_cfg = self._models[user_preferred_model]
+                    if not supports_images or model_cfg.supports_images: preferred.append(user_preferred_model)
                 for model_id in ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash", "gemini-1.5-pro"]:
                     if model_id not in preferred and model_id in self._models:
-                        model_config = self._models[model_id]
-                        if not supports_images or model_config.supports_images:
-                            preferred.append(model_id)
-                
-                return preferred if preferred else ["gemini-1.5-flash"]  # 最後的後備選擇
+                        model_cfg = self._models[model_id]
+                        if not supports_images or model_cfg.supports_images: preferred.append(model_id)
+                return preferred if preferred else ["gemini-1.5-flash"]
             
-            # 更新文本生成任務的偏好模型
-            if TaskType.TEXT_GENERATION in self._task_configs:
-                self._task_configs[TaskType.TEXT_GENERATION].preferred_models = get_preferred_models_for_task(supports_images=False)
+            if TaskType.TEXT_GENERATION in self._task_configs: self._task_configs[TaskType.TEXT_GENERATION].preferred_models = get_preferred_models_for_task_reload(False)
+            if TaskType.IMAGE_ANALYSIS in self._task_configs: self._task_configs[TaskType.IMAGE_ANALYSIS].preferred_models = get_preferred_models_for_task_reload(True)
             
-            # 更新圖片分析任務的偏好模型
-            if TaskType.IMAGE_ANALYSIS in self._task_configs:
-                self._task_configs[TaskType.IMAGE_ANALYSIS].preferred_models = get_preferred_models_for_task(supports_images=True)
-            
-            logger.info("任務配置重新載入完成")
+            logger.info("任務配置重新載入完成 (無穩定模式影響)")
             return True
         
         except Exception as e:
             logger.error(f"重新載入任務配置失敗: {e}")
             return False
 
-    async def get_stable_model_for_task(
-        self, 
+    async def get_model_for_task(
+        self,
         task_type: TaskType,
-        # db: Optional[AsyncIOMotorDatabase] = None, # 不再需要DB參數，因為偏好已載入
-        force_stability_override: Optional[bool] = None # 允許外部調用覆蓋DB設定
+        requested_model_override: Optional[str] = None,
     ) -> Optional[str]:
-        """獲取穩定的模型，優先考慮一致性而非最新功能"""
-        try:
-            # 穩定性優先的模型列表 (經過驗證的穩定模型)
-            stable_models_priority = [
-                "gemini-1.5-flash",      # 最穩定
-                "gemini-1.5-pro",       # 穩定且功能豐富
-                "gemini-2.0-flash",     # 新一代穩定版
-                "gemini-1.0-pro",       # 經典穩定版
-            ]
-            
-            # 決定是否強制穩定
-            should_force_stability = self._user_global_ai_preferences.get("force_stable_model", True)
-            if force_stability_override is not None:
-                should_force_stability = force_stability_override # 外部覆蓋優先
-
-            task_config = self._task_configs.get(task_type)
-            # 即使任務本身不優先穩定，如果全局設定或覆蓋要求穩定，則依然優先穩定
-            if not should_force_stability:
-                # 如果不要求穩定性優先，使用常規邏輯 (常規邏輯內部也應該考慮用戶偏好的模型)
-                return await self.get_preferred_model_for_task(task_type, user_preference_override=None)
-            
-            # 選擇第一個可用的穩定模型
-            for model_id in stable_models_priority:
-                if model_id in self._models and self._models[model_id].is_available:
-                    model_config = self._models[model_id]
-                    if self._is_model_suitable_for_task(model_config, task_type):
-                        logger.info(f"選擇穩定模型 {model_id} 用於任務 {task_type.value} (強制穩定: {should_force_stability})")
-                        return model_id
-            
-            # 如果沒有穩定模型可用，回退到常規選擇
-            logger.warning(f"沒有穩定模型可用 (強制穩定: {should_force_stability})，回退到常規模型選擇")
-            return await self.get_preferred_model_for_task(task_type, user_preference_override=None)
+        """
+        為指定任務選擇最合適的AI模型 (已移除穩定模式考量)。
+        優先級順序:
+        1. API請求中的模型覆蓋 (requested_model_override)
+        2. 用戶全局偏好中的模型 (model from _user_global_ai_preferences)
+        3. 任務配置中的預設偏好模型列表
+        4. 全局後備可用模型
+        """
         
-        except Exception as e:
-            logger.error(f"獲取穩定模型失敗: {e}")
-            return self._user_global_ai_preferences.get("model") or "gemini-1.5-flash"  # 最後的安全選擇
+        log_prefix = f"[ModelSelV2][Task:{task_type.value if isinstance(task_type, Enum) else task_type}]"
+        user_global_model = self._user_global_ai_preferences.get("model")
+
+        def _try_select_model(model_id_to_check: Optional[str], source_description: str) -> Optional[str]:
+            if model_id_to_check and model_id_to_check in self._models and self._models[model_id_to_check].is_available:
+                model_cfg = self._models[model_id_to_check]
+                if self._is_model_suitable_for_task(model_cfg, task_type):
+                    logger.info(f"{log_prefix} 選用來自 '{source_description}' 的模型: {model_id_to_check}")
+                    return model_id_to_check
+                else: logger.debug(f"{log_prefix} '{source_description}' 模型 '{model_id_to_check}' 不適用於任務，跳過。")
+            elif model_id_to_check: logger.debug(f"{log_prefix} '{source_description}' 模型 '{model_id_to_check}' 不可用或不存在於配置中，跳過。")
+            return None
+
+        selected_model = _try_select_model(requested_model_override, "API請求覆蓋")
+        if selected_model: return selected_model
+
+        selected_model = _try_select_model(user_global_model, "用戶全局偏好")
+        if selected_model: return selected_model
+        
+        task_config = self._task_configs.get(task_type)
+        if task_config:
+            for model_id in task_config.preferred_models:
+                selected_model = _try_select_model(model_id, "任務配置偏好列表")
+                if selected_model: return selected_model
+        
+        all_available_suitable_models = self.list_available_models(task_type=task_type)
+        if all_available_suitable_models:
+            # For backup, just pick the first one that is suitable and available.
+            # _is_model_suitable_for_task and is_available is already checked by list_available_models.
+            backup_model_id = all_available_suitable_models[0].model_id
+            logger.info(f"{log_prefix} 選用來自 全局後備列表 的模型: {backup_model_id}")
+            return backup_model_id
+        
+        logger.error(f"{log_prefix} 無法為任務找到任何適用模型。")
+        return None
 
 # 全局AI配置管理器實例
 unified_ai_config = UnifiedAIConfig() 

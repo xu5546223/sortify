@@ -214,13 +214,28 @@ class EnhancedAIQAService:
             # 解析AI回應（從統一AI服務返回的結構化輸出中提取）
             try:
                 # ai_response.content 現在可能是 dict (for QUERY_REWRITE) 或 AITextAnalysisOutput
-                content_data = ai_response.content
+                content_data = ai_response.output_data
                 
                 rewritten_queries_list = [original_query] # 默認使用原查詢
                 extracted_params_dict = {}
                 intent_analysis_str = "意圖分析未提供" # 默認值
 
-                if isinstance(content_data, dict):
+                if isinstance(content_data, AIQueryRewriteOutput):
+                    # content_data is already the parsed AIQueryRewriteOutput object
+                    parsed_output = content_data
+                    rewritten_queries_list = parsed_output.rewritten_queries if parsed_output.rewritten_queries else [original_query]
+                    extracted_params_dict = parsed_output.extracted_parameters if parsed_output.extracted_parameters else {}
+                    intent_analysis_str = parsed_output.intent_analysis
+                    logger.info(f"Successfully used pre-parsed AIQueryRewriteOutput model. Intent: {intent_analysis_str[:50]}")
+                    
+                    query_rewrite_result = QueryRewriteResult(
+                        original_query=original_query,
+                        rewritten_queries=rewritten_queries_list,
+                        extracted_parameters=extracted_params_dict,
+                        intent_analysis=intent_analysis_str
+                    )
+                    return query_rewrite_result, ai_response.token_usage.total_tokens
+                elif isinstance(content_data, dict):
                     logger.info("Attempting to parse content_data as dict using AIQueryRewriteOutput model.")
                     try:
                         parsed_output = AIQueryRewriteOutput(**content_data)
@@ -353,45 +368,89 @@ class EnhancedAIQAService:
         document_ids: List[str], 
         extracted_parameters: Dict[str, Any]
     ) -> List[str]:
-        """步驟3: T2Q二次過濾（保持不變）"""
+        """步驟3: T2Q二次過濾，增強安全性"""
         try:
-            if not extracted_parameters:
+            if not extracted_parameters or not document_ids:
                 return document_ids
             
-            # 構建MongoDB查詢條件
-            filter_conditions = {"_id": {"$in": document_ids}}
+            # 只允許預期的過濾鍵
+            allowed_filter_keys = {"document_types", "file_type", "date_range", "key_entities"} # 可根據需要擴展
             
-            # 根據提取的參數添加過濾條件
-            doc_types_param = extracted_parameters.get("document_types") or extracted_parameters.get("file_type")
+            filter_conditions = {"_id": {"$in": [uuid.UUID(doc_id) for doc_id in document_ids]}} # 確保 document_ids 是 UUID 對象
             
-            # 檢查是否為非常通用的類型列表，如果是，則可能跳過 file_type 過濾
-            is_generic_doc_type_list = False
-            if isinstance(doc_types_param, list) and doc_types_param:
-                generic_types = ["文檔", "文件", "資料", "文獻", "文本"]
-                # 如果列表中的所有類型都是通用類型
-                if all(dt.lower() in [gt.lower() for gt in generic_types] for dt in doc_types_param):
-                    is_generic_doc_type_list = True
-                    logger.info(f"T2Q: Detected generic document type list: {doc_types_param}. Will not filter by file_type strictly.")
+            logger.debug(f"T2Q Filter - Input parameters: {extracted_parameters}")
 
-            if doc_types_param and not is_generic_doc_type_list:
-                if isinstance(doc_types_param, list) and doc_types_param:
-                    filter_conditions["file_type"] = {"$in": doc_types_param}
-                    logger.info(f"T2Q: Applying file_type filter with $in: {doc_types_param}")
-                elif isinstance(doc_types_param, str) and doc_types_param:
-                    filter_conditions["file_type"] = doc_types_param
-                    logger.info(f"T2Q: Applying file_type filter with exact match: {doc_types_param}")
-            elif not doc_types_param:
-                 logger.info("T2Q: No document_types/file_type parameter provided for filtering.")
+            for key, value in extracted_parameters.items():
+                if key not in allowed_filter_keys:
+                    logger.warning(f"T2Q Filter: 檢測到不允許的過濾鍵 '{key}'，將被忽略。")
+                    continue
 
-            if "date_range" in extracted_parameters:
-                date_range = extracted_parameters["date_range"]
-                if "start" in date_range:
-                    filter_conditions["created_at"] = {"$gte": date_range["start"]}
-                if "end" in date_range:
-                    if "created_at" not in filter_conditions:
-                        filter_conditions["created_at"] = {}
-                    filter_conditions["created_at"]["$lt"] = date_range["end"]
-            
+                if key.startswith("$"):
+                    logger.warning(f"T2Q Filter: 檢測到潛在的惡意過濾鍵 '{key}'，將被忽略。")
+                    continue
+
+                if key == "document_types" or key == "file_type":
+                    # 確保 value 是字串或字串列表，且不包含 MongoDB 操作符
+                    if isinstance(value, str) and not value.startswith("$"):
+                        filter_conditions["file_type"] = value
+                        logger.info(f"T2Q: Applying file_type filter with exact match: {value}")
+                    elif isinstance(value, list) and all(isinstance(v, str) and not v.startswith("$") for v in value) and value:
+                         # 檢查是否為非常通用的類型列表
+                        generic_types_lower = ["文檔", "文件", "資料", "文獻", "文本"]
+                        is_generic_list = all(dt.lower() in generic_types_lower for dt in value)
+                        if not is_generic_list:
+                            filter_conditions["file_type"] = {"$in": value}
+                            logger.info(f"T2Q: Applying file_type filter with $in: {value}")
+                        else:
+                            logger.info(f"T2Q: Detected generic document type list: {value}. Will not filter by file_type strictly.")
+                    elif value: # 如果有值但格式不對
+                        logger.warning(f"T2Q Filter: 'document_types' 或 'file_type' 的值 '{value}' 無效，將被忽略。")
+
+                elif key == "date_range":
+                    if isinstance(value, dict):
+                        date_conditions = {}
+                        start_date = value.get("start")
+                        end_date = value.get("end")
+
+                        # 簡單的日期格式驗證 (YYYY-MM-DD or ISO format with T Z)
+                        # 實際應用中可能需要更強的日期解析和驗證庫
+                        def is_valid_date_format(date_str):
+                            if not isinstance(date_str, str): return False
+                            try:
+                                datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                                return True
+                            except ValueError:
+                                try:
+                                    datetime.strptime(date_str, '%Y-%m-%d')
+                                    return True
+                                except ValueError:
+                                    return False
+
+                        if start_date and is_valid_date_format(start_date):
+                            date_conditions["$gte"] = datetime.fromisoformat(start_date.replace('Z', '+00:00')) \
+                                if 'T' in start_date else datetime.strptime(start_date, '%Y-%m-%d')
+                        elif start_date:
+                            logger.warning(f"T2Q Filter: 'date_range.start' 的日期格式 '{start_date}' 無效，將被忽略。")
+                        
+                        if end_date and is_valid_date_format(end_date):
+                            date_conditions["$lt"] = datetime.fromisoformat(end_date.replace('Z', '+00:00')) \
+                                if 'T' in end_date else datetime.strptime(end_date, '%Y-%m-%d')
+                        elif end_date:
+                            logger.warning(f"T2Q Filter: 'date_range.end' 的日期格式 '{end_date}' 無效，將被忽略。")
+
+                        if date_conditions:
+                            filter_conditions["created_at"] = date_conditions
+                            logger.info(f"T2Q: Applying date_range filter: {date_conditions}")
+                    else:
+                        logger.warning(f"T2Q Filter: 'date_range' 的值 '{value}' 無效，應為字典，將被忽略。")
+                
+                # key_entities 的處理可以類似，例如檢查是否為字串列表
+                # 目前 extracted_parameters 似乎未穩定填充此字段，暫不詳細實現
+
+            if len(filter_conditions) == 1 and "_id" in filter_conditions: # 只有 _id 條件，意味著沒有有效的過濾參數被應用
+                 logger.info("T2Q Filter: 沒有有效的過濾參數被應用，返回原始文檔ID列表。")
+                 return document_ids
+
             # 執行過濾查詢
             cursor = db.documents.find(filter_conditions, {"_id": 1})
             filtered_docs = await cursor.to_list(length=None)
@@ -402,7 +461,7 @@ class EnhancedAIQAService:
             return filtered_ids
             
         except Exception as e:
-            logger.error(f"T2Q過濾失敗: {e}")
+            logger.error(f"T2Q過濾失敗: {e}", exc_info=True)
             return document_ids  # 過濾失敗時返回原列表
     
     async def _generate_answer_unified(
@@ -521,7 +580,7 @@ class EnhancedAIQAService:
             if ai_response.token_usage:
                 tokens_used = ai_response.token_usage.total_tokens
 
-            if not ai_response.success or not ai_response.content:
+            if not ai_response.success or not ai_response.output_data:
                 error_msg = ai_response.error_message or "AI未能生成有效內容"
                 logger.error(f"統一AI服務生成答案失敗或內容為空: {error_msg}")
                 return f"抱歉，無法生成答案: {error_msg}", tokens_used, 0.1, actual_contexts_for_llm
@@ -529,45 +588,50 @@ class EnhancedAIQAService:
             answer_text: str
             answer_text: str
     
-            if isinstance(ai_response.content, dict):
+            if isinstance(ai_response.output_data, AIGeneratedAnswerOutput):
+                # output_data is already the parsed AIGeneratedAnswerOutput object
+                parsed_answer = ai_response.output_data
+                answer_text = parsed_answer.answer_text
+                logger.info(f"Successfully used pre-parsed AIGeneratedAnswerOutput: {answer_text[:100]}...")
+            elif isinstance(ai_response.output_data, dict):
                 try:
-                    parsed_answer = AIGeneratedAnswerOutput(**ai_response.content)
+                    parsed_answer = AIGeneratedAnswerOutput(**ai_response.output_data)
                     answer_text = parsed_answer.answer_text
                     logger.info(f"Successfully parsed AI-generated answer using AIGeneratedAnswerOutput model: {answer_text[:100]}...")
                 except ValidationError as ve:
-                    logger.warning(f"Validation error parsing AI-generated answer dictionary: {ve}. Content: {ai_response.content}")
+                    logger.warning(f"Validation error parsing AI-generated answer dictionary: {ve}. Content: {ai_response.output_data}")
                     answer_text = f"AI返回的答案格式無效: {str(ve)}" # Or a more generic error
                 except Exception as e: # Catch any other unexpected errors during this parsing
-                    logger.error(f"Unexpected error parsing AI-generated answer dictionary: {e}. Content: {ai_response.content}", exc_info=True)
+                    logger.error(f"Unexpected error parsing AI-generated answer dictionary: {e}. Content: {ai_response.output_data}", exc_info=True)
                     answer_text = f"解析AI答案時發生意外錯誤。"
 
-            elif isinstance(ai_response.content, str):
-                answer_text = ai_response.content
+            elif isinstance(ai_response.output_data, str):
+                answer_text = ai_response.output_data
                 logger.info(f"Successfully received answer as string from unified_ai_service: {answer_text[:100]}...")
             
-            elif isinstance(ai_response.content, AITextAnalysisOutput): # Retain this if still a possible path
+            elif isinstance(ai_response.output_data, AITextAnalysisOutput): # Retain this if still a possible path
                 logger.warning(f"Received AITextAnalysisOutput for an ANSWER_GENERATION task. Attempting to extract answer as fallback.")
                 # Fallback logic from previous version, simplified
                 extracted_answer = None
-                if ai_response.content.key_information and isinstance(ai_response.content.key_information, dict):
+                if ai_response.output_data.key_information and isinstance(ai_response.output_data.key_information, dict):
                     extracted_answer = (
-                        ai_response.content.key_information.get("answer") or
-                        ai_response.content.key_information.get("answer_text") or
-                        ai_response.content.key_information.get("generated_answer")
+                        ai_response.output_data.key_information.get("answer") or
+                        ai_response.output_data.key_information.get("answer_text") or
+                        ai_response.output_data.key_information.get("generated_answer")
                     )
                 
-                if not extracted_answer and isinstance(ai_response.content.initial_summary, str) and ai_response.content.initial_summary.strip():
-                    extracted_answer = ai_response.content.initial_summary
+                if not extracted_answer and isinstance(ai_response.output_data.initial_summary, str) and ai_response.output_data.initial_summary.strip():
+                    extracted_answer = ai_response.output_data.initial_summary
                 
                 if extracted_answer:
                     answer_text = str(extracted_answer)
                     logger.info(f"Extracted answer from AITextAnalysisOutput fallback: {answer_text[:100]}...")
                 else:
                     answer_text = "AI服務返回了結構化數據，但無法從中提取明確的答案文本 (AITextAnalysisOutput path)。"
-                    logger.warning(f"Could not extract a clear answer from AITextAnalysisOutput fallback. Content: {ai_response.content}")
+                    logger.warning(f"Could not extract a clear answer from AITextAnalysisOutput fallback. Content: {ai_response.output_data}")
                     
-            else: # ai_response.content is not dict, str, or AITextAnalysisOutput
-                answer_text = f"AI返回了非預期的答案格式: {type(ai_response.content)}"
+            else: # ai_response.output_data is not dict, str, or AITextAnalysisOutput
+                answer_text = f"AI返回了非預期的答案格式: {type(ai_response.output_data)}"
                 logger.warning(answer_text)
 
             # Basic confidence score calculation (can be refined)

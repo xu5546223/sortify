@@ -290,11 +290,12 @@ class SemanticSummaryService:
             # 步驟5: 創建向量記錄
             vector_record = VectorRecord(
                 document_id=doc_id_str, # Use string ID for VectorRecord
+                owner_id=str(document.owner_id), # 新增 owner_id，從 Document 對象獲取
                 embedding_vector=embedding_vector,
                 chunk_text=text_to_embed, 
                 embedding_model=embedding_service.model_name,
                 # status field in VectorRecord might be for internal Chroma state, not our Document.vector_status
-                metadata={"file_type": document.file_type or ""}
+                metadata={"file_type": document.file_type or ""} # 其他元數據可以按需添加
             )
             
             # 步驟6: 存儲到向量資料庫
