@@ -22,6 +22,7 @@ from .models.log_models import LogLevel # 新增 LogLevel
 from fastapi.middleware.cors import CORSMiddleware # 新增 CORS 中介軟體
 from .core.startup import preload_on_startup
 import asyncio
+from .core.config import settings
 
 # 配置標準日誌記錄器
 logging.basicConfig(
@@ -145,7 +146,7 @@ app = FastAPI(
 # 注意：在生產環境中，應將 allow_origins 明確指定為您的前端域名
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 允許所有來源 (開發時方便，生產時應限制)
+    allow_origins=settings.ALLOWED_ORIGINS,  # 使用 settings 中的配置
     allow_credentials=True, # 允許cookies
     allow_methods=["*"],  # 允許所有 HTTP 方法
     allow_headers=["*"],  # 允許所有 HTTP 標頭

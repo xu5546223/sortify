@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 from uuid import UUID
 
 from jose import jwt, JWTError
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import ValidationError
 
@@ -14,6 +14,8 @@ from ..crud.crud_users import crud_users
 from ..models.user_models import UserInDB
 from ..models.token_models import TokenData
 from .password_utils import verify_password
+from ..core.logging_utils import log_event
+from ..models.log_models import LogLevel
 
 # Passlib context for password hashing
 # 使用 bcrypt 作為主要的哈希算法
@@ -49,16 +51,16 @@ def create_access_token(
 
 # --- 依賴注入函數 ---
 async def get_current_user(
-    token: str = Depends(oauth2_scheme)
+    request: Request,
+    token: str = Depends(oauth2_scheme),
+    db: AsyncIOMotorDatabase = Depends(get_db)
 ) -> str | None:
     """
-    解碼 JWT token 並返回 payload。實際的用戶對象查找應在調用此依賴的端點中進行，
-    以允許更靈活的資料庫訪問和錯誤處理。
-    或者，如果 db 依賴可以解決，則直接返回 UserInDB。
-    為了避免 security.py 依賴 db.py，然後 db.py 可能又依賴其他東西，
-    這裡先返回 token_data (payload中的用戶標識)，讓端點自己去查 user。
-    更新：FastAPI 建議依賴項可以互相依賴，所以 get_db 是可以的。
+    解碼 JWT token 並返回 user_id。
+    如果 token 無效或解碼失敗，則記錄錯誤並引發 HTTPException。
     """
+    request_id_for_log = request.state.request_id if hasattr(request.state, 'request_id') else "N/A"
+    
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="無法驗證憑證",
@@ -71,36 +73,75 @@ async def get_current_user(
         )
         user_id_from_token = payload.get("sub")
         if user_id_from_token is None:
-            # log an event here
+            await log_event(
+                db=db,
+                level=LogLevel.WARNING,
+                message="Token validation failed: 'sub' claim missing.",
+                source="get_current_user",
+                request_id=request_id_for_log,
+                details={"token_payload": payload}
+            )
             raise credentials_exception
-        # 使用 TokenData 驗證 payload 的結構 (如果 sub 存在)
+        
         token_data = TokenData(user_id=user_id_from_token)
-    except JWTError: # Catches ExpiredSignatureError, JWTClaimsError, etc.
-        # log an event here
+
+    except JWTError as e:
+        await log_event(
+            db=db,
+            level=LogLevel.WARNING,
+            message=f"Token validation failed due to JWTError.",
+            source="get_current_user",
+            request_id=request_id_for_log,
+            details={"error_type": type(e).__name__, "error_message": str(e)}
+        )
         raise credentials_exception
-    except ValidationError: # Pydantic validation error for TokenData
-        # log an event here
+    except ValidationError as e:
+        await log_event(
+            db=db,
+            level=LogLevel.WARNING,
+            message="Token validation failed due to ValidationError (TokenData structure).",
+            source="get_current_user",
+            request_id=request_id_for_log,
+            details={"validation_errors": e.errors()}
+        )
         raise credentials_exception
     
-    return user_id_from_token # 返回 user_id
+    return token_data.user_id
 
 async def get_current_active_user(
-    current_user_id: str | None = Depends(get_current_user), # 依賴於 get_current_user 返回的 user_id
+    current_user_id: str = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db) 
 ) -> UserInDB: 
-    if current_user_id is None:
-         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="無效的 token (無法獲取 user_id)")
-
     try:
-        user_uuid = UUID(current_user_id) # 將 str 轉換為 UUID
+        user_uuid = UUID(current_user_id)
     except ValueError:
-        # 如果 current_user_id 不是有效的 UUID 格式
+        await log_event(
+            db=db,
+            level=LogLevel.ERROR,
+            message="Invalid user_id format in token after primary validation.",
+            source="get_current_active_user",
+            details={"user_id_from_token": current_user_id}
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="無效的 token (user_id 格式錯誤)")
 
-    user = await crud_users.get_user_by_id(db, user_id=user_uuid) # 使用 get_user_by_id
+    user = await crud_users.get_user_by_id(db, user_id=user_uuid)
     if not user:
+        await log_event(
+            db=db,
+            level=LogLevel.WARNING,
+            message=f"Authenticated user ID not found in DB: {user_uuid}",
+            source="get_current_active_user",
+            details={"user_id": str(user_uuid)}
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用戶不存在")
     if not user.is_active:
+        await log_event(
+            db=db,
+            level=LogLevel.WARNING,
+            message=f"User account is inactive: {user.username}",
+            source="get_current_active_user",
+            details={"user_id": str(user_uuid), "username": user.username}
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="非活動使用者")
     return user
 

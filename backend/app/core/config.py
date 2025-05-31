@@ -33,9 +33,17 @@ class Settings(BaseSettings):
 
     # JWT 相關設定
     # !!! 請務必替換為一個安全的隨機字串，例如通過 `openssl rand -hex 32` 生成 !!!
+    # !!! 例如: openssl rand -hex 32                                      !!!
+    # !!! 將生成的金鑰儲存在您的 .env 檔案中，例如：                         !!!
+    # !!! SECRET_KEY="your_generated_strong_random_hex_string"            !!!
     SECRET_KEY: str = "your-super-secret-and-long-random-string-generated-safely" # 請替換此預設值
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 # 例如 60 分鐘
+
+    # CORS 相關設定
+    # 在生產環境中，應明確指定您的前端域名，例如: ["https://your-frontend.com", "http://localhost:3000"]
+    # 若要允許所有來源 (通常僅用於開發)，可以使用 ["*"]，但請謹慎使用。
+    ALLOWED_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"] # 開發時常用的前端地址
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding='utf-8', extra='ignore')
 
