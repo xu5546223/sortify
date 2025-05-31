@@ -21,6 +21,7 @@ from ..db.mongodb_utils import DatabaseUnavailableError, db_manager # 導入 Dat
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import ConnectionFailure, OperationFailure
 import uuid
+# from app.schemas.settings import AIServiceSettings, AIServiceSettingsUpdate, SystemSettings, SystemSettingsCreate, SystemSettingsUpdate, GlobalAISettingsDB # 保留此行或根據實際需要調整
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +54,10 @@ async def get_system_settings(db: AsyncIOMotorDatabase) -> SettingsDataResponse:
                 if db_doc:
                     logger.debug(f"從資料庫載入設定 (AI服務、自動連接/同步): {db_doc}")
                     if "ai_service" in db_doc and isinstance(db_doc["ai_service"], dict):
-                        # Log the content of db_doc["ai_service"] before Pydantic parsing
                         logger.debug(f"DB ai_service content before parsing: {db_doc['ai_service']}")
+                        # 假設 StoredAISettings 模型本身已不包含 force_stable_model
                         stored_ai_settings_from_db = StoredAISettings(**db_doc["ai_service"])
-                        # Log the parsed Pydantic model's attributes
                         logger.debug(f"Parsed stored_ai_settings_from_db: model={stored_ai_settings_from_db.model}, "
-                                     f"force_stable={stored_ai_settings_from_db.force_stable_model}, "
                                      f"ensure_chinese={stored_ai_settings_from_db.ensure_chinese_output}, "
                                      f"max_tokens={stored_ai_settings_from_db.max_output_tokens}")
                     auto_connect_from_db = db_doc.get("auto_connect")
@@ -83,7 +82,6 @@ async def get_system_settings(db: AsyncIOMotorDatabase) -> SettingsDataResponse:
     # Log before creating AIServiceSettingsStored
     logger.debug(f"Values for AIServiceSettingsStored: provider={stored_ai_settings_from_db.provider}, "
                  f"model={stored_ai_settings_from_db.model}, temp={stored_ai_settings_from_db.temperature}, "
-                 f"force_stable={stored_ai_settings_from_db.force_stable_model}, "
                  f"ensure_chinese={stored_ai_settings_from_db.ensure_chinese_output}, "
                  f"max_tokens={stored_ai_settings_from_db.max_output_tokens}")
 
@@ -92,7 +90,6 @@ async def get_system_settings(db: AsyncIOMotorDatabase) -> SettingsDataResponse:
         model=stored_ai_settings_from_db.model,
         temperature=stored_ai_settings_from_db.temperature,
         is_api_key_configured=is_api_key_configured_in_env,
-        force_stable_model=stored_ai_settings_from_db.force_stable_model,
         ensure_chinese_output=stored_ai_settings_from_db.ensure_chinese_output,
         max_output_tokens=stored_ai_settings_from_db.max_output_tokens
     )
@@ -129,31 +126,16 @@ async def update_system_settings(db: AsyncIOMotorDatabase, settings_to_update: U
     # 處理來自 settings_to_update 的值，準備 .env 更新和 DB 更新的 payload
     if settings_to_update.ai_service:
         ai_service_input = settings_to_update.ai_service
+        # 假設 StoredAISettings 模型已不包含 force_stable_model
         db_ai_service_data_to_store = StoredAISettings().model_dump() 
 
-        if ai_service_input.model is not None:
-            db_ai_service_data_to_store["model"] = ai_service_input.model
-        if ai_service_input.provider is not None:
-            db_ai_service_data_to_store["provider"] = ai_service_input.provider
-        if ai_service_input.temperature is not None:
-            db_ai_service_data_to_store["temperature"] = ai_service_input.temperature
-        # 新增：處理 force_stable_model 和 ensure_chinese_output
-        if ai_service_input.force_stable_model is not None:
-            db_ai_service_data_to_store["force_stable_model"] = ai_service_input.force_stable_model
-        if ai_service_input.ensure_chinese_output is not None:
-            db_ai_service_data_to_store["ensure_chinese_output"] = ai_service_input.ensure_chinese_output
-        if ai_service_input.max_output_tokens is not None:
-            db_ai_service_data_to_store["max_output_tokens"] = ai_service_input.max_output_tokens
+        if ai_service_input.model is not None: db_ai_service_data_to_store["model"] = ai_service_input.model
+        if ai_service_input.provider is not None: db_ai_service_data_to_store["provider"] = ai_service_input.provider
+        if ai_service_input.temperature is not None: db_ai_service_data_to_store["temperature"] = ai_service_input.temperature
+        if ai_service_input.ensure_chinese_output is not None: db_ai_service_data_to_store["ensure_chinese_output"] = ai_service_input.ensure_chinese_output
+        if ai_service_input.max_output_tokens is not None: db_ai_service_data_to_store["max_output_tokens"] = ai_service_input.max_output_tokens
         
         update_payload_for_db["ai_service"] = db_ai_service_data_to_store
-
-        if ai_service_input.api_key: 
-            api_key_to_save = ai_service_input.api_key # Pydantic v1: .get_secret_value() if SecretStr
-                                                      # Pydantic v2 Field(..., type=SecretStr) 會自動處理
-                                                      # 假設 system_models.py 中 AIServiceSettingsInput.api_key 是 str
-                                                      # 如果它是 SecretStr，則需要 .get_secret_value()
-            # 檢查 AIServiceSettingsInput.api_key 的定義
-            # 假設它是 Optional[str]
 
     if settings_to_update.database: # database 包含 uri 和 dbName，主要用於更新 .env
         db_settings_input = settings_to_update.database
@@ -177,12 +159,6 @@ async def update_system_settings(db: AsyncIOMotorDatabase, settings_to_update: U
         env_path = os.path.join(os.getcwd(), env_file_name) 
         logger.warning(f".env file not found by find_dotenv(usecwd=True). Will use/create at CWD: {env_path}")
     logger.info(f"Using .env path for updates: {env_path}")
-
-    if api_key_to_save:
-        if save_ai_api_key_to_env(api_key_to_save, key_name="GOOGLE_API_KEY"):
-            env_vars_changed = True
-        else:
-            logger.error("未能將 AI API Key 保存到 .env 文件。")
 
     if mongodb_uri_to_save is not None:
         try:
@@ -230,23 +206,19 @@ async def update_system_settings(db: AsyncIOMotorDatabase, settings_to_update: U
                     # 這確保我們只更新傳入的欄位，而不是用預設值覆蓋現有DB中的AI設定
                     current_settings_doc = await actual_db_instance.system_config.find_one({"_id": CONFIG_DOCUMENT_ID})
                     if current_settings_doc and "ai_service" in current_settings_doc and "ai_service" in update_payload_for_db:
+                        # 假設 StoredAISettings 模型已不包含 force_stable_model
                         existing_ai_db = StoredAISettings(**current_settings_doc["ai_service"])
-                        update_for_ai = update_payload_for_db["ai_service"] 
+                        update_for_ai = update_payload_for_db["ai_service"]
                         
-                        if "model" in update_for_ai and update_for_ai["model"] is not None: 
-                           existing_ai_db.model = update_for_ai["model"]
-                        if "provider" in update_for_ai and update_for_ai["provider"] is not None:
-                           existing_ai_db.provider = update_for_ai["provider"]
-                        if "temperature" in update_for_ai and update_for_ai["temperature"] is not None:
-                           existing_ai_db.temperature = update_for_ai["temperature"]
-                        # 新增：更新 force_stable_model 和 ensure_chinese_output
-                        if "force_stable_model" in update_for_ai and update_for_ai["force_stable_model"] is not None:
-                           existing_ai_db.force_stable_model = update_for_ai["force_stable_model"]
-                        if "ensure_chinese_output" in update_for_ai and update_for_ai["ensure_chinese_output"] is not None:
-                           existing_ai_db.ensure_chinese_output = update_for_ai["ensure_chinese_output"]
-                        if "max_output_tokens" in update_for_ai and update_for_ai["max_output_tokens"] is not None:
-                            existing_ai_db.max_output_tokens = update_for_ai["max_output_tokens"]
-                        update_payload_for_db["ai_service"] = existing_ai_db.model_dump()
+                        if "model" in update_for_ai and update_for_ai["model"] is not None: existing_ai_db.model = update_for_ai["model"]
+                        if "provider" in update_for_ai and update_for_ai["provider"] is not None: existing_ai_db.provider = update_for_ai["provider"]
+                        if "temperature" in update_for_ai and update_for_ai["temperature"] is not None: existing_ai_db.temperature = update_for_ai["temperature"]
+                        if "ensure_chinese_output" in update_for_ai and update_for_ai["ensure_chinese_output"] is not None: existing_ai_db.ensure_chinese_output = update_for_ai["ensure_chinese_output"]
+                        if "max_output_tokens" in update_for_ai and update_for_ai["max_output_tokens"] is not None: existing_ai_db.max_output_tokens = update_for_ai["max_output_tokens"]
+                        
+                        # 假設 StoredAISettings.model_dump() 自然不會包含 force_stable_model
+                        final_ai_payload = existing_ai_db.model_dump()
+                        update_payload_for_db["ai_service"] = final_ai_payload
                     
                     await actual_db_instance.system_config.find_one_and_update(
                         {"_id": CONFIG_DOCUMENT_ID},

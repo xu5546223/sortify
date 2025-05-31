@@ -161,15 +161,12 @@ class CRUDUser:
         if not update_data: # 如果沒有提供任何更新數據
             return await self.get_user_by_id(db, user_id)
 
-        # 檢查 email 是否衝突 (如果 email 被更新且不為 None)
-        if "email" in update_data and update_data["email"] is not None:
-            existing_user_with_email = await self.get_user_by_email(db, email=update_data["email"])
-            if existing_user_with_email and existing_user_with_email.id != user_id:
-                # 通常應該在 API 層處理此類型的業務邏輯錯誤並引發 HTTPException
-                # 此處僅為示例，實際應用中可能需要更複雜的錯誤處理機制
-                # 或者此 CRUD 方法假設調用者已處理此類驗證
-                print(f"Error: Email {update_data['email']} is already in use by another user.")
-                return None # 表示更新失敗
+        # Email 衝突檢查已移至 API 層
+        # if "email" in update_data and update_data["email"] is not None:
+        #     existing_user_with_email = await self.get_user_by_email(db, email=update_data["email"])
+        #     if existing_user_with_email and existing_user_with_email.id != user_id:
+        #         print(f"Error: Email {update_data['email']} is already in use by another user.")
+        #         return None # 表示更新失敗
         
         update_data["updated_at"] = datetime.utcnow()
 

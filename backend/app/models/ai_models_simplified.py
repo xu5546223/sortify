@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Union
+from app.services.unified_ai_config import TaskType
 
 class TokenUsage(BaseModel):
     prompt_tokens: int = Field(..., description="輸入提示詞所使用的 Token 數量")
@@ -76,7 +77,7 @@ class FlexibleKeyInformation(BaseKeyInformation):
 
 class AIImageAnalysisOutput(BaseModel):
     """圖片分析輸出 - 統一使用靈活結構"""
-    initial_description: str = Field(..., description="圖片的初步描述")
+    initial_summary: str = Field(..., description="圖片的初步摘要或描述")
     extracted_text: Optional[str] = Field(None, description="從圖片中提取的全部可見文字")
     content_type: str = Field(..., description="AI識別的內容類型")
     intermediate_analysis: Union[FlexibleIntermediateAnalysis, Dict[str, Any]] = Field(..., description="AI的中間分析過程")

@@ -76,40 +76,28 @@ async def create_document(
 
 async def get_document_by_id(db: AsyncIOMotorDatabase, document_id: uuid.UUID) -> Optional[Document]:
     """按 ID 檢索文件。"""
-    logger.info(f"[get_document_by_id] Attempting to find document with input UUID: {document_id}")
     document_raw = await db[DOCUMENT_COLLECTION].find_one({"_id": document_id})
     if document_raw:
-        actual_id_in_db = document_raw.get('_id')
-        logger.info(f"[get_document_by_id] Found document using UUID object. _id in DB: {actual_id_in_db} (type: {type(actual_id_in_db)})")
         try:
             doc = Document(**document_raw)
             return doc
-        except Exception as e: # Catches Pydantic ValidationError and other potential errors
-            logger.error(f"[get_document_by_id] Error validating document data (found by UUID) for ID {document_id}: {e}", exc_info=True)
+        except Exception as e:
+            logger.error(f"[get_document_by_id] Error validating document data for ID {document_id}: {e}", exc_info=True)
             return None
     else:
-        logger.warning(f"[get_document_by_id] Document not found using input UUID {document_id}. Attempting with string ID.")
-        # Fallback for string ID check (existing logic, ensure it's also safe or updated if needed)
         try:
-            # Attempt to find by string version of the UUID, in case it was stored/passed incorrectly
+            # 嘗試使用字串版本的 UUID 查找
             document_id_str = str(document_id)
-            logger.info(f"[get_document_by_id] Attempting to find document with string ID: {document_id_str}")
             document_raw_str_check = await db[DOCUMENT_COLLECTION].find_one({"_id": document_id_str})
             if document_raw_str_check:
-                actual_id_in_db_str = document_raw_str_check.get('_id')
-                logger.info(f"[get_document_by_id] Found document using string ID. _id in DB: {actual_id_in_db_str} (type: {type(actual_id_in_db_str)})")
                 try:
                     doc_str = Document(**document_raw_str_check)
-                    logger.info(f"[get_document_by_id] Document with ID {document_id_str} (originally queried as UUID {document_id}) found using string fallback.")
                     return doc_str
                 except Exception as e_str:
-                    logger.error(f"[get_document_by_id] Error validating document data (found by string) for string ID {document_id_str} (fallback for {document_id}): {e_str}", exc_info=True)
+                    logger.error(f"[get_document_by_id] Error validating document data for string ID {document_id_str}: {e_str}", exc_info=True)
                     return None
-            else:
-                logger.warning(f"[get_document_by_id] Document not found using string ID {document_id_str} either.")
-        except Exception as fallback_err: # Catch errors during the fallback find_one itself
-            logger.error(f"[get_document_by_id] Error during string ID fallback find_one for {document_id_str} (originally {document_id}): {fallback_err}", exc_info=True)
-            # pass # Or return None, depending on desired behavior for find_one error
+        except Exception as fallback_err:
+            logger.error(f"[get_document_by_id] Error during string ID fallback find_one: {fallback_err}", exc_info=True)
         return None
 
 async def get_documents(
