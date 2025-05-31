@@ -132,16 +132,27 @@ async def update_current_user_profile(
             detail="不允許自行停用帳戶。"
         )
 
+    # 檢查 Email 衝突 (如果提供了 email)
+    if user_update_in.email is not None and user_update_in.email != current_user.email:
+        existing_user_by_email = await crud_users.get_user_by_email(db, email=user_update_in.email)
+        if existing_user_by_email and existing_user_by_email.id != current_user.id:
+            await log_event(db, LogLevel.WARNING, f"使用者 {current_user.username} 更新個人資料失敗: 電子郵件 {user_update_in.email} 已被其他使用者使用", "auth_api", user_id=str(current_user.id), request_id=request_id_for_log)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="電子郵件已被使用。"
+            )
+
     updated_user = await crud_users.update_user(
         db=db, user_id=current_user.id, user_in=user_update_in
     )
 
     if updated_user is None:
-        # CRUD 層的 email 衝突檢查返回 None
-        await log_event(db, LogLevel.ERROR, f"使用者 {current_user.username} 更新個人資料失敗 (可能由於 Email 衝突)", "auth_api", user_id=str(current_user.id), request_id=request_id_for_log, details=log_details)
+        # 這種情況現在理論上不應發生，因為主要的業務邏輯檢查 (如 email 衝突) 已在此處處理
+        # 但保留以防 CRUD 層因其他原因 (例如資料庫內部錯誤，儘管可能性低) 返回 None
+        await log_event(db, LogLevel.ERROR, f"使用者 {current_user.username} 更新個人資料時發生未知錯誤 (CRUD 層返回 None)", "auth_api", user_id=str(current_user.id), request_id=request_id_for_log, details=log_details)
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="無法更新使用者資料，可能是電子郵件已被使用。"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="更新使用者資料時發生錯誤。"
         )
     
     await log_event(db, LogLevel.INFO, f"使用者 {current_user.username} 成功更新個人資料", "auth_api", user_id=str(current_user.id), request_id=request_id_for_log, details=updated_user.model_dump(exclude={"hashed_password"}))
