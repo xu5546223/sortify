@@ -5,11 +5,11 @@ import chromadb
 from chromadb.config import Settings
 import uuid
 from datetime import datetime
-from app.core.logging_utils import AppLogger
+from app.core.logging_utils import AppLogger, log_event, LogLevel # Added
 from app.core.config import settings
 from app.models.vector_models import VectorRecord, SemanticSearchResult
 
-logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
+logger = AppLogger(__name__, level=logging.DEBUG).get_logger() # Existing AppLogger for sync methods
 
 class VectorDatabaseService:
     """ChromaDB向量資料庫服務"""
@@ -207,53 +207,70 @@ class VectorDatabaseService:
             logger.error(f"刪除向量記錄失敗: {e}")
             return False
     
-    async def delete_by_document_ids(self, document_ids: List[str]) -> Dict[str, Union[int, List[str]]]:
+    async def delete_by_document_ids(self, document_ids: List[str], request_id: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, Union[int, List[str]]]: # Added request_id, user_id
         """根據文檔ID列表從向量數據庫中刪除向量記錄。"""
+        log_details_initial = {"num_document_ids": len(document_ids)}
+        await log_event(db=None, level=LogLevel.DEBUG, message="Attempting batch deletion of document vectors.",
+                        source="service.vector_db.delete_by_doc_ids_batch", details=log_details_initial, request_id=request_id, user_id=user_id)
+
         if not self.is_initialized():
-            logger.warning("向量數據庫未初始化，無法刪除向量。")
-            return {"deleted_count": 0, "failed_ids": document_ids, "errors": ["向量數據庫未初始化"]}
+            await log_event(db=None, level=LogLevel.WARNING, message="Vector DB not initialized for batch deletion.",
+                            source="service.vector_db.delete_by_doc_ids_batch", details=log_details_initial, request_id=request_id, user_id=user_id)
+            return {"deleted_count": 0, "failed_ids": document_ids, "errors": ["Vector database not initialized."]}
 
         deleted_count = 0
         failed_ids = []
         errors = []
 
         for doc_id_str in document_ids:
+            item_log_details = {**log_details_initial, "current_doc_id": doc_id_str}
             try:
-                # 假設 ChromaDB 使用 document_id 作為其 'id' 或在元數據中
-                # 我們需要知道 ChromaDB 是如何存儲和通過什麼來刪除的。
-                # 如果是通過 filter 刪除：
+                # This is a synchronous call to ChromaDB client
                 self.collection.delete(where={"document_id": doc_id_str})
-                # 或者如果是直接按ID刪除 (如果Chroma內部ID與我們的document_id一致或有關聯):
-                # self.collection.delete(ids=[doc_id_str]) # 這需要確認Chroma是否這樣工作
-
-                logger.info(f"已從向量數據庫刪除 document_id: {doc_id_str} 的向量。")
-                deleted_count += 1
+                # Assuming if it doesn't error, it worked or the item wasn't there.
+                # ChromaDB's delete with a where clause doesn't throw error if no items match.
+                await log_event(db=None, level=LogLevel.DEBUG, message=f"Vector DB deletion processed for doc_id: {doc_id_str} (may not have existed).",
+                                source="service.vector_db.delete_by_doc_ids_batch", details=item_log_details, request_id=request_id, user_id=user_id)
+                deleted_count += 1 # This counts attempts that didn't error, not necessarily actual deletions by Chroma.
+                                   # ChromaDB's delete with 'where' doesn't return count of deleted items.
             except Exception as e:
-                logger.error(f"從向量數據庫按 document_id {doc_id_str} 刪除時出錯: {e}")
+                await log_event(db=None, level=LogLevel.ERROR, message=f"Error deleting vectors for doc_id {doc_id_str} in batch: {str(e)}",
+                                source="service.vector_db.delete_by_doc_ids_batch", exc_info=True, details=item_log_details, request_id=request_id, user_id=user_id)
                 failed_ids.append(doc_id_str)
                 errors.append(str(e))
         
-        return {"deleted_count": deleted_count, "failed_ids": failed_ids, "errors": errors}
+        summary_details = {**log_details_initial, "processed_count": deleted_count, "failed_count": len(failed_ids)}
+        await log_event(db=None, level=LogLevel.INFO, message=f"Batch vector deletion process completed. Processed: {deleted_count}, Failed: {len(failed_ids)}.",
+                        source="service.vector_db.delete_by_doc_ids_batch", details=summary_details, request_id=request_id, user_id=user_id)
+        return {"deleted_count": deleted_count, "failed_ids": failed_ids, "errors": errors} # Note: deleted_count here is more like "processed_without_error_count"
     
-    async def get_collection_stats(self) -> Dict[str, Any]:
+    async def get_collection_stats(self, request_id: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, Any]: # Added request_id, user_id
         """獲取向量數據庫集合的統計信息。"""
+        await log_event(db=None, level=LogLevel.DEBUG, message="Attempting to get collection stats.",
+                        source="service.vector_db.get_stats", request_id=request_id, user_id=user_id)
         try:
             if not self.collection:
-                return {"error": "集合未初始化"}
+                await log_event(db=None, level=LogLevel.WARNING, message="Collection not initialized, cannot get stats.",
+                                source="service.vector_db.get_stats", request_id=request_id, user_id=user_id)
+                return {"error": "Collection not initialized."} # User-friendly
             
-            # 獲取集合統計信息
-            count = self.collection.count()
+            count = self.collection.count() # Sync call
             
-            return {
+            stats = {
                 "collection_name": self.collection_name,
                 "total_vectors": count,
                 "vector_dimension": self.vector_dimension,
                 "status": "ready"
             }
+            await log_event(db=None, level=LogLevel.DEBUG, message="Successfully retrieved collection stats.",
+                            source="service.vector_db.get_stats", details=stats, request_id=request_id, user_id=user_id)
+            return stats
             
         except Exception as e:
-            logger.error(f"獲取集合統計信息失敗: {e}")
-            return {"error": str(e)}
+            await log_event(db=None, level=LogLevel.ERROR, message=f"Failed to get collection stats: {str(e)}",
+                            source="service.vector_db.get_stats", exc_info=True,
+                            details={"error": str(e), "error_type": type(e).__name__}, request_id=request_id, user_id=user_id)
+            return {"error": f"Failed to retrieve collection stats: {str(e)}"} # User-friendly part
     
     def close_connection(self):
         """關閉連接"""
