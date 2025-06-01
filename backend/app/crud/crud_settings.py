@@ -21,6 +21,9 @@ from ..db.mongodb_utils import DatabaseUnavailableError, db_manager # 導入 Dat
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import ConnectionFailure, OperationFailure
 import uuid
+
+from ..core.logging_utils import log_event # Added log_event
+from ..models.log_models import LogLevel # Added LogLevel
 # from app.schemas.settings import AIServiceSettings, AIServiceSettingsUpdate, SystemSettings, SystemSettingsCreate, SystemSettingsUpdate, GlobalAISettingsDB # 保留此行或根據實際需要調整
 
 logger = logging.getLogger(__name__)
@@ -103,13 +106,31 @@ async def get_system_settings(db: AsyncIOMotorDatabase) -> SettingsDataResponse:
     except Exception as e:
         logger.error(f"Error during model_dump/model_dump_json for ai_service_response: {e}")
 
-    return SettingsDataResponse(
+    final_settings_response = SettingsDataResponse(
         aiService=ai_service_response,
         database=db_settings_from_env,
         autoConnect=auto_connect_from_db,
         autoSync=auto_sync_from_db,
         isDatabaseConnected=db_connected # 使用我們確定的連接狀態
     )
+
+    # Log successful retrieval of system settings
+    await log_event(
+        db=db, # Passing db, though it might be None if db_manager was not connected
+        level=LogLevel.INFO,
+        message="System settings retrieved.",
+        source="crud_settings.get_system_settings",
+        details={
+            "database_connected_status": db_connected,
+            "env_db_uri_present": bool(app_env_settings.MONGODB_URL),
+            "env_db_name_present": bool(app_env_settings.DB_NAME),
+            "env_google_api_key_present": bool(app_env_settings.GOOGLE_API_KEY),
+            "retrieved_auto_connect_from_db": auto_connect_from_db is not None,
+            "retrieved_auto_sync_from_db": auto_sync_from_db is not None,
+            "retrieved_ai_settings_from_db": stored_ai_settings_from_db.model != StoredAISettings().model # Check if model differs from default
+        }
+    )
+    return final_settings_response
 
 async def update_system_settings(db: AsyncIOMotorDatabase, settings_to_update: UpdatableSettingsData) -> Optional[SettingsDataResponse]:
     """
@@ -254,6 +275,27 @@ async def update_system_settings(db: AsyncIOMotorDatabase, settings_to_update: U
 
     if env_vars_changed and db_update_attempted and not db_update_successful:
         logger.warning("成功更新 .env 中的設定，但資料庫中的對應設定更新失敗或被跳過。")
+
+    # Log the outcome of the update operation
+    updated_keys_in_db = list(update_payload_for_db.keys())
+    updated_keys_in_env = []
+    if mongodb_uri_to_save: updated_keys_in_env.append("MONGODB_URL")
+    if db_name_to_save: updated_keys_in_env.append("DB_NAME")
+    # API key is handled by save_ai_api_key_to_env, not directly here for .env update list
+
+    await log_event(
+        db=db,
+        level=LogLevel.INFO,
+        message="System settings update process completed.",
+        source="crud_settings.update_system_settings",
+        details={
+            "env_update_attempted": env_vars_changed,
+            "db_update_attempted": db_update_attempted,
+            "db_update_successful": db_update_successful,
+            "updated_keys_in_db_attempt": updated_keys_in_db if db_update_attempted else [],
+            "updated_keys_in_env_attempt": updated_keys_in_env # Actual saving depends on set_key success
+        }
+    )
     
     return final_settings
 
@@ -262,8 +304,19 @@ async def get_user_selected_ai_model(db: AsyncIOMotorDatabase) -> Optional[str]:
     從資料庫獲取用戶選擇的預設 AI 模型名稱。
     如果未設定或資料庫無法訪問，則返回 None。
     """
-    if not db_manager.is_connected:
+    model_to_return = None # Initialize
+    db_was_connected = db_manager.is_connected # Store initial state for logging details
+
+    if not db_was_connected:
         logger.warning("get_user_selected_ai_model: 資料庫未連接，無法獲取用戶設定的 AI 模型。")
+        # Log this specific condition
+        await log_event(
+            db=db, # db here is the one passed to the function, likely None or non-functional
+            level=LogLevel.WARNING,
+            message="Attempted to get user selected AI model, but DB not connected at call time.",
+            source="crud_settings.get_user_selected_ai_model",
+            details={"db_manager_connected_status": db_was_connected}
+        )
         return None
     try:
         actual_db_instance = db_manager.get_database()
@@ -274,17 +327,47 @@ async def get_user_selected_ai_model(db: AsyncIOMotorDatabase) -> Optional[str]:
                 ai_settings = StoredAISettings(**db_doc["ai_service"])
                 if ai_settings.model:
                     logger.debug(f"從資料庫獲取用戶選擇的 AI 模型: {ai_settings.model}")
-                    return ai_settings.model
+                    model_to_return = ai_settings.model # Assign to model_to_return
                 else:
                     logger.debug("資料庫中的 ai_service 設定中未指定模型。")
             else:
                 logger.debug("資料庫中未找到 ai_service 設定或設定格式不正確。")
         else:
-            logger.warning("get_user_selected_ai_model: 無法獲取資料庫實例。")
-            return None # Consider if db_manager.is_connected could be true but get_database() is None
+            logger.warning("get_user_selected_ai_model: 無法獲取資料庫實例，即使 db_manager 報告已連接。")
+            # Log this condition
+            await log_event(
+                db=db,
+                level=LogLevel.WARNING,
+                message="Could not get DB instance for user selected AI model, though db_manager reported connected.",
+                source="crud_settings.get_user_selected_ai_model",
+                details={"db_manager_connected_status": db_was_connected}
+            )
+            return None
     except Exception as e:
         logger.error(f"獲取用戶選擇的 AI 模型時發生錯誤: {e}", exc_info=True)
-    return None
+        # Log error during fetch
+        await log_event(
+            db=db,
+            level=LogLevel.ERROR,
+            message="Error fetching user selected AI model.",
+            source="crud_settings.get_user_selected_ai_model",
+            details={"error": str(e), "error_type": type(e).__name__, "db_manager_connected_status": db_was_connected}
+        )
+        return None # Return None on error
+
+    # Log successful fetch or if not found (after try-except)
+    await log_event(
+        db=db,
+        level=LogLevel.DEBUG, # DEBUG as it might be frequent
+        message="User selected AI model retrieval attempt finished.",
+        source="crud_settings.get_user_selected_ai_model",
+        details={
+            "model_found": model_to_return is not None,
+            "retrieved_model_name": model_to_return if model_to_return else "N/A",
+            "db_manager_connected_status": db_was_connected
+        }
+    )
+    return model_to_return
 
 async def get_connection_info(db: AsyncIOMotorDatabase) -> ConnectionInfo:
     """

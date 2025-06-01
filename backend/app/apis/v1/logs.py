@@ -6,9 +6,12 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from ...dependencies import get_db
 from ...models.log_models import LogEntryPublic, LogLevel
-from ...models.user_models import User # Import User
-from ...core.security import get_current_active_user # Import auth dependency
+from ...models.user_models import User
+from ...core.security import get_current_active_user
 from ...crud import crud_logs
+from ...core.logging_utils import log_event # Added
+from ...models.log_models import LogLevel # Added
+
 
 router = APIRouter()
 
@@ -35,14 +38,40 @@ async def list_logs(
     end_time: Optional[datetime] = Query(None, description="結束時間篩選 (ISO 8601 格式)"),
 ):
     user_id_to_filter = str(current_user.id)
-    # TODO: Implement admin role check to allow viewing other users' logs
-    # For now, if user_id is provided, it must match the current user.
+    request_id_val = None # Not available from current dependencies, would need Request object
+
+    # Log unauthorized access attempt if user_id is for someone else and current_user is not admin
+    # Assuming current_user.is_admin check would be here if admin functionality was complete
     if user_id and user_id != user_id_to_filter:
+        await log_event(
+            db=db,
+            level=LogLevel.WARNING,
+            message="Unauthorized attempt to list logs for another user.",
+            source="api.logs.list_logs",
+            user_id=str(current_user.id),
+            request_id=request_id_val,
+            details={"target_user_id": user_id, "current_user_id": user_id_to_filter}
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="無權查看其他使用者的日誌"
+            detail="Not authorized to view logs for the specified user." # User-friendly message
         )
     
+    applied_filters = {
+        "level": level.value if level else None, # Log enum value
+        "source": source,
+        "module": module,
+        "function": function,
+        "user_id_filter": user_id_to_filter, # This is the actual user_id being filtered by
+        "device_id": device_id,
+        "request_id_filter": request_id, # This is the filter criteria, not the current request's ID
+        "message_contains": message_contains,
+        "start_time": start_time.isoformat() if start_time else None,
+        "end_time": end_time.isoformat() if end_time else None,
+        "skip": skip,
+        "limit": limit
+    }
+
     logs_db_list = await crud_logs.get_log_entries(
         db=db,
         skip=skip,
@@ -57,6 +86,19 @@ async def list_logs(
         message_contains=message_contains,
         start_time=start_time,
         end_time=end_time,
+    )
+
+    await log_event(
+        db=db,
+        level=LogLevel.INFO,
+        message="Log entries retrieved.",
+        source="api.logs.list_logs",
+        user_id=str(current_user.id),
+        request_id=request_id_val, # This would be the current request's ID if available
+        details={
+            "filters_applied": applied_filters,
+            "retrieved_count": len(logs_db_list)
+        }
     )
     return [LogEntryPublic(**log.model_dump()) for log in logs_db_list]
 
@@ -81,12 +123,36 @@ async def count_logs(
     end_time: Optional[datetime] = Query(None, description="結束時間篩選 (ISO 8601 格式)"),
 ):
     user_id_to_filter = str(current_user.id)
-    # TODO: Implement admin role check
+    request_id_val = None # Not available from current dependencies
+
+    # Log unauthorized access attempt
     if user_id and user_id != user_id_to_filter:
+        await log_event(
+            db=db,
+            level=LogLevel.WARNING,
+            message="Unauthorized attempt to count logs for another user.",
+            source="api.logs.count_logs",
+            user_id=str(current_user.id),
+            request_id=request_id_val,
+            details={"target_user_id": user_id, "current_user_id": user_id_to_filter}
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="無權計算其他使用者的日誌數量"
+            detail="Not authorized to count logs for the specified user." # User-friendly message
         )
+
+    applied_filters = {
+        "level": level.value if level else None,
+        "source": source,
+        "module": module,
+        "function": function,
+        "user_id_filter": user_id_to_filter,
+        "device_id": device_id,
+        "request_id_filter": request_id,
+        "message_contains": message_contains,
+        "start_time": start_time.isoformat() if start_time else None,
+        "end_time": end_time.isoformat() if end_time else None
+    }
 
     count = await crud_logs.count_log_entries(
         db=db,
@@ -100,5 +166,18 @@ async def count_logs(
         message_contains=message_contains,
         start_time=start_time,
         end_time=end_time,
+    )
+
+    await log_event(
+        db=db,
+        level=LogLevel.DEBUG,
+        message="Log entry count retrieved.",
+        source="api.logs.count_logs",
+        user_id=str(current_user.id),
+        request_id=request_id_val,
+        details={
+            "filters_applied": applied_filters,
+            "retrieved_count": count
+        }
     )
     return count 

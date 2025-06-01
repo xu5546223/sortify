@@ -14,7 +14,8 @@ from ..models.document_models import (
     # DocumentAnalysis # 移除此處的導入，因為函數參數類型改變
 )
 from ..core.config import settings
-from ..core.logging_utils import AppLogger
+from ..core.logging_utils import AppLogger, log_event # Added log_event
+from ..models.log_models import LogLevel # Added LogLevel
 # from ..models.ai_models import AIImageAnalysisOutput # 移除此導入
 
 DOCUMENT_COLLECTION = "documents"
@@ -67,11 +68,45 @@ async def create_document(
         # 從資料庫讀取剛插入的記錄以確保一致性，並轉換為 Document 模型
         created_doc_raw = await db[DOCUMENT_COLLECTION].find_one({"_id": document_id_uuid})
         if created_doc_raw:
-            return Document(**created_doc_raw)
+            created_document = Document(**created_doc_raw)
+            # Log event
+            await log_event(
+                db=db,
+                level=LogLevel.INFO,
+                message="Document record created successfully.",
+                source="crud_documents.create_document",
+                details={
+                    "document_id": str(created_document.id),
+                    "filename": created_document.filename,
+                    "user_id": str(created_document.owner_id) if created_document.owner_id else None
+                }
+            )
+            return created_document
         else:
             # 這種情況理論上不應發生，除非插入後立即被其他操作刪除
+            # Log an error here as well, as this is unexpected
+            await log_event(
+                db=db,
+                level=LogLevel.ERROR,
+                message="Failed to retrieve document immediately after apparent creation.",
+                source="crud_documents.create_document",
+                details={"document_data_used": db_document_data} # Log the data used for insertion attempt
+            )
             raise Exception("Failed to retrieve document after creation")
     except Exception as e:
+        # Log exception during creation process
+        await log_event(
+            db=db,
+            level=LogLevel.ERROR,
+            message=f"Exception during document creation: {str(e)}",
+            source="crud_documents.create_document",
+            details={
+                "document_data_attempted": document_data.model_dump(),
+                "owner_id": str(owner_id) if owner_id else None,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
+        )
         raise
 
 async def get_document_by_id(db: AsyncIOMotorDatabase, document_id: uuid.UUID) -> Optional[Document]:
@@ -170,9 +205,30 @@ async def update_document(
         {"$set": update_data}
     )
     if result.matched_count == 0:
+        # Log if document not found for update
+        await log_event(
+            db=db,
+            level=LogLevel.WARNING,
+            message="Document record not found for update.",
+            source="crud_documents.update_document",
+            details={"document_id": str(document_id)}
+        )
         return None
-    # if result.modified_count == 1 or result.matched_count == 1: # 即使未修改也返回
-    return await get_document_by_id(db, document_id)
+
+    updated_document = await get_document_by_id(db, document_id)
+    if updated_document:
+        # Log successful update
+        await log_event(
+            db=db,
+            level=LogLevel.INFO,
+            message="Document record updated successfully.",
+            source="crud_documents.update_document",
+            details={
+                "document_id": str(document_id),
+                "updated_fields": list(update_data.keys()) # Excludes updated_at if it was auto-added
+            }
+        )
+    return updated_document
 
 async def delete_document_by_id(db: AsyncIOMotorDatabase, document_id: uuid.UUID) -> bool:
     """按 ID 刪除文件記錄。"""
@@ -190,9 +246,25 @@ async def delete_document_by_id(db: AsyncIOMotorDatabase, document_id: uuid.UUID
     result_str = await db[DOCUMENT_COLLECTION].delete_one({"_id": document_id_str})
     if result_str.deleted_count == 1:
         logger.info(f"Successfully deleted document with string ID: {document_id_str} (original UUID: {document_id})")
+        # Log successful deletion (string ID fallback)
+        await log_event(
+            db=db,
+            level=LogLevel.INFO,
+            message="Document record deleted successfully (using string ID fallback).",
+            source="crud_documents.delete_document_by_id",
+            details={"document_id": document_id_str, "original_uuid_attempt": str(document_id)}
+        )
         return True
     
     logger.error(f"Failed to delete document with UUID {document_id} and string ID {document_id_str}. Last delete result: {result_str.raw_result}")
+    # Log failed deletion
+    await log_event(
+        db=db,
+        level=LogLevel.ERROR,
+        message="Failed to delete document record after multiple attempts.",
+        source="crud_documents.delete_document_by_id",
+        details={"document_id_uuid": str(document_id), "document_id_str": document_id_str}
+    )
     return False
 
 async def get_documents_by_ids(
@@ -258,7 +330,20 @@ async def update_document_status(
     # else:
     #     update_payload["error_details"] = None # 清除 error_details
 
-    return await update_document(db, document_id, update_payload)
+    updated_doc = await update_document(db, document_id, update_payload)
+    if updated_doc:
+        await log_event(
+            db=db,
+            level=LogLevel.INFO,
+            message=f"Document status updated to {new_status.value}.",
+            source="crud_documents.update_document_status",
+            details={
+                "document_id": str(document_id),
+                "new_status": new_status.value,
+                "error_details_provided": error_details is not None
+            }
+        )
+    return updated_doc
 
 async def update_document_on_extraction_success(
     db: AsyncIOMotorDatabase, 
@@ -442,4 +527,17 @@ async def update_document_vector_status(
     if new_vector_status == VectorStatus.FAILED and error_details:
         update_payload["error_details"] = error_details # 可以考慮用一個專門的 vectorization_error_details 欄位
     
-    return await update_document(db, document_id, update_payload) 
+    updated_doc = await update_document(db, document_id, update_payload)
+    if updated_doc:
+        await log_event(
+            db=db,
+            level=LogLevel.INFO,
+            message=f"Document vector status updated to {new_vector_status.value}.",
+            source="crud_documents.update_document_vector_status",
+            details={
+                "document_id": str(document_id),
+                "new_vector_status": new_vector_status.value,
+                "error_details_provided": error_details is not None
+            }
+        )
+    return updated_doc

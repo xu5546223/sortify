@@ -72,8 +72,20 @@ async def get_owned_document(
     
     if document.owner_id != current_user.id:
         # Log this attempt for security auditing
-        logger.warning(f"User {current_user.id} ({current_user.email}) attempted to access document {document_id} owned by {document.owner_id}.")
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="您無權訪問或修改此文件")
+        # logger.warning(f"User {current_user.id} ({current_user.email}) attempted to access document {document_id} owned by {document.owner_id}.")
+        await log_event(
+            db=db,
+            level=LogLevel.WARNING,
+            message="Unauthorized document access attempt.",
+            source="api.documents.get_owned_document", # Standardized source
+            user_id=str(current_user.id),
+            details={
+                "document_id": str(document_id),
+                "document_owner_id": str(document.owner_id),
+                "attempting_user_email": current_user.email # Masker should handle if sensitive
+            }
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to access or modify this document.") # User-friendly message
         
     return document
 
@@ -402,6 +414,28 @@ async def list_documents(
         tags_include=tags_include
     )
     
+    # Log successful listing of documents
+    # request_id is not directly available here without adding Request to dependencies.
+    # Assuming request_id logging is handled by middleware or not strictly required for this DEBUG log.
+    await log_event(
+        db=db,
+        level=LogLevel.DEBUG,
+        message="Documents retrieved.",
+        source="api.documents.list_documents",
+        user_id=str(current_user.id),
+        details={
+            "user_id": str(current_user.id),
+            "skip": skip,
+            "limit": limit,
+            "status_in": [s.value for s in status_in] if status_in else None,
+            "filename_contains": filename_contains,
+            "tags_include": tags_include,
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+            "returned_count": len(documents),
+            "total_available_count": total_count
+        }
+    )
     return PaginatedDocumentResponse(items=documents, total=total_count)
 
 @router.get("/{document_id}", response_model=Document, summary="獲取特定文件的詳細信息")
@@ -412,23 +446,44 @@ async def get_document_details(
     獲取特定文件的詳細信息。
     權限檢查由 get_owned_document 依賴處理。
     """
+    # Logging for successful retrieval (DEBUG level) would ideally go here.
+    # However, similar to the discussion above, `log_event` requires `db` and `current_user` context.
+    # Adding them as direct dependencies to this route might be problematic for the tool.
+    # The `get_owned_document` dependency handles critical 403/404 logging.
+    # No change to this function's code, only comments updated.
     return document
 
 @router.get("/{document_id}/file", summary="獲取/下載文件本身", response_class=FileResponse)
 async def get_document_file(
-    document: Document = Depends(get_owned_document)
+    request: Request, # Added Request for request_id
+    document: Document = Depends(get_owned_document),
+    db: AsyncIOMotorDatabase = Depends(get_db) # Added db for logging
+    # current_user is implicitly part of get_owned_document, and document.owner_id can be used
 ):
     """
     根據文件ID獲取實際的文件內容，用於下載或客戶端預覽。
     只有文件擁有者才能下載。權限檢查由 get_owned_document 依賴處理。
     """
+    request_id_val = request.state.request_id if hasattr(request.state, 'request_id') else None
+    user_id_val = str(document.owner_id) # Owner is validated by get_owned_document
+
     if not document.file_path:
-        # 考慮加入 user_id 和 request_id 到日誌
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"文件 {document.filename} (ID: {document.id}) 沒有記錄儲存路徑")
+        await log_event(
+            db=db, level=LogLevel.WARNING,
+            message=f"Document file access failed: File path not recorded for document.",
+            source="api.documents.get_document_file", user_id=user_id_val, request_id=request_id_val,
+            details={"document_id": str(document.id), "filename": document.filename}
+        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File path not recorded for document {document.filename}")
 
     if not os.path.exists(document.file_path):
-        # 考慮加入 user_id 和 request_id 到日誌
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"文件 {document.filename} (ID: {document.id}) 在指定路徑 {document.file_path} 未找到")
+        await log_event(
+            db=db, level=LogLevel.ERROR, # Error because path is recorded but file is missing
+            message=f"Document file access failed: File not found at recorded path.",
+            source="api.documents.get_document_file", user_id=user_id_val, request_id=request_id_val,
+            details={"document_id": str(document.id), "filename": document.filename, "recorded_path": document.file_path}
+        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File not found at path: {document.file_path}")
 
     media_type = document.file_type if document.file_type else 'application/octet-stream'
     
@@ -437,11 +492,16 @@ async def get_document_file(
     if not document.file_type or not (
         document.file_type.startswith('image/') or 
         document.file_type == 'application/pdf' or 
-        document.file_type.startswith('text/') # Common text types can also be inline
+        document.file_type.startswith('text/')
     ):
-        # For unknown types or types not typically previewed inline, fallback to attachment
         content_disposition_type = 'attachment'
 
+    await log_event(
+        db=db, level=LogLevel.DEBUG,
+        message="Document file accessed.",
+        source="api.documents.get_document_file", user_id=user_id_val, request_id=request_id_val,
+        details={"document_id": str(document.id), "filename": document.filename, "media_type": media_type}
+    )
     return FileResponse(
         path=document.file_path, 
         media_type=media_type, 
@@ -1023,90 +1083,106 @@ async def delete_document_route(
     if not deleted_from_db:
         await log_event(
             db=db, level=LogLevel.ERROR, 
-            message=f"資料庫記錄刪除失敗，但文件可能仍存在: {document_id} (user {user_id_for_log_str})",
-            source="documents_api",
+            message=f"Document deletion failed: Database record not deleted for {document_id}.",
+            source="api.documents.delete_document", # Standardized source
             user_id=user_id_for_log_str, 
             request_id=request_id_for_log, 
-            details={"document_id": str(document_id), "file_path": file_path_to_delete}
+            details={"document_id": str(document_id), "filename": existing_document.filename, "file_path_at_time_of_error": file_path_to_delete}
         )
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="刪除文件記錄時發生錯誤")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error deleting document record.")
 
-    # 從向量數據庫中刪除向量化數據
+    # From here, DB record is deleted. Proceed with vector and file system cleanup.
+    # Log overall success at the end. Individual errors in cleanup are logged but don't make the whole operation fail.
+
+    # Attempt to delete from vector database
     try:
         document_id_str = str(document_id)
-        logger.info(f"嘗試從向量數據庫刪除文檔 {document_id_str} 的向量...")
+        logger.info(f"Attempting to delete vectors for document {document_id_str}...")
         vector_delete_success = vector_db_service.delete_by_document_id(document_id_str)
         if vector_delete_success:
-            logger.info(f"成功從向量數據庫刪除文檔 {document_id_str} 的向量")
+            logger.info(f"Successfully deleted vectors for document {document_id_str}")
             await log_event(
-                db=db, level=LogLevel.INFO, 
-                message=f"向量數據已成功刪除: 文檔 {document_id_str} (user {user_id_for_log_str})",
-                source="documents_api_delete_vector", 
+                db=db, level=LogLevel.DEBUG, # Changed to DEBUG as it's a sub-step
+                message=f"Document vectors deleted from vector database.",
+                source="api.documents.delete_document",
                 user_id=user_id_for_log_str, 
                 request_id=request_id_for_log, 
                 details={"document_id": document_id_str}
             )
         else:
-            logger.warning(f"從向量數據庫刪除文檔 {document_id_str} 的向量時可能遇到問題")
+            # This condition might mean "not found" or actual failure depending on service implementation
+            logger.warning(f"Problem deleting vectors for document {document_id_str} (or vectors not found).")
             await log_event(
                 db=db, level=LogLevel.WARNING, 
-                message=f"向量數據刪除可能不完整: 文檔 {document_id_str} (user {user_id_for_log_str})",
-                source="documents_api_delete_vector_warning", 
+                message=f"Document vectors not found or not deleted from vector database.",
+                source="api.documents.delete_document",
                 user_id=user_id_for_log_str, 
                 request_id=request_id_for_log, 
-                details={"document_id": document_id_str}
+                details={"document_id": document_id_str, "reason": "delete_by_document_id returned false"}
             )
-    except Exception as e:
-        logger.error(f"從向量數據庫刪除文檔 {document_id} 的向量時發生錯誤: {e}")
+    except Exception as e_vector:
+        logger.error(f"Error deleting vectors for document {document_id}: {e_vector}", exc_info=True)
         await log_event(
             db=db, level=LogLevel.ERROR, 
-            message=f"向量數據刪除失敗: 文檔 {document_id} 錯誤: {str(e)} (user {user_id_for_log_str})",
-            source="documents_api_delete_vector_error", 
+            message=f"Document vector deletion failed.",
+            source="api.documents.delete_document",
             user_id=user_id_for_log_str, 
             request_id=request_id_for_log, 
-            details={"document_id": str(document_id), "error": str(e)}
+            details={"document_id": str(document_id), "error": str(e_vector), "error_type": type(e_vector).__name__}
         )
-        # 不會因為向量刪除失敗而中斷整個刪除流程，只記錄錯誤
 
-    if file_path_to_delete and os.path.exists(file_path_to_delete):
-        try:
-            os.remove(file_path_to_delete)
+    # Attempt to delete from file system
+    if file_path_to_delete:
+        if os.path.exists(file_path_to_delete):
+            try:
+                os.remove(file_path_to_delete)
+                await log_event(
+                    db=db, level=LogLevel.DEBUG, # Changed to DEBUG as it's a sub-step
+                    message=f"Document file deleted from filesystem.",
+                    source="api.documents.delete_document",
+                    user_id=user_id_for_log_str,
+                    request_id=request_id_for_log,
+                    details={"document_id": str(document_id), "file_path": file_path_to_delete}
+                )
+            except Exception as e_os:
+                logger.error(f"Error deleting file from filesystem {file_path_to_delete}: {e_os}", exc_info=True)
+                await log_event(
+                    db=db, level=LogLevel.ERROR,
+                    message=f"Document file system deletion failed.",
+                    source="api.documents.delete_document",
+                    user_id=user_id_for_log_str,
+                    request_id=request_id_for_log,
+                    details={"document_id": str(document_id), "file_path": file_path_to_delete, "error": str(e_os), "error_type": type(e_os).__name__}
+                )
+        else: # Path recorded, but file not there
             await log_event(
-                db=db, level=LogLevel.INFO, 
-                message=f"文件實體成功刪除: {file_path_to_delete} (user {user_id_for_log_str})",
-                source="documents_api_delete_file", 
+                db=db, level=LogLevel.WARNING,
+                message=f"Document file not found at recorded path for deletion.",
+                source="api.documents.delete_document",
                 user_id=user_id_for_log_str, 
                 request_id=request_id_for_log, 
-                details={"document_id": str(document_id), "file_path": file_path_to_delete}
+                details={"document_id": str(document_id), "recorded_path": file_path_to_delete}
             )
-        except Exception as e:
-            await log_event(
-                db=db, level=LogLevel.ERROR, 
-                message=f"文件實體刪除失敗: {file_path_to_delete}. 錯誤: {str(e)} (user {user_id_for_log_str})",
-                source="documents_api_delete_file_error", 
-                user_id=user_id_for_log_str, 
-                request_id=request_id_for_log, 
-                details={"document_id": str(document_id), "file_path": file_path_to_delete, "error": str(e)}
-            )
-    elif file_path_to_delete: # 路徑存在但文件不存在
+    else: # No file path recorded
         await log_event(
             db=db, level=LogLevel.WARNING, 
-            message=f"文件實體在指定路徑未找到，無法刪除: {file_path_to_delete} (user {user_id_for_log_str})",
-            source="documents_api_delete_file_not_found", 
-            user_id=user_id_for_log_str, 
-            request_id=request_id_for_log, 
-            details={"document_id": str(document_id), "file_path": file_path_to_delete}
-        )
-    else: # file_path_to_delete 為 None
-        await log_event(
-            db=db, level=LogLevel.WARNING, 
-            message=f"文件記錄沒有有效的 file_path，無法嘗試刪除實體文件. Document ID: {document_id} (user {user_id_for_log_str})",
-            source="documents_api_delete_file_no_path", 
+            message=f"Document deletion: No file path recorded, skipping filesystem delete.",
+            source="api.documents.delete_document",
             user_id=user_id_for_log_str, 
             request_id=request_id_for_log, 
             details={"document_id": str(document_id)}
         )
-    return 
+
+    # Overall success log for the main action (DB record deletion)
+    await log_event(
+        db=db, level=LogLevel.INFO,
+        message="Document deleted successfully.", # This signifies the main DB operation was successful
+        source="api.documents.delete_document",
+        user_id=user_id_for_log_str,
+        request_id=request_id_for_log,
+        details={"document_id": str(document_id), "filename": existing_document.filename}
+    )
+    return # FastAPI handles 204 No Content
 
 @router.post("/batch-delete", response_model=BatchDeleteDocumentsResponse, summary="批量刪除文件")
 async def batch_delete_documents_route(
@@ -1194,42 +1270,61 @@ async def batch_delete_documents_route(
                 logger.info(f"批量刪除：成功從向量數據庫移除文檔 {doc_id_str} 的向量。")
                 # 在這裡添加日誌，記錄每個成功刪除的向量
                 await log_event(
-                    db=db, level=LogLevel.INFO, 
-                    message=f"批量刪除：成功從向量數據庫移除文檔 {doc_id_str} 的向量 (user {user_id_for_log_str})",
-                    source="batch_delete_documents_vector_success", 
+                    db=db, level=LogLevel.DEBUG, # DEBUG for sub-operation success
+                    message=f"Batch delete: Successfully removed vectors for document {doc_id_str}.",
+                    source="api.documents.batch_delete",
                     user_id=user_id_for_log_str, 
-                    request_id=None, # 批量操作可能沒有明確的 request_id
+                    request_id=None,
                     details={"document_id": doc_id_str}
                 )
             else:
-                # 這可能意味著刪除操作在ChromaDB內部失敗，或者文檔本來就不在裡面
-                # delete_by_document_id 目前的實現是如果未找到也返回 True
-                logger.info(f"批量刪除：從向量數據庫移除文檔 {doc_id_str} 的向量（可能本來就不存在或操作未成功）。")
+                logger.info(f"Batch delete: Vectors for document {doc_id_str} not found or not deleted by vector_db_service.")
+                await log_event(
+                    db=db, level=LogLevel.WARNING,
+                    message=f"Batch delete: Vectors not found/deleted for document {doc_id_str}.",
+                    source="api.documents.batch_delete",
+                    user_id=user_id_for_log_str,
+                    request_id=None,
+                    details={"document_id": doc_id_str, "reason": "vector_db_service.delete_by_document_id returned false"}
+                )
         except Exception as e_vector:
             logger.error(f"批量刪除：從向量數據庫移除文檔 {doc_id_str} 的向量時發生錯誤: {e_vector}")
-            # 記錄向量刪除錯誤，但不將其視為整個文件刪除操作的失敗
             await log_event(
                 db=db, level=LogLevel.ERROR, 
-                message=f"批量刪除：從向量數據庫移除文檔 {doc_id_str} 的向量時發生錯誤: {str(e_vector)} (user {user_id_for_log_str})",
-                source="batch_delete_documents_vector_error", 
+                message=f"Batch delete: Error removing vectors for document {doc_id_str}.",
+                source="api.documents.batch_delete",
                 user_id=user_id_for_log_str, 
                 request_id=None, 
-                details={"document_id": doc_id_str, "error": str(e_vector)}
+                details={"document_id": doc_id_str, "error": str(e_vector), "error_type": type(e_vector).__name__}
             )
 
-        if not delete_error: # 如果核心的DB刪除成功了
+        if not delete_error:
             success_count += 1
-            action_details.append(BatchDeleteResponseDetail(id=doc_id_uuid, status="deleted", message="文件已成功刪除"))
-        # 如果 delete_error 為 True，則相應的錯誤信息已在上面添加
+            action_details.append(BatchDeleteResponseDetail(id=doc_id_uuid, status="deleted", message="Document deleted successfully."))
+        # Error details already added if delete_error is True
 
-    final_message = f"批量刪除操作完成。總共請求處理 {processed_count} 個文件。成功刪除 {success_count} 個。"
-    overall_success = processed_count == success_count and processed_count > 0
+    final_message = f"Batch delete operation completed. Requested: {len(request_data.document_ids)}, Processed: {processed_count}, Succeeded: {success_count}."
+    overall_success = success_count == len(request_data.document_ids) and processed_count == len(request_data.document_ids)
 
-    if processed_count == 0:
-        final_message = "沒有提供要刪除的文件ID。"
-        overall_success = False # 或者 True 如果認為空請求是成功的
-        # raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="沒有提供要刪除的文件ID。")
 
+    if processed_count == 0 and not request_data.document_ids: # No IDs provided
+        final_message = "No document IDs provided for batch deletion."
+        overall_success = True # Or False, depending on desired semantics for empty request
+
+    # Log the overall batch operation result
+    await log_event(
+        db=db, level=LogLevel.INFO,
+        message=final_message,
+        source="api.documents.batch_delete",
+        user_id=user_id_for_log_str,
+        request_id=None, # No single request_id for batch
+        details={
+            "requested_count": len(request_data.document_ids),
+            "processed_count": processed_count,
+            "success_count": success_count,
+            "overall_success_status": overall_success
+        }
+    )
 
     return BatchDeleteDocumentsResponse(
         success=overall_success,

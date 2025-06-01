@@ -1,15 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi import Request # Added Request
 from pydantic import BaseModel
 
 from app.core.security import get_current_active_user
 from app.models.user_models import User
 from app.services.embedding_service import embedding_service
 from app.core.device_config import device_config_manager, DeviceType
-from app.core.logging_utils import AppLogger
+from app.core.logging_utils import AppLogger, log_event # Added log_event
+from app.models.log_models import LogLevel # Added LogLevel
 import logging
 
-logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
+logger = AppLogger(__name__, level=logging.DEBUG).get_logger() # Existing app logger can remain for very low-level/internal logs if desired
 
 router = APIRouter()
 
@@ -19,13 +21,21 @@ class DeviceConfigRequest(BaseModel):
 
 @router.get("/config")
 async def get_embedding_model_config(
+    request: Request, # Added Request
+    db: AsyncIOMotorDatabase = Depends(get_db), # Added db for log_event
     current_user: User = Depends(get_current_active_user)
 ):
     """獲取 Embedding 模型配置選項 - 需要用戶認證"""
+    request_id_val = request.state.request_id if hasattr(request.state, 'request_id') else None
     try:
-        logger.info(f"用戶 {current_user.username} 請求embedding模型配置")
+        # logger.info(f"用戶 {current_user.username} 請求embedding模型配置") # Replaced by log_event
+        await log_event(
+            db=db, level=LogLevel.DEBUG,
+            message=f"User {current_user.username} requested embedding model configuration.",
+            source="api.embedding.get_config", user_id=str(current_user.id), request_id=request_id_val
+        )
         
-        import torch
+        import torch # Keep torch import local to where it's used
         
         config = {
             "current_model": embedding_service.model_name,
@@ -38,7 +48,6 @@ async def get_embedding_model_config(
             "model_info": None
         }
         
-        # 檢查可用設備
         config["available_devices"].append("cpu")
         if torch.cuda.is_available():
             config["available_devices"].append("cuda")
@@ -49,9 +58,8 @@ async def get_embedding_model_config(
                 "cuda_version": torch.version.cuda if torch.version.cuda else "N/A"
             }
         
-        # 添加性能信息
         device_config = device_config_manager.get_device_config()
-        performance_recommendation = device_config_manager.get_performance_recommendation()
+        # performance_recommendation = device_config_manager.get_performance_recommendation() # Not used
         
         if device_config:
             config["performance_info"] = {
@@ -60,7 +68,6 @@ async def get_embedding_model_config(
                 "recommendation": "建議使用GPU以獲得更好性能" if device_config.get("gpu_available") else "使用CPU模式以確保兼容性"
             }
         
-        # 添加模型信息
         if embedding_service._model_loaded:
             config["model_info"] = {
                 "model_name": embedding_service.model_name,
@@ -68,197 +75,292 @@ async def get_embedding_model_config(
                 "model_size": "約 420MB"
             }
         
+        await log_event(
+            db=db, level=LogLevel.DEBUG,
+            message=f"Successfully retrieved embedding model configuration for user {current_user.username}.",
+            source="api.embedding.get_config", user_id=str(current_user.id), request_id=request_id_val,
+            details={"config_summary": {"model_loaded": config["model_loaded"], "current_device": config["current_device"]}}
+        )
         return config
         
     except Exception as e:
-        logger.error(f"獲取模型配置失敗: {e}", exc_info=True)
+        # logger.error(f"獲取模型配置失敗: {e}", exc_info=True) # Replaced by log_event
+        await log_event(
+            db=db, level=LogLevel.ERROR,
+            message=f"Failed to get embedding model configuration for user {current_user.username}: {str(e)}",
+            source="api.embedding.get_config", user_id=str(current_user.id), request_id=request_id_val,
+            details={"error": str(e), "error_type": type(e).__name__}
+        )
         raise HTTPException(
             status_code=500,
-            detail=f"獲取模型配置失敗: {str(e)}"
+            detail="Failed to retrieve model configuration." # User-friendly
         )
 
 @router.post("/load")
 async def load_embedding_model(
+    request: Request, # Added
+    db: AsyncIOMotorDatabase = Depends(get_db), # Added
     current_user: User = Depends(get_current_active_user)
 ):
     """手動加載 Embedding 模型 - 需要用戶認證"""
+    request_id_val = request.state.request_id if hasattr(request.state, 'request_id') else None
+    await log_event(
+        db=db, level=LogLevel.INFO,
+        message=f"User {current_user.username} requested to load embedding model.",
+        source="api.embedding.load_model", user_id=str(current_user.id), request_id=request_id_val
+    )
+
     try:
-        logger.info(f"用戶 {current_user.username} 請求加載embedding模型")
-        
         if embedding_service._model_loaded:
+            await log_event(
+                db=db, level=LogLevel.INFO,
+                message=f"Embedding model load request by {current_user.username}: Model already loaded.",
+                source="api.embedding.load_model", user_id=str(current_user.id), request_id=request_id_val,
+                details={"model_info": embedding_service.get_model_info()}
+            )
             return JSONResponse(
                 content={
-                    "message": "Embedding模型已經加載",
+                    "message": "Embedding model already loaded.", # User-friendly
                     "status": "already_loaded",
                     "model_info": embedding_service.get_model_info()
                 }
             )
         
-        logger.info(f"用戶 {current_user.username} 開始手動加載Embedding模型...")
+        logger.info(f"User {current_user.username} initiating manual load of Embedding model...") # Keep this specific internal logger if desired
         
-        # 執行模型加載
-        embedding_service._load_model()
+        embedding_service._load_model() # This might take time
         
         model_info = embedding_service.get_model_info()
         
-        logger.info(f"用戶 {current_user.username} Embedding模型加載成功")
+        await log_event(
+            db=db, level=LogLevel.INFO,
+            message=f"Embedding model loaded successfully by user {current_user.username}.",
+            source="api.embedding.load_model", user_id=str(current_user.id), request_id=request_id_val,
+            details={"model_info": model_info}
+        )
         
         return JSONResponse(
             content={
-                "message": "Embedding模型加載成功",
+                "message": "Embedding model loaded successfully.", # User-friendly
                 "status": "loaded",
                 "model_info": model_info,
-                "load_time_info": "模型已從緩存加載"
+                "load_time_info": "Model has been loaded." # Simplified
             }
         )
         
     except Exception as e:
-        logger.error(f"加載Embedding模型失敗: {e}", exc_info=True)
+        # logger.error(f"加載Embedding模型失敗: {e}", exc_info=True) # Replaced by log_event
+        await log_event(
+            db=db, level=LogLevel.ERROR,
+            message=f"Failed to load embedding model for user {current_user.username}: {str(e)}",
+            source="api.embedding.load_model", user_id=str(current_user.id), request_id=request_id_val,
+            details={"error": str(e), "error_type": type(e).__name__}
+        )
         raise HTTPException(
             status_code=500,
-            detail=f"加載Embedding模型失敗: {str(e)}"
+            detail="Failed to load embedding model." # User-friendly
         )
 
 @router.post("/configure-device")
 async def configure_embedding_device(
-    request: DeviceConfigRequest,
+    config_request: DeviceConfigRequest, # Renamed to avoid conflict with fastapi.Request
+    fastapi_request: Request, # Added Request
+    db: AsyncIOMotorDatabase = Depends(get_db), # Added db
     current_user: User = Depends(get_current_active_user)
 ):
     """配置 Embedding 模型設備偏好 - 需要用戶認證"""
+    request_id_val = fastapi_request.state.request_id if hasattr(fastapi_request.state, 'request_id') else None
+    await log_event(
+        db=db, level=LogLevel.INFO,
+        message=f"User {current_user.username} requested to configure embedding device.",
+        source="api.embedding.configure_device", user_id=str(current_user.id), request_id=request_id_val,
+        details={"device_preference": config_request.device_preference, "force_reload": config_request.force_reload}
+    )
+
     try:
-        logger.info(f"用戶 {current_user.username} 請求配置設備: {request.device_preference}")
+        import torch # Keep torch import local
         
-        import torch
+        if config_request.device_preference not in ["cpu", "cuda", "auto"]:
+            await log_event(db=db, level=LogLevel.WARNING, message=f"Invalid device preference '{config_request.device_preference}' by user {current_user.username}.",
+                            source="api.embedding.configure_device", user_id=str(current_user.id), request_id=request_id_val)
+            raise HTTPException(status_code=400, detail="Device preference must be 'cpu', 'cuda', or 'auto'.")
         
-        if request.device_preference not in ["cpu", "cuda", "auto"]:
-            raise HTTPException(
-                status_code=400,
-                detail="設備偏好必須是 'cpu', 'cuda' 或 'auto'"
-            )
+        if config_request.device_preference == "cuda" and not torch.cuda.is_available():
+            await log_event(db=db, level=LogLevel.WARNING, message=f"CUDA requested by user {current_user.username} but not available.",
+                            source="api.embedding.configure_device", user_id=str(current_user.id), request_id=request_id_val)
+            raise HTTPException(status_code=400, detail="CUDA not available, cannot set to GPU mode.")
         
-        if request.device_preference == "cuda" and not torch.cuda.is_available():
-            raise HTTPException(
-                status_code=400,
-                detail="CUDA 不可用，無法設置為 GPU 模式"
-            )
-        
-        # 使用設備配置管理器設置偏好
+        set_pref_note = ""
         try:
-            device_type = DeviceType(request.device_preference)
+            device_type = DeviceType(config_request.device_preference)
             success = device_config_manager.set_device_preference(device_type)
             if success:
-                result = {"note": f"設備偏好已設置為 {request.device_preference}"}
+                set_pref_note = f"Device preference set to {config_request.device_preference}."
+                await log_event(db=db, level=LogLevel.INFO, message=set_pref_note, source="api.embedding.configure_device", user_id=str(current_user.id), request_id=request_id_val)
             else:
-                result = {"note": "設備偏好設置失敗，可能是硬體限制"}
-        except ValueError as e:
-            logger.warning(f"無效的設備偏好: {request.device_preference}")
-            result = {"note": "無效的設備偏好值"}
-        except Exception as e:
-            logger.warning(f"設置設備偏好失敗: {e}")
-            result = {"note": "設備偏好設置遇到問題，但已記錄請求"}
-        
-        # 如果需要強制重新加載模型
-        requires_restart = False
-        if request.force_reload and embedding_service._model_loaded:
-            logger.info(f"用戶 {current_user.username} 強制重新加載模型")
+                set_pref_note = "Failed to set device preference, possibly due to hardware limitations."
+                await log_event(db=db, level=LogLevel.WARNING, message=set_pref_note, source="api.embedding.configure_device", user_id=str(current_user.id), request_id=request_id_val)
+        except ValueError as e_val:
+            set_pref_note = f"Invalid device preference value: {config_request.device_preference}."
+            logger.warning(set_pref_note) # Keep existing logger for this specific internal detail
+            await log_event(db=db, level=LogLevel.WARNING, message=set_pref_note, source="api.embedding.configure_device", user_id=str(current_user.id), request_id=request_id_val, details={"error": str(e_val)})
+        except Exception as e_set: # Catch other potential errors from set_device_preference
+            set_pref_note = f"Problem setting device preference: {str(e_set)}."
+            logger.warning(set_pref_note, exc_info=True) # Keep existing logger
+            await log_event(db=db, level=LogLevel.ERROR, message=set_pref_note, source="api.embedding.configure_device", user_id=str(current_user.id), request_id=request_id_val, details={"error": str(e_set)})
+
+        requires_restart_msg = "" # Will be part of the note if restart happens
+        if config_request.force_reload and embedding_service._model_loaded:
+            await log_event(db=db, level=LogLevel.INFO, message=f"User {current_user.username} requested force model reload.", source="api.embedding.configure_device", user_id=str(current_user.id), request_id=request_id_val)
             try:
-                # 卸載當前模型
                 embedding_service._model = None
                 embedding_service._model_loaded = False
-                # 重新加載模型
-                embedding_service._load_model()
-                requires_restart = False
-            except Exception as e:
-                logger.warning(f"重新加載模型失敗: {e}")
-                requires_restart = True
-        
-        logger.info(f"用戶 {current_user.username} 設備配置完成: {request.device_preference}")
-        
+                embedding_service._load_model() # This might take time
+                requires_restart_msg = " Model reloaded successfully."
+                await log_event(db=db, level=LogLevel.INFO, message=f"Embedding model reloaded successfully by user {current_user.username}.", source="api.embedding.configure_device", user_id=str(current_user.id), request_id=request_id_val)
+            except Exception as e_reload:
+                requires_restart_msg = f" Failed to reload model: {str(e_reload)}."
+                logger.warning(f"重新加載模型失敗: {e_reload}", exc_info=True) # Keep existing logger for this detail
+                await log_event(db=db, level=LogLevel.ERROR, message=f"Model reload failed for user {current_user.username}: {str(e_reload)}", source="api.embedding.configure_device", user_id=str(current_user.id), request_id=request_id_val, details={"error": str(e_reload)})
+
+        final_note = set_pref_note + requires_restart_msg
+
+        await log_event(db=db, level=LogLevel.INFO,
+                        message=f"Device configuration completed for user {current_user.username}. Preference: {config_request.device_preference}, Forced Reload: {config_request.force_reload}.",
+                        source="api.embedding.configure_device", user_id=str(current_user.id), request_id=request_id_val,
+                        details={"final_note": final_note, "current_model_device": embedding_service.get_model_info()["device"]})
+
         return JSONResponse(
             content={
-                "message": f"設備偏好已設置為: {request.device_preference}",
-                "device_preference": request.device_preference,
-                "note": result.get("note", "設備偏好設置成功"),
+                "message": f"Device preference set to: {config_request.device_preference}.", # User-friendly
+                "device_preference": config_request.device_preference,
+                "note": final_note,
                 "current_device": embedding_service.get_model_info()["device"],
-                "requires_restart": requires_restart,
-                "performance_impact": result.get("performance_impact", "性能將根據新設備設置調整")
+                "requires_restart": "Failed to reload model" in requires_restart_msg, # True if reload failed
+                "performance_impact": "Performance will adjust based on the new device setting." # Generic
             }
         )
         
-    except HTTPException:
+    except HTTPException: # Re-raise HTTPExceptions directly
         raise
     except Exception as e:
-        logger.error(f"配置模型設備失敗: {e}", exc_info=True)
+        # logger.error(f"配置模型設備失敗: {e}", exc_info=True) # Replaced by log_event
+        await log_event(
+            db=db, level=LogLevel.ERROR,
+            message=f"Failed to configure embedding device for user {current_user.username}: {str(e)}",
+            source="api.embedding.configure_device", user_id=str(current_user.id), request_id=request_id_val,
+            details={"error": str(e), "error_type": type(e).__name__}
+        )
         raise HTTPException(
             status_code=500,
-            detail=f"配置模型設備失敗: {str(e)}"
+            detail="Failed to configure model device." # User-friendly
         )
 
 @router.get("/status")
 async def get_embedding_model_status(
+    request: Request, # Added
+    db: AsyncIOMotorDatabase = Depends(get_db), # Added
     current_user: User = Depends(get_current_active_user)
 ):
     """獲取 Embedding 模型當前狀態 - 需要用戶認證"""
+    request_id_val = request.state.request_id if hasattr(request.state, 'request_id') else None
+    await log_event(
+        db=db, level=LogLevel.DEBUG,
+        message=f"User {current_user.username} requested embedding model status.",
+        source="api.embedding.get_status", user_id=str(current_user.id), request_id=request_id_val
+    )
+
     try:
-        logger.info(f"用戶 {current_user.username} 請求embedding模型狀態")
-        
         model_info = embedding_service.get_model_info()
         device_config = device_config_manager.get_device_config()
         
-        status = {
+        status_response = {
             "model_info": model_info,
             "device_config": device_config,
             "is_ready": embedding_service._model_loaded,
             "cache_available": hasattr(embedding_service, '_model') and embedding_service._model is not None,
-            "last_used": None,  # TODO: 可以添加最後使用時間追蹤
+            "last_used": None,
             "performance_metrics": {
-                "average_encoding_time": None,  # TODO: 可以添加性能指標追蹤
+                "average_encoding_time": None,
                 "total_encodings": None
             }
         }
         
-        return status
+        await log_event(
+            db=db, level=LogLevel.DEBUG,
+            message=f"Successfully retrieved embedding model status for user {current_user.username}.",
+            source="api.embedding.get_status", user_id=str(current_user.id), request_id=request_id_val,
+            details={"is_ready": status_response["is_ready"], "current_device": model_info.get("device")}
+        )
+        return status_response
         
     except Exception as e:
-        logger.error(f"獲取模型狀態失敗: {e}", exc_info=True)
+        # logger.error(f"獲取模型狀態失敗: {e}", exc_info=True) # Replaced by log_event
+        await log_event(
+            db=db, level=LogLevel.ERROR,
+            message=f"Failed to get embedding model status for user {current_user.username}: {str(e)}",
+            source="api.embedding.get_status", user_id=str(current_user.id), request_id=request_id_val,
+            details={"error": str(e), "error_type": type(e).__name__}
+        )
         raise HTTPException(
             status_code=500,
-            detail=f"獲取模型狀態失敗: {str(e)}"
+            detail="Failed to retrieve model status." # User-friendly
         )
 
 @router.post("/unload")
 async def unload_embedding_model(
+    request: Request, # Added
+    db: AsyncIOMotorDatabase = Depends(get_db), # Added
     current_user: User = Depends(get_current_active_user)
 ):
     """卸載 Embedding 模型 - 需要用戶認證"""
+    request_id_val = request.state.request_id if hasattr(request.state, 'request_id') else None
+    await log_event(
+        db=db, level=LogLevel.INFO,
+        message=f"User {current_user.username} requested to unload embedding model.",
+        source="api.embedding.unload_model", user_id=str(current_user.id), request_id=request_id_val
+    )
+
     try:
-        logger.info(f"用戶 {current_user.username} 請求卸載embedding模型")
-        
         if not embedding_service._model_loaded:
+            await log_event(
+                db=db, level=LogLevel.INFO,
+                message=f"Embedding model unload request by {current_user.username}: Model already not loaded.",
+                source="api.embedding.unload_model", user_id=str(current_user.id), request_id=request_id_val
+            )
             return JSONResponse(
                 content={
-                    "message": "Embedding模型未加載",
+                    "message": "Embedding model not loaded.", # User-friendly
                     "status": "not_loaded"
                 }
             )
         
-        # 卸載模型
         embedding_service._model = None
         embedding_service._model_loaded = False
         
-        logger.info(f"用戶 {current_user.username} Embedding模型卸載成功")
+        await log_event(
+            db=db, level=LogLevel.INFO,
+            message=f"Embedding model unloaded successfully by user {current_user.username}.",
+            source="api.embedding.unload_model", user_id=str(current_user.id), request_id=request_id_val
+        )
         
         return JSONResponse(
             content={
-                "message": "Embedding模型已卸載",
+                "message": "Embedding model unloaded successfully.", # User-friendly
                 "status": "unloaded",
-                "memory_freed": "模型記憶體已釋放"
+                "memory_freed": "Model memory has been released." # User-friendly
             }
         )
         
     except Exception as e:
-        logger.error(f"卸載Embedding模型失敗: {e}", exc_info=True)
+        # logger.error(f"卸載Embedding模型失敗: {e}", exc_info=True) # Replaced by log_event
+        await log_event(
+            db=db, level=LogLevel.ERROR,
+            message=f"Failed to unload embedding model for user {current_user.username}: {str(e)}",
+            source="api.embedding.unload_model", user_id=str(current_user.id), request_id=request_id_val,
+            details={"error": str(e), "error_type": type(e).__name__}
+        )
         raise HTTPException(
             status_code=500,
-            detail=f"卸載Embedding模型失敗: {str(e)}"
+            detail="Failed to unload embedding model." # User-friendly
         ) 
