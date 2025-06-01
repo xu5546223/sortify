@@ -26,7 +26,7 @@ from .core.config import settings
 
 # 配置標準日誌記錄器
 logging.basicConfig(
-    level=logging.INFO, 
+    level=logging.DEBUG, 
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler() # 輸出到控制台，也可以配置輸出到檔案

@@ -197,6 +197,7 @@ async def get_google_models_list(
 
 @router.get("/connection-info", response_model=ConnectionInfo, summary="獲取手機配對連線資訊")
 async def get_connection_info_route(
+    request: Request,
     db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: User = Depends(get_current_active_user) # Add auth dependency
 ):
@@ -204,19 +205,20 @@ async def get_connection_info_route(
     獲取用於手機應用程式配對的連線資訊，包括 QR Code 圖像數據/URL 和配對碼。
     (目前為模擬數據)
     """
-    # request_id_val would require Request object as dependency.
+    request_id_for_log = request.state.request_id if hasattr(request.state, 'request_id') else None
     await log_event(
         db=db,
         level=LogLevel.DEBUG,
         message=f"User {current_user.username} requested connection info.",
         source="api.system.get_connection_info",
         user_id=str(current_user.id),
-        request_id=None
+        request_id=request_id_for_log
     )
     return await crud_settings.get_connection_info(db)
 
 @router.post("/connection-info/refresh", response_model=ConnectionInfo, summary="刷新手機配對連線資訊")
 async def refresh_connection_info_route(
+    request: Request,
     db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: User = Depends(get_current_active_user) # Add auth dependency
 ):
@@ -224,14 +226,14 @@ async def refresh_connection_info_route(
     請求新的手機應用程式配對連線資訊，使舊的資訊可能失效。
     (目前為模擬數據)
     """
-    # request_id_val would require Request object as dependency.
+    request_id_for_log = request.state.request_id if hasattr(request.state, 'request_id') else None
     await log_event(
         db=db,
         level=LogLevel.INFO, # INFO because this is an action that might change state
         message=f"User {current_user.username} requested refresh of connection info.",
         source="api.system.refresh_connection_info",
         user_id=str(current_user.id),
-        request_id=None
+        request_id=request_id_for_log
     )
     return await crud_settings.refresh_connection_info(db)
 
@@ -293,6 +295,7 @@ async def test_db_connection_endpoint(
 
 @router.get("/tunnel-status", response_model=TunnelStatus, summary="獲取 Cloudflare Tunnel 狀態")
 async def get_tunnel_status_route(
+    request: Request,
     db: AsyncIOMotorDatabase = Depends(get_db), # db might be used for logging if needed
     current_user: User = Depends(get_current_active_user) # Add auth dependency
 ):
@@ -300,8 +303,7 @@ async def get_tunnel_status_route(
     檢查並返回 Cloudflare Tunnel 的當前狀態，包括是否啟用以及公開 URL。
     (目前為模擬數據)
     """
-    request_id_val = None # Request object not available by default
-    # If request object becomes available: request_id_val = request.state.request_id if hasattr(request.state, 'request_id') else None
+    request_id_val = request.state.request_id if hasattr(request.state, 'request_id') else None
     await log_event(
         db=db,
         level=LogLevel.DEBUG,

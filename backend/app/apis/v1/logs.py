@@ -1,5 +1,6 @@
 from typing import List, Optional
 from datetime import datetime
+from fastapi import Request
 
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -109,6 +110,7 @@ async def list_logs(
     description="根據提供的篩選條件計算日誌條目的總數。"
 )
 async def count_logs(
+    request: Request,
     db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: User = Depends(get_current_active_user), # Add auth dependency
     level: Optional[LogLevel] = Query(None, description="日誌級別篩選"),
@@ -123,7 +125,7 @@ async def count_logs(
     end_time: Optional[datetime] = Query(None, description="結束時間篩選 (ISO 8601 格式)"),
 ):
     user_id_to_filter = str(current_user.id)
-    request_id_val = None # Not available from current dependencies
+    request_id_val = request.state.request_id if hasattr(request.state, 'request_id') else None
 
     # Log unauthorized access attempt
     if user_id and user_id != user_id_to_filter:

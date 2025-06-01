@@ -8,7 +8,8 @@ from fastapi import (
     Form,
     Request, 
     Query,
-    BackgroundTasks
+    BackgroundTasks,
+    Request
 )
 from fastapi.responses import FileResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -43,7 +44,7 @@ from ...models.user_models import User
 from ...models.ai_models_simplified import AIImageAnalysisOutput, TokenUsage, AITextAnalysisOutput, AIPromptRequest
 from ...crud import crud_documents
 from ...core.config import settings, Settings
-from ...core.logging_utils import log_event, LogLevel
+from ...core.logging_utils import log_event, LogLevel, AppLogger
 from ...core.security import get_current_active_user
 from ...services.document_processing_service import DocumentProcessingService, SUPPORTED_IMAGE_TYPES_FOR_AI
 from ...services.unified_ai_service_simplified import unified_ai_service_simplified, AIRequest, TaskType as AIServiceTaskType
@@ -52,7 +53,7 @@ from app.services.vector_db_service import vector_db_service
 from .vector_db import BatchDeleteRequest as VectorDBBatchDeleteRequest
 
 # Setup logger
-logger = logging.getLogger(__name__)
+logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
 # You might want to configure the logger further, e.g., set level
 # logger.setLevel(logging.INFO) # Or get level from settings
 
@@ -371,6 +372,7 @@ async def upload_document(
 
 @router.get("/", response_model=PaginatedDocumentResponse, summary="獲取當前用戶的文件列表")
 async def list_documents(
+    request: Request,
     current_user: User = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
     skip: int = Query(0, ge=0, description="跳過的記錄數"),
@@ -414,15 +416,15 @@ async def list_documents(
         tags_include=tags_include
     )
     
-    # Log successful listing of documents
-    # request_id is not directly available here without adding Request to dependencies.
-    # Assuming request_id logging is handled by middleware or not strictly required for this DEBUG log.
+    
+    request_id_for_log = request.state.request_id if hasattr(request.state, 'request_id') else None
     await log_event(
         db=db,
         level=LogLevel.DEBUG,
         message="Documents retrieved.",
         source="api.documents.list_documents",
         user_id=str(current_user.id),
+        request_id=request_id_for_log,
         details={
             "user_id": str(current_user.id),
             "skip": skip,
@@ -440,17 +442,25 @@ async def list_documents(
 
 @router.get("/{document_id}", response_model=Document, summary="獲取特定文件的詳細信息")
 async def get_document_details(
-    document: Document = Depends(get_owned_document)
+    request: Request,
+    document: Document = Depends(get_owned_document),
+    db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
     獲取特定文件的詳細信息。
     權限檢查由 get_owned_document 依賴處理。
     """
-    # Logging for successful retrieval (DEBUG level) would ideally go here.
-    # However, similar to the discussion above, `log_event` requires `db` and `current_user` context.
-    # Adding them as direct dependencies to this route might be problematic for the tool.
-    # The `get_owned_document` dependency handles critical 403/404 logging.
-    # No change to this function's code, only comments updated.
+   
+    request_id_for_log = request.state.request_id if hasattr(request.state, 'request_id') else None
+    await log_event(
+        db=db,
+        level=LogLevel.DEBUG,
+        message="Document details retrieved.",
+        source="api.documents.get_document_details",
+        user_id=str(document.owner_id),
+        request_id=request_id_for_log,
+        details={"document_id": str(document.id), "filename": document.filename}
+    )
     return document
 
 @router.get("/{document_id}/file", summary="獲取/下載文件本身", response_class=FileResponse)

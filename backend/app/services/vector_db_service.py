@@ -130,11 +130,25 @@ class VectorDatabaseService:
         query_vector: List[float], 
         top_k: int = 10,
         similarity_threshold: float = 0.5,
-        owner_id_filter: Optional[str] = None
+        owner_id_filter: Optional[str] = None,
+        collection_name: Optional[str] = None
     ) -> List[SemanticSearchResult]:
-        """搜索相似向量，可選根據 owner_id 過濾"""
+        """搜索相似向量，可選根據 owner_id 過濾，並可指定集合"""
         try:
-            if not self.collection:
+            target_collection = self.collection 
+            if collection_name:
+                if not self.client:
+                    logger.error("ChromaDB client not initialized, cannot switch collection.")
+                    raise ValueError("ChromaDB client not initialized.")
+                try:
+                    target_collection = self.client.get_collection(name=collection_name)
+                    logger.info(f"Performing search on specified collection: {collection_name}")
+                except Exception as e_get_coll: 
+                    logger.error(f"Failed to get specified collection '{collection_name}': {e_get_coll}. Falling back to default collection or erroring.")
+                    raise ValueError(f"Specified collection '{collection_name}' not found or not accessible.")
+
+            if not target_collection: 
+                logger.error("Target collection for search is not initialized.")
                 raise ValueError("集合未初始化")
             
             # 準備查詢參數
@@ -148,7 +162,7 @@ class VectorDatabaseService:
                 query_params["where"] = {"owner_id": owner_id_filter}
             
             # 執行搜索
-            results = self.collection.query(**query_params)
+            results = target_collection.query(**query_params)
             
             # 處理搜索結果
             search_results = []
@@ -175,11 +189,14 @@ class VectorDatabaseService:
                         )
                         search_results.append(search_result)
             
-            logger.info(f"搜索完成，找到 {len(search_results)} 個相似結果。Owner filter: {'applied' if owner_id_filter else 'not applied'}")
+            logger.info(f"搜索完成，在集合 '{target_collection.name}' 中找到 {len(search_results)} 個相似結果。Owner filter: {'applied' if owner_id_filter else 'not applied'}")
             return search_results
             
+        except ValueError as ve: 
+            logger.warning(f"向量搜索中的輸入或配置錯誤: {ve}")
+            raise
         except Exception as e:
-            logger.error(f"向量搜索失敗: {e}")
+            logger.error(f"向量搜索失敗: {e}", exc_info=True) 
             return []
     
     def delete_by_document_id(self, document_id: str) -> bool:

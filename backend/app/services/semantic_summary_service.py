@@ -12,6 +12,7 @@ from app.services.prompt_manager_simplified import prompt_manager_simplified, Pr
 from app.crud.crud_documents import update_document_vector_status
 import logging
 import uuid
+from datetime import datetime
 
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
 
@@ -173,84 +174,161 @@ class SemanticSummaryService:
         5. 存儲到向量資料庫
         6. 更新文檔狀態 (VECTORIZED 或 FAILED)
         """
-        # doc_id_str = document.id # Assuming document.id is already a string, if not, str(document.id)
-        # doc_id_uuid = uuid.UUID(doc_id_str) # For crud operations
-
-        # 修正UUID處理：document.id 是 uuid.UUID 對象
         doc_id_uuid: uuid.UUID = document.id 
         doc_id_str: str = str(document.id)
+        
+        # For overall timing and base details for log_event
+        process_start_time = datetime.now() 
         log_details_base = {"document_id": doc_id_str, "filename": document.filename, "user_id": str(document.owner_id)}
 
+        logger.info(f"[{process_start_time.isoformat()}] Starting processing for document {doc_id_str} for vector DB.")
         await log_event(db=db, level=LogLevel.INFO, message="Starting document processing for vector DB.",
-                        source="service.semantic_summary.process_doc_for_vector_db", details=log_details_base)
-        try:
-            await update_document_vector_status(db, doc_id_uuid, VectorStatus.PROCESSING)
-            
-            await log_event(db=db, level=LogLevel.DEBUG, message="Attempting to delete old vectors.",
-                            source="service.semantic_summary.process_doc_for_vector_db", details=log_details_base)
-            vector_db_service.delete_by_document_id(doc_id_str) # This is sync
-            await log_event(db=db, level=LogLevel.DEBUG, message="Old vectors deleted (if any).",
-                            source="service.semantic_summary.process_doc_for_vector_db", details=log_details_base)
+                        source="service.semantic_summary.process_doc_for_vector_db.start", details=log_details_base)
 
-            semantic_summary = await self.generate_semantic_summary(db, document)
+        try:
+            # Step 1: Update status to PROCESSING
+            step_start_time = datetime.now()
+            logger.info(f"[{step_start_time.isoformat()}] Updating status to PROCESSING for document {doc_id_str}.")
+            await update_document_vector_status(db, doc_id_uuid, VectorStatus.PROCESSING)
+            step_end_time = datetime.now()
+            logger.info(f"[{step_end_time.isoformat()}] Status updated to PROCESSING for document {doc_id_str}. Duration: {step_end_time - step_start_time}")
+            # log_event for this step is implicitly covered by the subsequent logs if successful, or error logs if failed.
+
+            # Step 2: Delete old vectors
+            step_start_time = datetime.now()
+            logger.info(f"[{step_start_time.isoformat()}] Attempting to delete old vectors for document {doc_id_str}.")
+            # Assuming vector_db_service.delete_by_document_id logs internally or is not critical for db log_event here
+            vector_db_service.delete_by_document_id(doc_id_str) 
+            step_end_time = datetime.now()
+            logger.info(f"[{step_end_time.isoformat()}] Old vectors deleted (if existed) for document {doc_id_str}. Duration: {step_end_time - step_start_time}")
+            await log_event(db=db, level=LogLevel.DEBUG, message="Old vectors deletion attempt completed.",
+                            source="service.semantic_summary.process_doc_for_vector_db.delete_old_vectors", details=log_details_base)
+
+            # Step 3: Generate semantic summary
+            step_start_time = datetime.now()
+            logger.info(f"[{step_start_time.isoformat()}] Generating semantic summary for document {doc_id_str}.")
+            semantic_summary = await self.generate_semantic_summary(db, document) # generate_semantic_summary has its own log_events
+            step_end_time = datetime.now()
             if not semantic_summary:
-                await log_event(db=db, level=LogLevel.ERROR, message="Failed to generate semantic summary.",
-                                source="service.semantic_summary.process_doc_for_vector_db", details=log_details_base)
-                await update_document_vector_status(db, doc_id_uuid, VectorStatus.FAILED, "Semantic summary generation failed.")
+                logger.error(f"[{step_end_time.isoformat()}] Failed to generate semantic summary for document {doc_id_str}. Duration: {step_end_time - step_start_time}")
+                # log_event is already called within generate_semantic_summary for failure
+                await update_document_vector_status(db, doc_id_uuid, VectorStatus.FAILED, "語義摘要生成失敗") # crud_documents.update_document_vector_status also logs
                 return False
+            logger.info(f"[{step_end_time.isoformat()}] Semantic summary generated for document {doc_id_str}. Duration: {step_end_time - step_start_time}")
             
+            # Step 4: Vectorize text
+            step_start_time = datetime.now()
+            logger.info(f"[{step_start_time.isoformat()}] Vectorizing text for document {doc_id_str}.")
             text_parts = []
-            if semantic_summary.summary_text and semantic_summary.summary_text.strip(): text_parts.append(semantic_summary.summary_text.strip())
+            if semantic_summary.summary_text and semantic_summary.summary_text.strip():
+                text_parts.append(semantic_summary.summary_text.strip())
+
             if semantic_summary.key_terms: 
-                valid_key_terms = [str(term).strip() for term in semantic_summary.key_terms if term and str(term).strip()]
-                if valid_key_terms: text_parts.append("Relevant tags: " + ", ".join(valid_key_terms)) # English
+                valid_key_terms = [
+                    str(term).strip() for term in semantic_summary.key_terms 
+                    if term and str(term).strip()
+                ]
+                if valid_key_terms:
+                    text_parts.append("相關標籤：" + "，".join(valid_key_terms)) # Consider localizing or standardizing log messages
             
-            # Simplified extraction from full_ai_analysis for brevity in this example
             if semantic_summary.full_ai_analysis and isinstance(semantic_summary.full_ai_analysis, dict):
                 key_info = semantic_summary.full_ai_analysis.get("key_information")
                 if isinstance(key_info, dict):
-                    search_keywords = key_info.get("searchable_keywords")
-                    if isinstance(search_keywords, list): text_parts.append("Keywords: " + ", ".join(filter(None, [str(kw).strip() for kw in search_keywords])))
+                    searchable_keywords = key_info.get("searchable_keywords")
+                    if isinstance(searchable_keywords, list):
+                        valid_keywords = [str(kw).strip() for kw in searchable_keywords if kw and str(kw).strip()]
+                        if valid_keywords:
+                            text_parts.append("搜索關鍵詞：" + "，".join(valid_keywords))
+                    
                     knowledge_domains = key_info.get("knowledge_domains")
-                    if isinstance(knowledge_domains, list): text_parts.append("Knowledge Domains: " + ", ".join(filter(None,[str(kd).strip() for kd in knowledge_domains])))
-            
-            text_to_embed = "\n".join(filter(None, text_parts))
-            if not text_to_embed.strip():
-                text_to_embed = semantic_summary.summary_text.strip() if semantic_summary.summary_text and semantic_summary.summary_text.strip() else document.filename or "document content unavailable"
-                await log_event(db=db, level=LogLevel.WARNING, message="Combined text for embedding was empty, using fallback.",
-                                source="service.semantic_summary.process_doc_for_vector_db", details={**log_details_base, "fallback_text_length": len(text_to_embed)})
+                    if isinstance(knowledge_domains, list):
+                        valid_domains = [str(kd).strip() for kd in knowledge_domains if kd and str(kd).strip()]
+                        if valid_domains:
+                            text_parts.append("知識領域：" + "，".join(valid_domains))
 
-            await log_event(db=db, level=LogLevel.DEBUG, message="Encoding text for vector DB.",
-                            source="service.semantic_summary.process_doc_for_vector_db", details={**log_details_base, "text_to_embed_length": len(text_to_embed)})
-            embedding_vector = await embedding_service.encode_text(text_to_embed) # Assumed async
+            text_to_embed = "\n".join(filter(None, text_parts)) # filter(None,..) to remove empty strings from join
             
+            if not text_to_embed.strip():
+                fallback_reason = "Combined text for embedding was empty"
+                logger.warning(f"文檔 {doc_id_str} 的組合向量化文本為空，將僅使用摘要或文件名作為後備。")
+                if semantic_summary.summary_text and semantic_summary.summary_text.strip():
+                    text_to_embed = semantic_summary.summary_text.strip()
+                    fallback_reason += ", using summary."
+                elif document.filename:
+                     text_to_embed = f"文件名：{document.filename}"
+                     fallback_reason += ", using filename."
+                else:
+                    text_to_embed = "文檔內容無法確定" 
+                    fallback_reason += ", using placeholder as no content determinable."
+                    logger.error(f"文檔 {doc_id_str} 無法確定用於向量化的文本。")
+                await log_event(db=db, level=LogLevel.WARNING, message="Text to embed was empty, using fallback.",
+                                source="service.semantic_summary.process_doc_for_vector_db.vectorize_fallback", 
+                                details={**log_details_base, "fallback_reason": fallback_reason, "fallback_text_length": len(text_to_embed)})
+
+            embedding_vector =  embedding_service.encode_text(text_to_embed) # encode_text is async now
+            step_end_time = datetime.now()
+            logger.info(f"[{step_end_time.isoformat()}] Text vectorized for document {doc_id_str}. Duration: {step_end_time - step_start_time}. Vector dim: {len(embedding_vector) if embedding_vector else 'N/A'}")
+            
+            # Step 5: Create VectorRecord
             vector_record = VectorRecord(
-                document_id=doc_id_str, owner_id=str(document.owner_id), embedding_vector=embedding_vector,
-                chunk_text=text_to_embed[:1000], # Store a snippet
-                embedding_model=embedding_service.model_name, metadata={"file_type": document.file_type or ""}
+                document_id=doc_id_str,
+                owner_id=str(document.owner_id),
+                embedding_vector=embedding_vector,
+                chunk_text=text_to_embed[:1000], # Store a snippet of the embedded text
+                embedding_model=embedding_service.model_name,
+                metadata={"file_type": document.file_type or ""}
             )
             
-            await log_event(db=db, level=LogLevel.DEBUG, message="Inserting vector into vector DB.",
-                            source="service.semantic_summary.process_doc_for_vector_db", details={**log_details_base, "vector_dim": len(embedding_vector)})
-            success = vector_db_service.insert_vectors([vector_record]) # This is sync
+            # Step 6: Store vector to database
+            step_start_time = datetime.now()
+            logger.info(f"[{step_start_time.isoformat()}] Storing vector to database for document {doc_id_str}.")
+            # vector_db_service.insert_vectors logs internally
+            success = vector_db_service.insert_vectors([vector_record]) # This is sync in your provided code
+            step_end_time = datetime.now()
             
             if success:
-                await self._save_semantic_summary_to_db(db, semantic_summary)
-                await update_document_vector_status(db, doc_id_uuid, VectorStatus.VECTORIZED)
-                await log_event(db=db, level=LogLevel.INFO, message="Document successfully processed and stored in vector DB.",
-                                source="service.semantic_summary.process_doc_for_vector_db", details=log_details_base)
+                logger.info(f"[{step_end_time.isoformat()}] Vector stored successfully for document {doc_id_str}. Duration: {step_end_time - step_start_time}")
+                await self._save_semantic_summary_to_db(db, semantic_summary) # Assuming this is a quick metadata save or similar
+                
+                # Final status update to VECTORIZED
+                await update_document_vector_status(db, doc_id_uuid, VectorStatus.VECTORIZED) # crud_documents.update_document_vector_status also logs
+                
+                total_duration = datetime.now() - process_start_time
+                logger.info(f"[{datetime.now().isoformat()}] Successfully processed document {doc_id_str} for vector DB. Total duration: {total_duration}")
+                await log_event(db=db, level=LogLevel.INFO, message="Document successfully processed and vectorized.",
+                                source="service.semantic_summary.process_doc_for_vector_db.success", 
+                                details={**log_details_base, "total_duration_seconds": total_duration.total_seconds()})
                 return True
             else:
+                logger.error(f"[{step_end_time.isoformat()}] Failed to store vector for document {doc_id_str}. Duration: {step_end_time - step_start_time}")
                 await log_event(db=db, level=LogLevel.ERROR, message="Failed to store document vector in vector DB.",
-                                source="service.semantic_summary.process_doc_for_vector_db", details=log_details_base)
-                await update_document_vector_status(db, doc_id_uuid, VectorStatus.FAILED, "Vector storage failed.")
+                                source="service.semantic_summary.process_doc_for_vector_db.vector_storage_failed", details=log_details_base)
+                await update_document_vector_status(db, doc_id_uuid, VectorStatus.FAILED, "向量存儲失敗") # crud_documents.update_document_vector_status also logs
+                total_duration = datetime.now() - process_start_time
+                logger.info(f"[{datetime.now().isoformat()}] Failed to process document {doc_id_str} for vector DB (vector storage). Total duration: {total_duration}")
                 return False
                 
         except Exception as e:
-            await log_event(db=db, level=LogLevel.ERROR, message=f"Unexpected error processing document {doc_id_str} for vector DB: {str(e)}",
-                            source="service.semantic_summary.process_doc_for_vector_db", exc_info=True,
-                            details={**log_details_base, "error": str(e), "error_type": type(e).__name__})
-            await update_document_vector_status(db, doc_id_uuid, VectorStatus.FAILED, f"Unexpected processing error: {str(e)}")
+            current_time = datetime.now()
+            logger.error(f"[{current_time.isoformat()}] Error processing document {doc_id_str} for vector DB: {str(e)}", exc_info=True)
+            # Ensure log_event has the error string
+            error_str = str(e)
+            await log_event(db=db, level=LogLevel.ERROR, 
+                            message=f"Unexpected error processing document for vector DB: {error_str}",
+                            source="service.semantic_summary.process_doc_for_vector_db.exception", 
+                            details={**log_details_base, "error": error_str, "error_type": type(e).__name__})
+            try:
+                await update_document_vector_status(db, doc_id_uuid, VectorStatus.FAILED, f"處理時發生意外錯誤: {error_str}")
+            except Exception as e_update_status:
+                 logger.error(f"[{datetime.now().isoformat()}] CRITICAL: Failed to update status to FAILED for doc {doc_id_str} after main processing exception: {str(e_update_status)}", exc_info=True)
+                 await log_event(db=db, level=LogLevel.CRITICAL, 
+                                 message=f"CRITICAL: Failed to update status to FAILED for doc {doc_id_str} after main processing exception: {str(e_update_status)}",
+                                 source="service.semantic_summary.process_doc_for_vector_db.exception_status_update_failed",
+                                 details={**log_details_base, "main_error": error_str, "status_update_error": str(e_update_status)})
+
+
+            total_duration = datetime.now() - process_start_time
+            logger.info(f"[{datetime.now().isoformat()}] Failed to process document {doc_id_str} for vector DB due to exception. Total duration: {total_duration}")
             return False
     
     async def _save_semantic_summary_to_db(

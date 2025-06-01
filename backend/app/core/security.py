@@ -8,7 +8,7 @@ from fastapi.security import OAuth2PasswordBearer
 from pydantic import ValidationError
 
 from .config import settings
-from ..dependencies import get_db
+from app.db.mongodb_utils import get_db
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from ..crud.crud_users import crud_users
 from ..models.user_models import UserInDB

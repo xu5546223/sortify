@@ -30,30 +30,25 @@ class EmbeddingService:
             model_cache_path = Path(cache_dir) / f"models--sentence-transformers--{self.model_name.replace('/', '--')}"
             
             if model_cache_path.exists():
-                # logger.info(f"檢測到模型緩存: {self.model_name}") # Replaced
-                # logger.info(f"緩存路徑: {model_cache_path}") # Replaced
-                await log_event(db=None, level=LogLevel.DEBUG, message=f"Embedding model cache detected for {self.model_name}.",
-                                source="service.embedding.check_cache", details={"model_name": self.model_name, "cache_path": str(model_cache_path)})
+                logger.debug(f"Embedding model cache detected for {self.model_name}.",
+                           extra={"model_name": self.model_name, "cache_path": str(model_cache_path)})
             else:
-                # logger.info(f"模型 {self.model_name} 尚未緩存，首次加載將下載模型文件") # Replaced
-                await log_event(db=None, level=LogLevel.INFO, message=f"Embedding model {self.model_name} not cached. Will download on first load.",
-                                source="service.embedding.check_cache", details={"model_name": self.model_name})
+                logger.info(f"Embedding model {self.model_name} not cached. Will download on first load.",
+                          extra={"model_name": self.model_name})
                 
         except Exception as e:
-            # logger.warning(f"檢查模型緩存失敗: {e}") # Replaced
-            await log_event(db=None, level=LogLevel.WARNING, message=f"Failed to check model cache for {self.model_name}: {str(e)}",
-                            source="service.embedding.check_cache", details={"model_name": self.model_name, "error": str(e)})
+            logger.warning(f"Failed to check model cache for {self.model_name}: {str(e)}",
+                         extra={"model_name": self.model_name, "error": str(e)})
     
     def _load_model(self):
         """加載Sentence Transformers模型（懶加載）"""
         if self._model_loaded:
-            # logger.debug("模型已經加載，跳過重新加載") # Replaced
-            await log_event(db=None, level=LogLevel.DEBUG, message="Embedding model already loaded, skipping reload.",
-                            source="service.embedding.load_model", details={"model_name": self.model_name})
+            logger.debug("Embedding model already loaded, skipping reload.",
+                        extra={"model_name": self.model_name})
             return
             
-        await log_event(db=None, level=LogLevel.INFO, message=f"Attempting to load embedding model: {self.model_name}.",
-                        source="service.embedding.load_model.attempt", details={"model_name": self.model_name})
+        logger.info(f"Attempting to load embedding model: {self.model_name}.",
+                   extra={"model_name": self.model_name})
         try:
             start_time_event = torch.cuda.Event(enable_timing=True) if torch.cuda.is_available() else None
             end_time_event = torch.cuda.Event(enable_timing=True) if torch.cuda.is_available() else None # Renamed variables
@@ -92,13 +87,12 @@ class EmbeddingService:
             if torch.cuda.is_available() and device_selected == "cuda":
                 log_details["gpu_name"] = torch.cuda.get_device_name()
 
-            await log_event(db=None, level=LogLevel.INFO, message="Embedding model loaded successfully.",
-                            source="service.embedding.load_model.success", details=log_details)
+            logger.info("Embedding model loaded successfully.",
+                        extra={"model_name": self.model_name, "details": log_details})
                 
         except Exception as e:
-            await log_event(db=None, level=LogLevel.ERROR, message=f"Failed to load embedding model: {self.model_name}. Error: {str(e)}",
-                            source="service.embedding.load_model.failure", exc_info=True,
-                            details={"model_name": self.model_name, "error": str(e), "error_type": type(e).__name__})
+            logger.error(f"Failed to load embedding model: {self.model_name}. Error: {str(e)}",
+                         extra={"model_name": self.model_name, "error": str(e), "error_type": type(e).__name__})
             raise # Re-raise the exception so the service knows loading failed
     
     def encode_text(self, text: str) -> List[float]:

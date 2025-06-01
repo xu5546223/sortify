@@ -113,6 +113,14 @@ async def log_event(
     創建一個日誌條目並將其儲存到資料庫。
     如果 db is None，則使用標準 Python logger (module_logger) 記錄到控制台/檔案。
     """
+    # 防呆：確保 details 一定是 dict
+    if details is not None and not isinstance(details, dict):
+        try:
+            import json
+            details = json.loads(details)
+        except Exception:
+            details = {"raw_details": str(details)}
+
     # Handle db=None case first by logging to console/file
     if db is None:
         level_mapping = {
@@ -195,73 +203,3 @@ async def log_event(
             exc_info=True
         )
 
-if __name__ == "__main__":
-    # Test cases for mask_sensitive_data
-    test_data_1 = {
-        "username": "test_user",
-        "password": "supersecretpassword",
-        "email": "user@example.com",
-        "auth_token": {
-            "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
-            "refresh_token": "defdefdefdefdefdefdefdefdefdefdefdefdefdefdefdefdefdef"
-        }
-    }
-    print(f"Original 1: {test_data_1}")
-    print(f"Masked 1: {mask_sensitive_data(test_data_1)}")
-
-    test_data_2 = {
-        "config": {
-            "api_key": "abcdef1234567890abcdef1234567890",
-            "SECRET_KEY": "another-very-long-secret-key-to-be-masked",
-            "MONGODB_URL": "mongodb://user:password123@host:port/db?options"
-        },
-        "other_info": "this is fine"
-    }
-    print(f"Original 2: {test_data_2}")
-    print(f"Masked 2: {mask_sensitive_data(test_data_2)}")
-
-    test_data_3 = {
-        "user_list": [
-            {"id": 1, "credentials": {"token": "user1_token_value_long_enough"}},
-            {"id": 2, "password": "user2_password"}
-        ],
-        "GOOGLE_API_KEY": "AIzaSyCHappyKey12345VeryLongKeyABCXYZ"
-    }
-    print(f"Original 3: {test_data_3}")
-    print(f"Masked 3: {mask_sensitive_data(test_data_3)}")
-
-    test_data_4 = {
-        "short_api_key": "short", # Will be fully masked by mask_string_part
-        "normal_key": "this_is_a_normal_key_but_targetted",
-        "MONGODB_URL_no_pass": "mongodb://user@host:port/db?options"
-    }
-    # Add normal_key to STRING_MASK_TARGET_KEYS for this test
-    STRING_MASK_TARGET_KEYS.append("normal_key")
-    SENSITIVE_KEYS.append("short_api_key") # Ensure it's considered sensitive
-    SENSITIVE_KEYS.append("normal_key")
-
-    print(f"Original 4: {test_data_4}")
-    print(f"Masked 4: {mask_sensitive_data(test_data_4)}")
-
-    test_data_5 = {
-        "nested_list": [
-            [{"password": "nested_password_1"}],
-            {"details": {"secret": "deep_secret"}}
-        ]
-    }
-    print(f"Original 5: {test_data_5}")
-    print(f"Masked 5: {mask_sensitive_data(test_data_5)}")
-
-    test_data_6 = "just a string"
-    print(f"Original 6: {test_data_6}")
-    print(f"Masked 6: {mask_sensitive_data(test_data_6)}")
-
-    test_data_7 = None
-    print(f"Original 7: {test_data_7}")
-    print(f"Masked 7: {mask_sensitive_data(test_data_7)}")
-
-    test_data_8 = {
-        "api_key": "apikeyprefix1234567890apikey" # Test mask_string_part
-    }
-    print(f"Original 8: {test_data_8}")
-    print(f"Masked 8: {mask_sensitive_data(test_data_8)}")

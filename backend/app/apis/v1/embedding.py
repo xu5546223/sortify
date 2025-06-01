@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi import Request # Added Request
 from pydantic import BaseModel
+import torch
 
 from app.core.security import get_current_active_user
 from app.models.user_models import User
@@ -10,7 +11,8 @@ from app.core.device_config import device_config_manager, DeviceType
 from app.core.logging_utils import AppLogger, log_event # Added log_event
 from app.models.log_models import LogLevel # Added LogLevel
 import logging
-
+from app.db.mongodb_utils import get_db
+from motor.motor_asyncio import AsyncIOMotorDatabase
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger() # Existing app logger can remain for very low-level/internal logs if desired
 
 router = APIRouter()
@@ -35,7 +37,7 @@ async def get_embedding_model_config(
             source="api.embedding.get_config", user_id=str(current_user.id), request_id=request_id_val
         )
         
-        import torch # Keep torch import local to where it's used
+       
         
         config = {
             "current_model": embedding_service.model_name,
@@ -59,7 +61,7 @@ async def get_embedding_model_config(
             }
         
         device_config = device_config_manager.get_device_config()
-        # performance_recommendation = device_config_manager.get_performance_recommendation() # Not used
+
         
         if device_config:
             config["performance_info"] = {
@@ -178,7 +180,7 @@ async def configure_embedding_device(
     )
 
     try:
-        import torch # Keep torch import local
+            
         
         if config_request.device_preference not in ["cpu", "cuda", "auto"]:
             await log_event(db=db, level=LogLevel.WARNING, message=f"Invalid device preference '{config_request.device_preference}' by user {current_user.username}.",

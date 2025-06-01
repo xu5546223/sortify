@@ -16,6 +16,7 @@ from app.models.vector_models import AIQARequest, AIQAResponse
 from fastapi import Request # Added
 from app.core.logging_utils import log_event, LogLevel # Added
 
+
 router = APIRouter()
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger() # Existing AppLogger can remain for very detailed internal/service logs
 
@@ -201,13 +202,19 @@ async def ai_question_answer(
     現在內部使用簡化版AI服務
     """
     request_id_val = fastapi_request.state.request_id if hasattr(fastapi_request.state, 'request_id') else None
+    
+    # Correct way to count documents
+    # Ensure the field name for user association in the documents collection is correct (e.g., owner_id or user_id)
+    user_documents_count = await db.documents.count_documents({"owner_id": current_user.id}) 
+
     await log_event(
         db=db, level=LogLevel.INFO,
         message=f"Unified AI QA request received from user {current_user.username}.",
         source="api.unified_ai.qa", user_id=str(current_user.id), request_id=request_id_val,
         details={
             "question_length": len(request_data.question) if request_data.question else 0,
-            "document_ids_count": len(request_data.document_ids) if request_data.document_ids else 0,
+            "user_total_documents_in_db": user_documents_count, 
+            "document_ids_in_request_count": len(request_data.document_ids) if request_data.document_ids else 0,
             "model_preference": request_data.model_preference
         }
     )
@@ -229,8 +236,7 @@ async def ai_question_answer(
             details={
                 "response_answer_length": len(response.answer) if response.answer else 0,
                 "source_documents_count": len(response.source_documents) if response.source_documents else 0,
-                "tokens_used": response.tokens_used,
-                "model_used": response.model_used # Assuming AIQAResponse has model_used
+                "tokens_used": response.tokens_used
             }
         )
         return response
@@ -367,16 +373,8 @@ async def list_available_models(
             source="api.unified_ai.list_models", user_id=str(current_user.id), request_id=request_id_val,
             details={"error": str(e), "error_type": type(e).__name__, "task_type_filter": task_type}
         )
-        # Return error in response body as per original logic, but ensure HTTPException for actual server errors
-        # For this endpoint, original code returns a JSON with success=False. We can keep that for non-HTTPException errors.
-        # If it's an unexpected server error, a 500 would be more appropriate.
-        # For now, matching original behavior of returning JSON error.
         if isinstance(e, HTTPException): # If it was already an HTTPException (like the 400 above)
             raise
-        # For other errors, the original code returned a JSON response, not a 500.
-        # This can be debated, but let's stick to standardizing the logging for now.
-        # A 500 error would be:
-        # raise HTTPException(status_code=500, detail="Failed to retrieve model list.")
         return {
             "success": False,
             "available_models": [],
@@ -391,13 +389,6 @@ async def list_available_prompts(
     """
     列出可用的提示詞模板 - 使用簡化版本
     """
-    # Assuming db and fastapi_request for logging consistency, though not strictly used by core logic here
-    # fastapi_request: Request, db: AsyncIOMotorDatabase = Depends(get_db)
-    # For now, will log without request_id if Request is not added to signature.
-    # Let's add them for consistency.
-    # No, this endpoint doesn't take `db` or `request` in its current form, and its logic doesn't need it.
-    # Adding them just for logging consistency when the log itself is simple might be an over-modification.
-    # I will log what I can.
     await log_event(
         db=None, level=LogLevel.DEBUG, # db is None as it's not a dependency here
         message=f"User {current_user.username} requested list of available prompts.",
@@ -445,8 +436,7 @@ async def ai_system_status(
     """
     AI系統狀態檢查 - 現在顯示簡化版本狀態
     """
-    # fastapi_request: Request, db: AsyncIOMotorDatabase = Depends(get_db)
-    # Similar to list_prompts, db and request are not current dependencies.
+
     await log_event(
         db=None, level=LogLevel.DEBUG, # db is None
         message=f"User {current_user.username} requested AI system status.",

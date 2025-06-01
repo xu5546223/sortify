@@ -1,9 +1,10 @@
+from app.db.mongodb_utils import get_db
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm # 用於接收 username 和 password
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from datetime import timedelta
 
-from ...dependencies import get_db
+
 from ...models.token_models import Token # Token 回應模型
 from ...models.user_models import User, UserCreate, UserInDB, UserUpdate, PasswordUpdateIn # <--- 確保 UserUpdate 已導入
 from ...models.response_models import MessageResponse # <--- 導入 MessageResponse
@@ -126,55 +127,28 @@ async def register_new_user(
 
 @router.get("/users/me", response_model=User, summary="獲取當前登入使用者的資訊")
 async def read_users_me(
-    current_user: UserInDB = Depends(get_current_active_user) # 改為 UserInDB
+    request: Request,
+    current_user: UserInDB = Depends(get_current_active_user), # 改為 UserInDB
+    db:AsyncIOMotorDatabase = Depends(get_db)
+    
 ):
     """
     獲取當前已驗證使用者的詳細資訊。
     """
-    # Assuming `db` is needed for log_event, but get_current_active_user might not easily provide it here.
-    # If request object is available, can get db from there, or modify get_current_active_user to pass it.
-    # For now, we'll assume db is not easily available here for logging, or it's handled by a middleware logger.
-    # However, the subtask implies adding logs here. We need a db instance.
-    # Let's add Request to this endpoint to get access to db via request.state or pass it.
-    # Simpler: Add db: AsyncIOMotorDatabase = Depends(get_db) to this endpoint.
-    # This might be redundant if get_current_active_user already uses it, but needed for direct log_event call.
-
-    # For the purpose of this task, if db is not available, we cannot call log_event.
-    # The original code had it commented out. If db were available:
-    # await log_event(
-    #     db=db, # This 'db' would need to be added as a dependency
-    #     level=LogLevel.INFO,
-    #     message="User profile accessed.",
-    #     source="api.auth.read_users_me",
-    #     user_id=str(current_user.id),
-    #     details={"user_id": str(current_user.id), "username": current_user.username}
-    # )
-    # Since adding 'db' dependency just for this log might change function signature significantly
-    # and potentially cause issues if not properly handled everywhere get_current_active_user is used,
-    # I will log this conceptually or suggest it.
-    # For now, I will leave it as it was (commented or not present) if `db` is not readily available.
-    # The prompt asks to "Log access attempts if deemed necessary".
-    # The original code had it commented, implying it might have been deemed too verbose or problematic.
-
-    # Re-evaluating: The subtask is to *add* logging. If `db` is missing, I should add it.
-    # The `get_current_active_user` already depends on `get_db`.
-    # So, `db` can be added as a dependency to this route as well.
-
-    # Let's assume db is not available for now and proceed with other parts.
-    # If I were to add it:
-    # async def read_users_me(
-    #     request: Request, # To get request_id
-    #     db: AsyncIOMotorDatabase = Depends(get_db), # To use for logging
-    #     current_user: UserInDB = Depends(get_current_active_user)
-    # ):
-    # request_id_for_log = request.state.request_id if hasattr(request.state, 'request_id') else None
-    # await log_event(db, LogLevel.INFO, "User profile accessed.", source="api.auth.read_users_me", user_id=str(current_user.id), request_id=request_id_for_log, details={"user_id": str(current_user.id)})
-
-    # Given the constraints and to avoid altering dependencies not directly part of the login flow,
-    # I will keep the logging for /users/me as it was (commented out).
-    # The primary focus is standardizing existing logs and adding to login.
-    
-    return User(**current_user.model_dump(exclude={"hashed_password"}))
+    request_id_for_log = request.state.request_id if hasattr(request.state, 'request_id') else None
+    user_response = User(**current_user.model_dump(exclude={"hashed_password"}))
+    await log_event(
+        db=db,
+        level=LogLevel.INFO,
+        message="User profile accessed.",
+        source="api.auth.read_users_me",
+        module_name="app.apis.v1.auth",
+        func_name="read_users_me",
+        user_id=str(current_user.id),
+        request_id=request_id_for_log,
+        details={"user_id": str(current_user.id), "username": current_user.username}
+    )
+    return user_response
 
 @router.put("/users/me", response_model=User, summary="更新當前登入使用者的個人資料")
 async def update_current_user_profile(

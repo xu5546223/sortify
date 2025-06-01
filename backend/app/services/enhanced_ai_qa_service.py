@@ -21,6 +21,7 @@ from app.crud.crud_documents import get_documents_by_ids
 from pydantic import ValidationError
 import logging
 from datetime import datetime
+import traceback
 
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
 
@@ -49,12 +50,12 @@ class EnhancedAIQAService:
             "document_ids_count": len(request.document_ids) if request.document_ids else 0,
             "model_preference": request.model_preference,
             "use_structured_filter": request.use_structured_filter,
-            "use_vector_search": request.use_vector_search,
+            "use_semantic_search": request.use_semantic_search,
             "session_id": request.session_id
         }
         await log_event(db=db, level=LogLevel.INFO,
                         message="Enhanced AI QA request received.",
-                        source="service.enhanced_ai_qa.request", user_id=user_id, request_id=request_id,
+                        source="service.enhanced_ai_qa.request", user_id=str(user_id) if user_id else None, request_id=request_id,
                         details=log_details_initial)
 
         query_rewrite_result: Optional[QueryRewriteResult] = None # Ensure it's defined for error return
@@ -69,12 +70,19 @@ class EnhancedAIQAService:
             total_tokens += rewrite_tokens
             
             semantic_results_raw = await self._semantic_search(
+                db, # Pass db instance
                 query_rewrite_result.rewritten_queries[0] if query_rewrite_result.rewritten_queries else request.question,
-                request.context_limit
+                request.context_limit,
+                user_id, # Pass user_id
+                request_id # Pass request_id
             )
 
             # 將原始 semantic_results 轉換為 SemanticContextDocument 列表
             semantic_contexts_for_response: List[SemanticContextDocument] = []
+            if not isinstance(semantic_results_raw, list): # Ensure semantic_results_raw is a list
+                logger.error(f"semantic_results_raw is not a list, but {type(semantic_results_raw)}. Defaulting to empty list.")
+                semantic_results_raw = []
+            
             if semantic_results_raw:
                 for res in semantic_results_raw:
                     semantic_contexts_for_response.append(
@@ -105,12 +113,21 @@ class EnhancedAIQAService:
             # 步驟3: T2Q二次過濾（可選）
             if request.use_structured_filter and query_rewrite_result.extracted_parameters:
                 filtered_document_ids = await self._t2q_filter(
-                    db, document_ids, query_rewrite_result.extracted_parameters
+                    db, document_ids, query_rewrite_result.extracted_parameters, user_id, request_id # Pass user_id and request_id
                 )
                 if filtered_document_ids:
                     document_ids = filtered_document_ids
+                    # Add check for document_ids before len()
+                    if not isinstance(document_ids, list):
+                        logger.error(f"After _t2q_filter, document_ids is not a list, but {type(document_ids)}. Value: {document_ids}. Defaulting to empty list.")
+                        document_ids = []
                     logger.info(f"T2Q過濾後剩餘 {len(document_ids)} 個文檔")
             
+            # Add another check for document_ids before get_documents_by_ids, if not filtered
+            elif not isinstance(document_ids, list): # If not filtered, document_ids comes from semantic_results_raw
+                logger.error(f"Before get_documents_by_ids (no T2Q filter), document_ids is not a list, but {type(document_ids)}. Value: {document_ids}. Defaulting to empty list.")
+                document_ids = []
+
             # 步驟4: 獲取完整文檔內容（檢查用戶權限）
             full_documents = await get_documents_by_ids(db, document_ids)
             
@@ -161,7 +178,7 @@ class EnhancedAIQAService:
             
             # 步驟5: 生成最終答案（使用統一AI服務）
             answer, answer_tokens, confidence, actual_contexts_for_llm = await self._generate_answer_unified(
-                db, request.question, full_documents, query_rewrite_result
+                db, request.question, full_documents, query_rewrite_result, user_id, request_id, request.model_preference # Pass user_id, request_id and model_preference
             )
             total_tokens += answer_tokens
             
@@ -183,14 +200,39 @@ class EnhancedAIQAService:
             
         except Exception as e:
             processing_time_on_error = time.time() - start_time
+            error_trace = traceback.format_exc()
             await log_event(db=db, level=LogLevel.ERROR, message=f"Enhanced AI QA failed: {str(e)}",
-                            source="service.enhanced_ai_qa.process_request_error", user_id=user_id, request_id=request_id,
-                            exc_info=True, details={"error": str(e), "error_type": type(e).__name__, **log_details_initial})
+                            source="service.enhanced_ai_qa.process_request_error", user_id=str(user_id) if user_id else None, request_id=request_id,
+                            details={"error": str(e), "error_type": type(e).__name__, "traceback": error_trace, **log_details_initial})
+            
+            # Ensure total_tokens is an int, default to 0 if not (though it should be an int already)
+            current_total_tokens = total_tokens if isinstance(total_tokens, int) else 0
+            
+            # Ensure query_rewrite_result is valid or provide a fallback
+            current_qrr: Optional[QueryRewriteResult] = query_rewrite_result
+            if not isinstance(current_qrr, QueryRewriteResult):
+                current_qrr = QueryRewriteResult(
+                    original_query=request.question, 
+                    rewritten_queries=[request.question], 
+                    extracted_parameters={},
+                    intent_analysis="Error occurred before query rewrite completed or result was invalid."
+                )
+
+            # Ensure semantic_contexts_for_response is a list
+            current_semantic_contexts = semantic_contexts_for_response
+            if not isinstance(current_semantic_contexts, list):
+                current_semantic_contexts = []
+
             return AIQAResponse(
-                answer=f"An error occurred while processing your question: {str(e)}", # User-friendly part
-                source_documents=[], confidence_score=0.0, tokens_used=total_tokens,
-                processing_time=processing_time_on_error, query_rewrite_result=query_rewrite_result,
-                semantic_search_contexts=semantic_contexts_for_response, session_id=request.session_id,
+                answer=f"An error occurred while processing your question: {str(e)}", 
+                source_documents=[], 
+                confidence_score=0.0, 
+                tokens_used=current_total_tokens,
+                processing_time=processing_time_on_error,
+                query_rewrite_result=current_qrr,
+                semantic_search_contexts=current_semantic_contexts, # Use checked list
+                session_id=request.session_id,
+                llm_context_documents=[], # Default to empty list instead of None in error case
                 error_message=str(e) # Include error message in response model
             )
     
@@ -204,7 +246,7 @@ class EnhancedAIQAService:
         """步驟1: 查詢理解與重寫（使用統一AI服務）"""
         log_details = {"original_query_length": len(original_query)}
         await log_event(db=db, level=LogLevel.DEBUG, message="Starting query rewrite using unified AI service.",
-                        source="service.enhanced_ai_qa.rewrite_query_internal", user_id=user_id, request_id=request_id, details=log_details)
+                        source="service.enhanced_ai_qa.rewrite_query_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details)
 
         try:
             ai_response: UnifiedAIResponse = await unified_ai_service_simplified.rewrite_query(
@@ -215,7 +257,7 @@ class EnhancedAIQAService:
             if not ai_response.success or not ai_response.output_data:
                 error_msg = ai_response.error_message or "AI query rewrite returned no content or failed."
                 await log_event(db=db, level=LogLevel.WARNING, message=f"Query rewrite failed or no content: {error_msg}",
-                                source="service.enhanced_ai_qa.rewrite_query_internal", user_id=user_id, request_id=request_id,
+                                source="service.enhanced_ai_qa.rewrite_query_internal", user_id=str(user_id) if user_id else None, request_id=request_id,
                                 details={**log_details, "error": error_msg, "ai_success": ai_response.success})
                 return QueryRewriteResult(original_query=original_query, rewritten_queries=[original_query], extracted_parameters={}, intent_analysis=f"Query rewrite failed: {error_msg}"), tokens
 
@@ -232,35 +274,47 @@ class EnhancedAIQAService:
                     parsed_output = AIQueryRewriteOutput(**content_data)
                 except ValidationError as ve:
                     await log_event(db=db, level=LogLevel.WARNING, message=f"Validation error parsing AI query rewrite dict: {ve}. Content: {content_data}",
-                                    source="service.enhanced_ai_qa.rewrite_query_internal", user_id=user_id, request_id=request_id)
+                                    source="service.enhanced_ai_qa.rewrite_query_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
                     parsed_output = None # Ensure fallback
             else: # Fallback for unexpected content_data types
                 log_msg_parse = f"content_data is of unexpected type: {type(content_data)}. Using fallback values."
                 parsed_output = None
 
             if parsed_output:
+                # Ensure rewritten_queries contains only strings
+                raw_queries = parsed_output.rewritten_queries
+                processed_queries = []
+                if isinstance(raw_queries, list):
+                    # Ensure elements are strings and filter out None before str conversion
+                    processed_queries = [str(q) for q in raw_queries if q is not None]
+                elif raw_queries is not None: # If it's a single item, not a list
+                    processed_queries = [str(raw_queries)]
+
+                if not processed_queries: # Fallback if list is empty or all items were None
+                    processed_queries = [str(original_query)]
+                    
                 query_rewrite_result = QueryRewriteResult(
                     original_query=original_query,
-                    rewritten_queries=parsed_output.rewritten_queries if parsed_output.rewritten_queries else [original_query],
+                    rewritten_queries=processed_queries, # Use processed list
                     extracted_parameters=parsed_output.extracted_parameters if parsed_output.extracted_parameters else {},
                     intent_analysis=parsed_output.intent_analysis or "Intent analysis not provided."
                 )
                 log_msg_parse += f" Intent: {query_rewrite_result.intent_analysis[:50]}"
             else: # Fallback if parsing failed or type was unexpected
                 query_rewrite_result = QueryRewriteResult(
-                    original_query=original_query, rewritten_queries=[original_query], extracted_parameters={},
+                    original_query=original_query, rewritten_queries=[str(original_query)], extracted_parameters={},
                     intent_analysis=log_msg_parse # Use the parsing status as intent analysis
                 )
             
             await log_event(db=db, level=LogLevel.DEBUG, message=f"Query rewrite processing complete. {log_msg_parse}",
-                            source="service.enhanced_ai_qa.rewrite_query_internal", user_id=user_id, request_id=request_id,
+                            source="service.enhanced_ai_qa.rewrite_query_internal", user_id=str(user_id) if user_id else None, request_id=request_id,
                             details={"rewritten_queries_count": len(query_rewrite_result.rewritten_queries), "params_extracted": bool(query_rewrite_result.extracted_parameters)})
             return query_rewrite_result, tokens
             
         except Exception as e:
             await log_event(db=db, level=LogLevel.ERROR, message=f"Error during unified AI service query rewrite call: {str(e)}",
-                            source="service.enhanced_ai_qa.rewrite_query_internal", user_id=user_id, request_id=request_id,
-                            exc_info=True, details={**log_details, "error": str(e), "error_type": type(e).__name__})
+                            source="service.enhanced_ai_qa.rewrite_query_internal", user_id=str(user_id) if user_id else None, request_id=request_id,
+                            details={**log_details, "error": str(e), "error_type": type(e).__name__})
             return QueryRewriteResult(original_query=original_query, rewritten_queries=[original_query], extracted_parameters={}, intent_analysis=f"Query rewrite error: {str(e)}"), 0
     
     async def _semantic_search(
@@ -272,28 +326,40 @@ class EnhancedAIQAService:
         request_id: Optional[str] = None # Added
     ) -> List[SemanticSearchResult]:
         """步驟2: 向量搜索（保持不變）"""
+        # 型別檢查與自動修正
+        # Add debug log for db type
+        logger.debug(f"In _semantic_search, entry: type(db) is {type(db)}, db is {str(db)[:200]}")
+
+        if not isinstance(query, str):
+            logger.error(f"_semantic_search: query 不是 str，而是 {type(query)}，值為 {query}，自動轉為 str。這可能是上游資料異常！")
+            query = str(query)
         log_details = {"query_length": len(query), "top_k": top_k, "user_id_filter_for_search": user_id}
         await log_event(db=db, level=LogLevel.DEBUG, message="Starting semantic search.",
-                        source="service.enhanced_ai_qa.semantic_search_internal", user_id=user_id, request_id=request_id, details=log_details)
+                        source="service.enhanced_ai_qa.semantic_search_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details)
         try:
-            query_vector = await embedding_service.encode_text(query) # Made async call
+            query_vector = embedding_service.encode_text(query) # encode_text 是同步函數
+            
+            # Ensure owner_id_filter is a string if it's a UUID
+            owner_id_filter_for_vector_db = user_id
+            if isinstance(owner_id_filter_for_vector_db, uuid.UUID):
+                owner_id_filter_for_vector_db = str(owner_id_filter_for_vector_db)
             
             results = vector_db_service.search_similar_vectors(
                 query_vector=query_vector,
                 top_k=top_k,
                 similarity_threshold=0.3,
-                owner_id_filter=user_id # Pass user_id for filtering
+                owner_id_filter=owner_id_filter_for_vector_db # Pass the potentially converted string
             )
             
             await log_event(db=db, level=LogLevel.DEBUG, message=f"Semantic search completed, found {len(results)} results.",
-                            source="service.enhanced_ai_qa.semantic_search_internal", user_id=user_id, request_id=request_id,
+                            source="service.enhanced_ai_qa.semantic_search_internal", user_id=str(user_id) if user_id else None, request_id=request_id,
                             details={**log_details, "results_count": len(results)})
             return results
             
         except Exception as e:
             await log_event(db=db, level=LogLevel.ERROR, message=f"Semantic search failed: {str(e)}",
-                            source="service.enhanced_ai_qa.semantic_search_internal", user_id=user_id, request_id=request_id,
-                            exc_info=True, details={**log_details, "error": str(e), "error_type": type(e).__name__})
+                            source="service.enhanced_ai_qa.semantic_search_internal", user_id=str(user_id) if user_id else None, request_id=request_id,
+                            details={**log_details, "error": str(e), "error_type": type(e).__name__})
             return []
     
     async def _t2q_filter(
@@ -310,11 +376,11 @@ class EnhancedAIQAService:
             "extracted_params_keys": list(extracted_parameters.keys())
         }
         await log_event(db=db, level=LogLevel.DEBUG, message="T2Q filter process started.",
-                        source="service.enhanced_ai_qa.t2q_filter_internal", user_id=user_id, request_id=request_id, details=log_details)
+                        source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details)
         try:
             if not extracted_parameters or not document_ids:
                 await log_event(db=db, level=LogLevel.DEBUG, message="T2Q filter: No parameters or document IDs to filter, returning original list.",
-                                source="service.enhanced_ai_qa.t2q_filter_internal", user_id=user_id, request_id=request_id, details=log_details)
+                                source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details)
                 return document_ids
             
             allowed_filter_keys = {"document_types", "file_type", "date_range", "key_entities"}
@@ -326,7 +392,7 @@ class EnhancedAIQAService:
                     uuid_document_ids.append(uuid.UUID(doc_id_str_val))
                 except ValueError:
                      await log_event(db=db, level=LogLevel.WARNING, message=f"T2Q Filter: Invalid document ID format '{doc_id_str_val}', skipping.",
-                                    source="service.enhanced_ai_qa.t2q_filter_internal", user_id=user_id, request_id=request_id)
+                                    source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
             if not uuid_document_ids:
                 return []
 
@@ -337,12 +403,12 @@ class EnhancedAIQAService:
             for key, value in extracted_parameters.items():
                 if key not in allowed_filter_keys:
                     await log_event(db=db, level=LogLevel.DEBUG, message=f"T2Q Filter: Ignoring disallowed filter key '{key}'.",
-                                    source="service.enhanced_ai_qa.t2q_filter_internal", user_id=user_id, request_id=request_id)
+                                    source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
                     continue
 
                 if isinstance(key, str) and key.startswith("$"): # Basic check for NoSQL injection
                     await log_event(db=db, level=LogLevel.WARNING, message=f"T2Q Filter: Potential malicious filter key '{key}' detected and ignored.",
-                                    source="service.enhanced_ai_qa.t2q_filter_internal", user_id=user_id, request_id=request_id)
+                                    source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
                     continue
 
                 if key == "document_types" or key == "file_type":
@@ -352,9 +418,9 @@ class EnhancedAIQAService:
                         generic_types_lower = ["文檔", "文件", "資料", "文獻", "文本"] # TODO: Internationalize/centralize
                         is_generic_list = all(dt.lower() in generic_types_lower for dt in value)
                         if not is_generic_list: filter_conditions["file_type"] = {"$in": value}
-                        else: await log_event(db=db, level=LogLevel.DEBUG, message=f"T2Q Filter: Generic document type list {value} ignored.", source="service.enhanced_ai_qa.t2q_filter_internal", user_id=user_id, request_id=request_id)
+                        else: await log_event(db=db, level=LogLevel.DEBUG, message=f"T2Q Filter: Generic document type list {value} ignored.", source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
                     elif value:
-                         await log_event(db=db, level=LogLevel.WARNING, message=f"T2Q Filter: Invalid value '{value}' for key '{key}', ignored.", source="service.enhanced_ai_qa.t2q_filter_internal", user_id=user_id, request_id=request_id)
+                         await log_event(db=db, level=LogLevel.WARNING, message=f"T2Q Filter: Invalid value '{value}' for key '{key}', ignored.", source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
 
                 elif key == "date_range":
                     if isinstance(value, dict):
@@ -364,14 +430,14 @@ class EnhancedAIQAService:
                             if value.get("start") and isinstance(value["start"], str): date_conditions["$gte"] = datetime.fromisoformat(value["start"].replace('Z', '+00:00'))
                             if value.get("end") and isinstance(value["end"], str): date_conditions["$lt"] = datetime.fromisoformat(value["end"].replace('Z', '+00:00'))
                         except ValueError:
-                             await log_event(db=db, level=LogLevel.WARNING, message=f"T2Q Filter: Invalid date format in date_range '{value}'.", source="service.enhanced_ai_qa.t2q_filter_internal", user_id=user_id, request_id=request_id)
+                             await log_event(db=db, level=LogLevel.WARNING, message=f"T2Q Filter: Invalid date format in date_range '{value}'.", source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
                         if date_conditions: filter_conditions["created_at"] = date_conditions
                     elif value:
-                        await log_event(db=db, level=LogLevel.WARNING, message=f"T2Q Filter: Invalid value '{value}' for key 'date_range', ignored.", source="service.enhanced_ai_qa.t2q_filter_internal", user_id=user_id, request_id=request_id)
+                        await log_event(db=db, level=LogLevel.WARNING, message=f"T2Q Filter: Invalid value '{value}' for key 'date_range', ignored.", source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
 
             if len(filter_conditions) == 1 and "_id" in filter_conditions:
                  await log_event(db=db, level=LogLevel.DEBUG, message="T2Q Filter: No effective filter parameters applied, returning original document ID list.",
-                                 source="service.enhanced_ai_qa.t2q_filter_internal", user_id=user_id, request_id=request_id, details=log_details)
+                                 source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details)
                  return document_ids # Return original string IDs
 
             cursor = db.documents.find(filter_conditions, {"_id": 1})
@@ -379,14 +445,14 @@ class EnhancedAIQAService:
             filtered_ids = [str(doc["_id"]) for doc in filtered_docs]
             
             await log_event(db=db, level=LogLevel.DEBUG, message=f"T2Q filter applied. Initial count: {len(document_ids)}, Filtered count: {len(filtered_ids)}.",
-                            source="service.enhanced_ai_qa.t2q_filter_internal", user_id=user_id, request_id=request_id,
+                            source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id,
                             details={"initial_count": len(document_ids), "filtered_count": len(filtered_ids), "applied_conditions": {k:v for k,v in filter_conditions.items() if k != "_id"}})
             return filtered_ids
             
         except Exception as e:
             await log_event(db=db, level=LogLevel.ERROR, message=f"T2Q filter failed: {str(e)}",
-                            source="service.enhanced_ai_qa.t2q_filter_internal", user_id=user_id, request_id=request_id,
-                            exc_info=True, details={**log_details, "error": str(e), "error_type": type(e).__name__})
+                            source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id,
+                            details={**log_details, "error": str(e), "error_type": type(e).__name__})
             return document_ids
     
     async def _generate_answer_unified(
@@ -409,7 +475,7 @@ class EnhancedAIQAService:
             "intent": query_rewrite_result.intent_analysis[:100] if query_rewrite_result.intent_analysis else None # Log snippet
         }
         await log_event(db=db, level=LogLevel.DEBUG, message="Assembling context for AI answer generation.",
-                        source="service.enhanced_ai_qa.generate_answer_internal", user_id=user_id, request_id=request_id, details=log_details_context)
+                        source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details_context)
 
         try:
             context_parts = []
@@ -442,13 +508,13 @@ class EnhancedAIQAService:
                         if current_summary and isinstance(current_summary, str) and current_summary.strip():
                             ai_summary = current_summary.strip()
                     except ValidationError as ve:
-                        await log_event(db=db, level=LogLevel.WARNING, message=f"Validation error parsing doc analysis for doc_id {doc_id_str}: {ve}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=user_id, request_id=request_id)
+                        await log_event(db=db, level=LogLevel.WARNING, message=f"Validation error parsing doc analysis for doc_id {doc_id_str}: {ve}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
                         if isinstance(doc.analysis.ai_analysis_output, dict):
                             current_summary = doc.analysis.ai_analysis_output.get('initial_summary') or doc.analysis.ai_analysis_output.get('initial_description')
                             if current_summary and isinstance(current_summary, str) and current_summary.strip():
                                 ai_summary = current_summary.strip()
                     except Exception as e_parse:
-                        await log_event(db=db, level=LogLevel.ERROR, message=f"Unexpected error parsing doc analysis for doc_id {doc_id_str}: {e_parse}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=user_id, request_id=request_id, details={"error": str(e_parse)})
+                        await log_event(db=db, level=LogLevel.ERROR, message=f"Unexpected error parsing doc analysis for doc_id {doc_id_str}: {e_parse}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details={"error": str(e_parse)})
                 
                 if ai_dynamic_long_text: doc_content_to_use, content_source_type = ai_dynamic_long_text, "ai_analysis_dynamic_field"
                 elif raw_extracted_text and isinstance(raw_extracted_text, str) and len(raw_extracted_text.strip()) > 0: doc_content_to_use, content_source_type = raw_extracted_text, "extracted_text"
@@ -462,7 +528,7 @@ class EnhancedAIQAService:
             query_for_answer_gen = query_rewrite_result.rewritten_queries[0] if query_rewrite_result.rewritten_queries and query_rewrite_result.rewritten_queries[0] else original_query
 
             log_details_ai_call = {"query_for_answer_gen_length": len(query_for_answer_gen), "num_docs_in_context": len(documents_for_context), "total_context_length": len(full_document_context), "model_preference": model_preference}
-            await log_event(db=db, level=LogLevel.DEBUG, message="Calling AI for answer generation.", source="service.enhanced_ai_qa.generate_answer_internal", user_id=user_id, request_id=request_id, details=log_details_ai_call)
+            await log_event(db=db, level=LogLevel.DEBUG, message="Calling AI for answer generation.", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details_ai_call)
             
             ai_response: UnifiedAIResponse = await unified_ai_service_simplified.generate_answer(
                 user_question=query_for_answer_gen, intent_analysis=query_rewrite_result.intent_analysis or "",
@@ -475,22 +541,29 @@ class EnhancedAIQAService:
 
             if ai_response.success and ai_response.output_data:
                 output_data = ai_response.output_data
-                if isinstance(output_data, AIGeneratedAnswerOutput): answer_text = output_data.answer_text
-                elif isinstance(output_data, dict): answer_text = output_data.get("answer_text", "Error: Could not parse AI answer from dict.")
-                elif isinstance(output_data, str): answer_text = output_data
-                else: answer_text = f"Error: AI returned unexpected answer format: {type(output_data).__name__}"
+                if isinstance(output_data, AIGeneratedAnswerOutput): 
+                    answer_text = output_data.answer_text
+                elif isinstance(output_data, dict): 
+                    answer_text = output_data.get("answer_text", "Error: Could not parse AI answer from dict.")
+                elif isinstance(output_data, str): 
+                    answer_text = output_data
+                else: 
+                    # Ensure answer_text is a string representation in case of unexpected type
+                    answer_text = f"Error: AI returned unexpected answer format: {type(output_data).__name__}. Raw: {str(output_data)[:100]}"
                 
-                confidence = min(0.9, 0.3 + (len(documents_for_context) * 0.1) + (0.1 if answer_text and not answer_text.lower().startswith("error:") and not answer_text.lower().startswith("sorry") else -0.2))
-                await log_event(db=db, level=LogLevel.INFO, message="AI answer generation successful.", source="service.enhanced_ai_qa.generate_answer_internal", user_id=user_id, request_id=request_id, details={"model_used": ai_response.model_used, "response_length": len(answer_text), "tokens": tokens_used, "confidence": confidence})
+                confidence = min(0.9, 0.3 + (len(documents_for_context) * 0.1) + (0.1 if answer_text and not str(answer_text).lower().startswith("error:") and not str(answer_text).lower().startswith("sorry") else -0.2))
+                # Ensure answer_text is string before len() for logging
+                current_answer_text_for_log = str(answer_text)
+                await log_event(db=db, level=LogLevel.INFO, message="AI answer generation successful.", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details={"model_used": ai_response.model_used, "response_length": len(current_answer_text_for_log), "tokens": tokens_used, "confidence": confidence})
             else:
                 error_msg = ai_response.error_message or "AI failed to generate answer or content was empty."
-                await log_event(db=db, level=LogLevel.ERROR, message=f"AI answer generation failed: {error_msg}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=user_id, request_id=request_id, details={**log_details_ai_call, "error": error_msg})
+                await log_event(db=db, level=LogLevel.ERROR, message=f"AI answer generation failed: {error_msg}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details={**log_details_ai_call, "error": error_msg})
                 answer_text = f"Sorry, I couldn't generate an answer: {error_msg}" # User-friendly
 
             return answer_text, tokens_used, confidence, actual_contexts_for_llm
             
         except Exception as e:
-            await log_event(db=db, level=LogLevel.ERROR, message=f"Unexpected error in _generate_answer_unified: {str(e)}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=user_id, request_id=request_id, exc_info=True, details={"error_type": type(e).__name__})
+            await log_event(db=db, level=LogLevel.ERROR, message=f"Unexpected error in _generate_answer_unified: {str(e)}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details={"error_type": type(e).__name__})
             return f"An internal error occurred while generating the answer: {str(e)}", 0, 0.0, actual_contexts_for_llm
 
 # 全局增強AI問答服務實例

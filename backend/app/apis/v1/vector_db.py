@@ -338,11 +338,10 @@ async def batch_process_documents(
 
 @router.post("/semantic-search", response_model=List[SemanticSearchResult])
 async def semantic_search(
-    request: SemanticSearchRequest,
-    fastapi_request: Request, # Added
-    request_data: SemanticSearchRequest, # Renamed
+    request: SemanticSearchRequest, 
+    fastapi_request: Request, 
     current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_db) # Added for log_event
+    db: AsyncIOMotorDatabase = Depends(get_db) 
 ):
     """
     語義搜索端點 - 需要用戶認證
@@ -355,33 +354,31 @@ async def semantic_search(
         message=f"User {current_user.username} initiated semantic search.",
         source="api.vector_db.search", user_id=str(current_user.id), request_id=request_id_val,
         details={
-            "query_text_length": len(request_data.query) if request_data.query else 0, # Log length, not text
-            "top_k": request_data.top_k,
-            "similarity_threshold": request_data.similarity_threshold,
-            "collection_name": request_data.collection_name
+            "query_text_length": len(request.query) if request.query else 0, 
+            "top_k": request.top_k,
+            "similarity_threshold": request.similarity_threshold,
+            "collection_name": request.collection_name
         }
     )
 
     try:
-        # logger.info(f"用戶 {current_user.username} 收到語義搜索請求: {request.query[:100]}") # Replaced
         
-        query_vector = embedding_service.encode_text(request_data.query)
+        query_vector = embedding_service.encode_text(request.query) 
         
         vector_db_service_instance = get_vector_db_service()
         results = vector_db_service_instance.search_similar_vectors(
             query_vector=query_vector,
-            top_k=request_data.top_k,
-            similarity_threshold=request_data.similarity_threshold,
-            owner_id_filter=str(current_user.id), # Ensure this filter is applied by the service
-            collection_name=request_data.collection_name
+            top_k=request.top_k,
+            similarity_threshold=request.similarity_threshold,
+            owner_id_filter=str(current_user.id), 
+            collection_name=request.collection_name
         )
         
-        # logger.info(f"用戶 {current_user.username} 語義搜索完成，查詢: '{request.query}', 返回 {len(results)} 個結果 (已在服務層過濾)") # Replaced
         await log_event(
             db=db, level=LogLevel.DEBUG,
             message=f"Semantic search completed for user {current_user.username}, found {len(results)} results.",
             source="api.vector_db.search", user_id=str(current_user.id), request_id=request_id_val,
-            details={"num_results": len(results), "top_k": request_data.top_k}
+            details={"num_results": len(results), "top_k": request.top_k}
         )
         return results
     except ValueError as ve: # Specific error for embedding issues
@@ -389,7 +386,7 @@ async def semantic_search(
             db=db, level=LogLevel.WARNING, # ValueError might be due to bad input, not necessarily server error
             message=f"Semantic search failed for user {current_user.username} due to ValueError: {str(ve)}",
             source="api.vector_db.search", user_id=str(current_user.id), request_id=request_id_val,
-            details={"error": str(ve), "error_type": type(ve).__name__, "query_text_length": len(request_data.query) if request_data.query else 0}
+            details={"error": str(ve), "error_type": type(ve).__name__, "query_text_length": len(request.query) if request.query else 0}
         )
         raise HTTPException(status_code=400, detail=f"Semantic search input error: {str(ve)}") # User-friendly
     except Exception as e: # General errors
