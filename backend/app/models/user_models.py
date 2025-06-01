@@ -9,6 +9,7 @@ class UserBase(BaseModel):
     email: Optional[EmailStr] = Field(None, description="使用者電子郵件 (可選)")
     full_name: Optional[str] = Field(None, max_length=100, description="使用者全名 (可選)")
     is_active: bool = Field(True, description="帳戶是否啟用")
+    is_admin: bool = Field(False, description="是否為管理員帳戶")
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=8, description="使用者密碼 (明文)")
@@ -17,6 +18,7 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     full_name: Optional[str] = None
     is_active: Optional[bool] = None
+    is_admin: Optional[bool] = None # 允許更新管理員狀態
     # 密碼更新應通過特定端點處理
 
 class UserInDBBase(UserBase):
@@ -35,7 +37,7 @@ class User(UserBase):
     id: UUID
     created_at: datetime
     updated_at: datetime
-    # is_active 已經在 UserBase 中，所以這裡不需要重複
+    # is_active 和 is_admin 已經在 UserBase 中
 
     class Config:
         from_attributes = True # Pydantic v2

@@ -145,6 +145,30 @@ async def get_current_active_user(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="非活動使用者")
     return user
 
+async def get_current_admin_user(
+    current_user: UserInDB = Depends(get_current_active_user)
+) -> UserInDB:
+    """
+    獲取當前活躍用戶，並驗證其是否為管理員。
+    如果用戶不是管理員，則引發 HTTPException 403 Forbidden。
+    """
+    if not current_user.is_admin:
+        # 注意：這裡我們不應該記錄過於詳細的用戶非管理員嘗試信息，
+        # 除非有特定的審計需求。基本的拒絕已經由HTTP狀態碼處理。
+        # 如果需要記錄，可以添加一個簡短的日誌條目。
+        # await log_event(
+        #     db=..., # 需要傳遞 db 實例或使其可用
+        #     level=LogLevel.WARNING,
+        #     message=f"Non-admin user {current_user.username} attempted admin-only action.",
+        #     source="get_current_admin_user",
+        #     details={"user_id": str(current_user.id), "username": current_user.username}
+        # )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="操作未授權：需要管理員權限"
+        )
+    return current_user
+
 # 後續我們會在這裡添加一個依賴項，用於解碼和驗證 token，
 # 例如 get_current_user
 # async def get_current_user(token: str = Depends(oauth2_scheme)):\

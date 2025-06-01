@@ -6,7 +6,7 @@ import uuid
 
 from pydantic import BaseModel
 from app.db.mongodb_utils import get_db
-from app.core.security import get_current_active_user
+from app.core.security import get_current_active_user, get_current_admin_user
 from app.models.user_models import User
 from app.models.vector_models import SemanticSearchRequest, SemanticSearchResult, BatchProcessRequest
 from app.models.response_models import BasicResponse
@@ -57,11 +57,11 @@ async def get_vector_db_stats(
 
 @router.post("/initialize")
 async def initialize_vector_database(
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_admin_user)
 ):
-    """初始化向量資料庫（創建集合和索引） - 需要用戶認證"""
+    """初始化向量資料庫（創建集合和索引） - 需要管理員權限"""
     try:
-        logger.info(f"用戶 {current_user.username} 開始初始化向量資料庫")
+        logger.info(f"管理員 {current_user.username} 開始初始化向量資料庫")
         
         # 確保模型已加載
         if not embedding_service._model_loaded:
@@ -81,7 +81,7 @@ async def initialize_vector_database(
         vector_db_service_instance = get_vector_db_service()
         vector_db_service_instance.create_collection(vector_dimension)
         
-        logger.info(f"用戶 {current_user.username} 向量資料庫初始化成功")
+        logger.info(f"管理員 {current_user.username} 向量資料庫初始化成功")
         
         return JSONResponse(
             content={
