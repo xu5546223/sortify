@@ -1,9 +1,9 @@
 from typing import Optional, Dict, Any, List
 import json
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from app.core.logging_utils import AppLogger
-from app.services.unified_ai_service_simplified import unified_ai_service_simplified
-from app.services.embedding_service import embedding_service
+from app.core.logging_utils import AppLogger, log_event, LogLevel # Added
+from app.services.unified_ai_service_simplified import unified_ai_service_simplified, AIResponse as UnifiedAIResponse # Alias
+from app.services.embedding_service import embedding_service # Assuming async methods
 from app.services.vector_db_service import vector_db_service
 from app.models.vector_models import SemanticSummary, VectorRecord
 from app.models.ai_models_simplified import AIPromptRequest
@@ -12,6 +12,7 @@ from app.services.prompt_manager_simplified import prompt_manager_simplified, Pr
 from app.crud.crud_documents import update_document_vector_status
 import logging
 import uuid
+from datetime import datetime
 
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
 
@@ -31,12 +32,15 @@ class SemanticSummaryService:
         為文檔生成語義摘要文本 (使用 prompt_manager_simplified)
         優先從 document.analysis.ai_analysis_output 提取，否則調用AI進行新的文本分析。
         """
-        try:
-            logger.info(f"正在為文檔 {document.id} 生成語義摘要 (彈性模式，優先使用現有分析)")
+        doc_id_str = str(document.id)
+        log_details_initial = {"document_id": doc_id_str, "filename": document.filename, "file_type": document.file_type}
+        await log_event(db=db, level=LogLevel.INFO, message="Semantic summarization request received.",
+                        source="service.semantic_summary.generate_summary", details=log_details_initial)
 
-            # 檢查文檔是否有AI分析結果，並且結果是字典類型
+        try:
             if document.analysis and isinstance(document.analysis.ai_analysis_output, dict):
-                logger.info(f"文檔 {document.id} 找到現有的 AI 分析結果，嘗試直接提取摘要。")
+                await log_event(db=db, level=LogLevel.DEBUG, message=f"Existing AI analysis found for doc {doc_id_str}, attempting to use it.",
+                                source="service.semantic_summary.generate_summary", details=log_details_initial)
                 existing_analysis = document.analysis.ai_analysis_output
                 key_info = existing_analysis.get("key_information", {})
                 summary_text = key_info.get("content_summary", "")
@@ -46,128 +50,81 @@ class SemanticSummaryService:
                     key_terms = [term.strip() for term in key_terms.split(',') if term.strip()]
                 
                 if summary_text and len(summary_text.strip()) >= 10:
-                    logger.info(f"從現有分析中成功提取摘要和標籤: {document.id}")
-                    return SemanticSummary(
-                        document_id=str(document.id),
-                        summary_text=summary_text,
-                        file_type=document.file_type,
-                        key_terms=key_terms,
-                        full_ai_analysis=existing_analysis
-                    )
+                    await log_event(db=db, level=LogLevel.INFO, message=f"Successfully extracted summary from existing analysis for doc {doc_id_str}.",
+                                    source="service.semantic_summary.generate_summary", details={**log_details_initial, "summary_length": len(summary_text), "key_terms_count": len(key_terms)})
+                    return SemanticSummary(document_id=doc_id_str, summary_text=summary_text, file_type=document.file_type, key_terms=key_terms, full_ai_analysis=existing_analysis)
                 else:
-                    logger.warning(f"現有 AI 分析結果中未能提取有效摘要或標籤，文檔ID: {document.id}。將進行新的文本分析。")
+                    await log_event(db=db, level=LogLevel.WARNING, message=f"Existing AI analysis for doc {doc_id_str} lacked sufficient summary/tags. Proceeding to new analysis.",
+                                    source="service.semantic_summary.generate_summary", details=log_details_initial)
             
-            # 如果沒有現成的有效摘要，或者文檔內容本身不足，則進行新的處理
             if not document.extracted_text or len(document.extracted_text.strip()) < 50:
-                logger.warning(f"文檔 {document.id} 內容過少 ({len(document.extracted_text.strip()) if document.extracted_text else 0} chars)，跳過語義摘要生成")
+                await log_event(db=db, level=LogLevel.WARNING, message=f"Document content too short for summarization: {doc_id_str} ({len(document.extracted_text.strip()) if document.extracted_text else 0} chars).",
+                                source="service.semantic_summary.generate_summary", details=log_details_initial)
                 return None
 
-            logger.info(f"文檔 {document.id} 未找到可用摘要或需重新分析，開始調用AI進行新的文本分析。")
-            # 1. 獲取文本分析的提示詞模板
+            await log_event(db=db, level=LogLevel.DEBUG, message=f"No usable existing summary for doc {doc_id_str}. Calling AI for new text analysis.",
+                            source="service.semantic_summary.generate_summary", details=log_details_initial)
+
             prompt_template = await prompt_manager_simplified.get_prompt(PromptType.TEXT_ANALYSIS, db)
             if not prompt_template:
-                logger.error(f"無法獲取 {PromptType.TEXT_ANALYSIS.value} 的提示詞模板，文檔 ID: {document.id}")
-                # Fallback to simpler summary if prompt is missing
-                summary_text = self._generate_fallback_summary(document)
-                return SemanticSummary(
-                    document_id=str(document.id),
-                    summary_text=summary_text,
-                    file_type=document.file_type,
-                    key_terms=[]
-                )
+                await log_event(db=db, level=LogLevel.ERROR, message=f"Failed to get TEXT_ANALYSIS prompt template for doc {doc_id_str}. Using fallback summary.",
+                                source="service.semantic_summary.generate_summary", details=log_details_initial)
+                summary_text = await self._generate_fallback_summary(document, db=db) # Pass db
+                return SemanticSummary(document_id=doc_id_str, summary_text=summary_text, file_type=document.file_type, key_terms=[])
 
-            # 2. 格式化提示詞
             system_prompt, user_prompt = prompt_manager_simplified.format_prompt(
-                prompt_template,
-                text_content=document.extracted_text[:4000] # 限制輸入長度以符合模型限制
+                prompt_template, text_content=document.extracted_text[:4000]
             )
             
-            # 3. 調用AI進行結構化分析 (假設 unified_ai_service_simplified 可以處理 system_prompt 和 user_prompt)
-            # 注意：這裡的 unified_ai_service_simplified.analyze_text 可能需要調整
-            # 如果它不接受 system_prompt, user_prompt 分開傳遞, 
-            # 可能需要一個新的方法如 analyze_with_prompts(system_prompt, user_prompt, db)
-            # 或者 analyze_text 內部會處理 prompt_template
-            
-            # 為了繼續，我們假設 analyze_text 可以通過某種方式利用 system 和 user prompt
-            # 或我們直接傳遞拼接後的內容，由AI自行解析。
-            # 但更理想的是 analyze_text 支持結構化提示詞。
-            # 暫時使用拼接方式，並期望AI能正確處理JSON輸出。
-            
-            # 修正：unified_ai_service_simplified 的 analyze_text 接受單一 text_content
-            # 它內部會選擇合適的 prompt (如果設計如此) 或使用通用 prompt
-            # 為了實現結構化輸出，我們應該讓 analyze_text 能夠接受更明確的指示
-            # 或者，我們需要一個更專門的方法。
-            # 由於 prompt_manager 已定義了完整的 system 和 user prompts，
-            # 我們將直接使用它們調用AI，期望它遵循指示輸出JSON。
-
-            ai_response = await unified_ai_service_simplified.analyze_with_prompts_and_parse_json(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                db=db,
-                output_model_schema=None # 讓AI根據Prompt的JSON結構輸出
+            ai_response: UnifiedAIResponse = await unified_ai_service_simplified.analyze_with_prompts_and_parse_json(
+                system_prompt=system_prompt, user_prompt=user_prompt, db=db, output_model_schema=None
             )
 
             if not ai_response.success or not ai_response.content:
-                logger.warning(f"AI結構化摘要生成失敗: {ai_response.error_message}，使用fallback策略。文檔 ID: {document.id}")
-                summary_text = self._generate_fallback_summary(document)
-                return SemanticSummary(
-                    document_id=str(document.id),
-                    file_type=document.file_type,
-                    summary_text=summary_text,
-                    key_terms=[]
-                )
+                error_msg = ai_response.error_message or "AI service returned no content or failed."
+                await log_event(db=db, level=LogLevel.WARNING, message=f"AI structured summarization failed for doc {doc_id_str}: {error_msg}. Using fallback.",
+                                source="service.semantic_summary.generate_summary", details={**log_details_initial, "ai_error": error_msg})
+                summary_text = await self._generate_fallback_summary(document, db=db) # Pass db
+                return SemanticSummary(document_id=doc_id_str, file_type=document.file_type, summary_text=summary_text, key_terms=[])
             
-            # 4. 解析AI回應的JSON
             try:
-                # ai_response.content 應該已經是解析後的字典 (如果 analyze_with_prompts_and_parse_json 按預期工作)
                 parsed_json = ai_response.content 
-                
-                # 5. 從JSON中提取所需資訊
                 key_info = parsed_json.get("key_information", {})
                 summary_text = key_info.get("content_summary", "")
                 key_terms = key_info.get("semantic_tags", [])
 
-                if isinstance(key_terms, str): # AI有時可能返回逗號分隔的字串
+                if isinstance(key_terms, str):
                     key_terms = [term.strip() for term in key_terms.split(',') if term.strip()]
 
-                if not summary_text or len(summary_text.strip()) < 10: # 摘要至少需要一些內容
-                    logger.warning(f"AI生成的結構化摘要過短或缺失，使用fallback策略。文檔 ID: {document.id}")
-                    summary_text = self._generate_fallback_summary(document)
-                    key_terms = [] # Fallback時清空AI生成的標籤
+                if not summary_text or len(summary_text.strip()) < 10:
+                    await log_event(db=db, level=LogLevel.WARNING, message=f"AI generated summary too short for doc {doc_id_str}. Using fallback.",
+                                    source="service.semantic_summary.generate_summary", details={**log_details_initial, "ai_summary_snippet": summary_text[:50]})
+                    summary_text = await self._generate_fallback_summary(document, db=db) # Pass db
+                    key_terms = []
 
-                semantic_summary = SemanticSummary(
-                    document_id=str(document.id),
-                    summary_text=summary_text,
-                    file_type=document.file_type, # 保留原始文件類型
-                    key_terms=key_terms,
-                    # 可以考慮在這裡加入更多來自 key_information 的欄位，如果 SemanticSummary 模型支持
-                    full_ai_analysis=parsed_json # 存儲完整的分析結果
+                semantic_summary_obj = SemanticSummary(
+                    document_id=doc_id_str, summary_text=summary_text, file_type=document.file_type,
+                    key_terms=key_terms, full_ai_analysis=parsed_json
                 )
+                await log_event(db=db, level=LogLevel.INFO, message=f"Structured semantic summary generated successfully for doc {doc_id_str}.",
+                                source="service.semantic_summary.generate_summary", details={**log_details_initial, "summary_length": len(summary_text), "key_terms_count": len(key_terms)})
+                return semantic_summary_obj
                 
-                logger.info(f"成功為文檔 {document.id} 生成結構化語義摘要，長度: {len(summary_text)}")
-                return semantic_summary
+            except (json.JSONDecodeError, AttributeError, KeyError, TypeError) as e_parse:
+                error_msg = f"Failed to parse AI structured summary response: {str(e_parse)}. AI response snippet: {str(ai_response.content)[:200]}"
+                await log_event(db=db, level=LogLevel.ERROR, message=error_msg, source="service.semantic_summary.generate_summary",
+                                exc_info=True, details={**log_details_initial, "parsing_error": str(e_parse)})
+                summary_text = await self._generate_fallback_summary(document, db=db) # Pass db
+                return SemanticSummary(document_id=doc_id_str, summary_text=summary_text, file_type=document.file_type, key_terms=[])
                 
-            except (json.JSONDecodeError, AttributeError, KeyError, TypeError) as e:
-                logger.error(f"解析AI結構化摘要回應失敗: {e}。AI原始回應片段: {str(ai_response.content)[:500]}... 使用fallback策略。文檔 ID: {document.id}", exc_info=True)
-                summary_text = self._generate_fallback_summary(document)
-                return SemanticSummary(
-                    document_id=str(document.id),
-                    summary_text=summary_text,
-                    file_type=document.file_type,
-                    key_terms=[]
-                )
-                
-        except Exception as e:
-            logger.error(f"生成語義摘要 (彈性模式) 失敗: {e}，文檔 ID: {document.id}", exc_info=True)
-            summary_text = self._generate_fallback_summary(document)
-            return SemanticSummary(
-                document_id=str(document.id),
-                summary_text=summary_text,
-                file_type=document.file_type,
-                key_terms=[]
-            )
+        except Exception as e_main:
+            error_msg = f"Generic failure in semantic summary generation for doc {doc_id_str}: {str(e_main)}"
+            await log_event(db=db, level=LogLevel.ERROR, message=error_msg, source="service.semantic_summary.generate_summary",
+                            exc_info=True, details={**log_details_initial, "error": str(e_main), "error_type": type(e_main).__name__})
+            summary_text = await self._generate_fallback_summary(document, db=db) # Pass db
+            return SemanticSummary(document_id=doc_id_str, summary_text=summary_text, file_type=document.file_type, key_terms=[])
     
-    def _generate_fallback_summary(self, document: Document) -> str:
+    async def _generate_fallback_summary(self, document: Document, db: AsyncIOMotorDatabase) -> str: # Added db for log_event
         """生成fallback語義摘要"""
         try:
             # 提取文本的前幾個句子
@@ -194,8 +151,12 @@ class SemanticSummaryService:
             return summary
             
         except Exception as e:
-            logger.error(f"生成fallback摘要失敗: {e}")
-            return f"這是一份{document.file_type or '文檔'}文件，文件名為{document.filename}。"
+            # logger.error(f"生成fallback摘要失敗: {e}") # Replaced
+            await log_event(db=db, level=LogLevel.ERROR,
+                            message=f"Failed to generate fallback summary for doc ID {document.id}: {str(e)}",
+                            source="service.semantic_summary.fallback_summary", exc_info=True,
+                            details={"document_id": str(document.id), "filename": document.filename, "error": str(e), "error_type": type(e).__name__})
+            return f"This is a document of type {document.file_type or 'unknown'} named {document.filename}." # English
     
     async def process_document_for_vector_db(
         self, 
@@ -213,33 +174,51 @@ class SemanticSummaryService:
         5. 存儲到向量資料庫
         6. 更新文檔狀態 (VECTORIZED 或 FAILED)
         """
-        # doc_id_str = document.id # Assuming document.id is already a string, if not, str(document.id)
-        # doc_id_uuid = uuid.UUID(doc_id_str) # For crud operations
-
-        # 修正UUID處理：document.id 是 uuid.UUID 對象
         doc_id_uuid: uuid.UUID = document.id 
         doc_id_str: str = str(document.id)
+        
+        # For overall timing and base details for log_event
+        process_start_time = datetime.now() 
+        log_details_base = {"document_id": doc_id_str, "filename": document.filename, "user_id": str(document.owner_id)}
+
+        logger.info(f"[{process_start_time.isoformat()}] Starting processing for document {doc_id_str} for vector DB.")
+        await log_event(db=db, level=LogLevel.INFO, message="Starting document processing for vector DB.",
+                        source="service.semantic_summary.process_doc_for_vector_db.start", details=log_details_base)
 
         try:
-            logger.info(f"開始處理文檔 {doc_id_str} 以添加到向量資料庫")
-            # 步驟1: 更新狀態為 PROCESSING
+            # Step 1: Update status to PROCESSING
+            step_start_time = datetime.now()
+            logger.info(f"[{step_start_time.isoformat()}] Updating status to PROCESSING for document {doc_id_str}.")
             await update_document_vector_status(db, doc_id_uuid, VectorStatus.PROCESSING)
-            
-            # 步驟2: 刪除舊向量 (實現覆蓋)
-            # 即使是第一次向量化，這個操作也應該是安全的
-            logger.info(f"為文檔 {doc_id_str} 嘗試刪除舊向量...")
-            # delete_by_document_id 是同步的，不需要 await
-            vector_db_service.delete_by_document_id(doc_id_str) 
-            logger.info(f"為文檔 {doc_id_str} 刪除舊向量完成 (如果存在)。")
+            step_end_time = datetime.now()
+            logger.info(f"[{step_end_time.isoformat()}] Status updated to PROCESSING for document {doc_id_str}. Duration: {step_end_time - step_start_time}")
+            # log_event for this step is implicitly covered by the subsequent logs if successful, or error logs if failed.
 
-            # 步驟3: 生成語義摘要
-            semantic_summary = await self.generate_semantic_summary(db, document)
+            # Step 2: Delete old vectors
+            step_start_time = datetime.now()
+            logger.info(f"[{step_start_time.isoformat()}] Attempting to delete old vectors for document {doc_id_str}.")
+            # Assuming vector_db_service.delete_by_document_id logs internally or is not critical for db log_event here
+            vector_db_service.delete_by_document_id(doc_id_str) 
+            step_end_time = datetime.now()
+            logger.info(f"[{step_end_time.isoformat()}] Old vectors deleted (if existed) for document {doc_id_str}. Duration: {step_end_time - step_start_time}")
+            await log_event(db=db, level=LogLevel.DEBUG, message="Old vectors deletion attempt completed.",
+                            source="service.semantic_summary.process_doc_for_vector_db.delete_old_vectors", details=log_details_base)
+
+            # Step 3: Generate semantic summary
+            step_start_time = datetime.now()
+            logger.info(f"[{step_start_time.isoformat()}] Generating semantic summary for document {doc_id_str}.")
+            semantic_summary = await self.generate_semantic_summary(db, document) # generate_semantic_summary has its own log_events
+            step_end_time = datetime.now()
             if not semantic_summary:
-                logger.error(f"無法為文檔 {doc_id_str} 生成語義摘要")
-                await update_document_vector_status(db, doc_id_uuid, VectorStatus.FAILED, "語義摘要生成失敗")
+                logger.error(f"[{step_end_time.isoformat()}] Failed to generate semantic summary for document {doc_id_str}. Duration: {step_end_time - step_start_time}")
+                # log_event is already called within generate_semantic_summary for failure
+                await update_document_vector_status(db, doc_id_uuid, VectorStatus.FAILED, "語義摘要生成失敗") # crud_documents.update_document_vector_status also logs
                 return False
+            logger.info(f"[{step_end_time.isoformat()}] Semantic summary generated for document {doc_id_str}. Duration: {step_end_time - step_start_time}")
             
-            # 步驟4: 向量化摘要文本
+            # Step 4: Vectorize text
+            step_start_time = datetime.now()
+            logger.info(f"[{step_start_time.isoformat()}] Vectorizing text for document {doc_id_str}.")
             text_parts = []
             if semantic_summary.summary_text and semantic_summary.summary_text.strip():
                 text_parts.append(semantic_summary.summary_text.strip())
@@ -250,70 +229,106 @@ class SemanticSummaryService:
                     if term and str(term).strip()
                 ]
                 if valid_key_terms:
-                    text_parts.append("相關標籤：" + "，".join(valid_key_terms))
+                    text_parts.append("相關標籤：" + "，".join(valid_key_terms)) # Consider localizing or standardizing log messages
             
             if semantic_summary.full_ai_analysis and isinstance(semantic_summary.full_ai_analysis, dict):
                 key_info = semantic_summary.full_ai_analysis.get("key_information")
                 if isinstance(key_info, dict):
                     searchable_keywords = key_info.get("searchable_keywords")
                     if isinstance(searchable_keywords, list):
-                        valid_keywords = [
-                            str(kw).strip() for kw in searchable_keywords 
-                            if kw and str(kw).strip()
-                        ]
+                        valid_keywords = [str(kw).strip() for kw in searchable_keywords if kw and str(kw).strip()]
                         if valid_keywords:
                             text_parts.append("搜索關鍵詞：" + "，".join(valid_keywords))
                     
                     knowledge_domains = key_info.get("knowledge_domains")
                     if isinstance(knowledge_domains, list):
-                        valid_domains = [
-                            str(kd).strip() for kd in knowledge_domains
-                            if kd and str(kd).strip()
-                        ]
+                        valid_domains = [str(kd).strip() for kd in knowledge_domains if kd and str(kd).strip()]
                         if valid_domains:
                             text_parts.append("知識領域：" + "，".join(valid_domains))
 
-            text_to_embed = "\n".join(text_parts)
+            text_to_embed = "\n".join(filter(None, text_parts)) # filter(None,..) to remove empty strings from join
             
             if not text_to_embed.strip():
+                fallback_reason = "Combined text for embedding was empty"
                 logger.warning(f"文檔 {doc_id_str} 的組合向量化文本為空，將僅使用摘要或文件名作為後備。")
                 if semantic_summary.summary_text and semantic_summary.summary_text.strip():
                     text_to_embed = semantic_summary.summary_text.strip()
+                    fallback_reason += ", using summary."
                 elif document.filename:
                      text_to_embed = f"文件名：{document.filename}"
+                     fallback_reason += ", using filename."
                 else:
                     text_to_embed = "文檔內容無法確定" 
+                    fallback_reason += ", using placeholder as no content determinable."
                     logger.error(f"文檔 {doc_id_str} 無法確定用於向量化的文本。")
+                await log_event(db=db, level=LogLevel.WARNING, message="Text to embed was empty, using fallback.",
+                                source="service.semantic_summary.process_doc_for_vector_db.vectorize_fallback", 
+                                details={**log_details_base, "fallback_reason": fallback_reason, "fallback_text_length": len(text_to_embed)})
 
-            embedding_vector = embedding_service.encode_text(text_to_embed)
+            embedding_vector =  embedding_service.encode_text(text_to_embed) # encode_text is async now
+            step_end_time = datetime.now()
+            logger.info(f"[{step_end_time.isoformat()}] Text vectorized for document {doc_id_str}. Duration: {step_end_time - step_start_time}. Vector dim: {len(embedding_vector) if embedding_vector else 'N/A'}")
             
-            # 步驟5: 創建向量記錄
+            # Step 5: Create VectorRecord
             vector_record = VectorRecord(
-                document_id=doc_id_str, # Use string ID for VectorRecord
-                owner_id=str(document.owner_id), # 新增 owner_id，從 Document 對象獲取
+                document_id=doc_id_str,
+                owner_id=str(document.owner_id),
                 embedding_vector=embedding_vector,
-                chunk_text=text_to_embed, 
+                chunk_text=text_to_embed[:1000], # Store a snippet of the embedded text
                 embedding_model=embedding_service.model_name,
-                # status field in VectorRecord might be for internal Chroma state, not our Document.vector_status
-                metadata={"file_type": document.file_type or ""} # 其他元數據可以按需添加
+                metadata={"file_type": document.file_type or ""}
             )
             
-            # 步驟6: 存儲到向量資料庫
-            success = vector_db_service.insert_vectors([vector_record])
+            # Step 6: Store vector to database
+            step_start_time = datetime.now()
+            logger.info(f"[{step_start_time.isoformat()}] Storing vector to database for document {doc_id_str}.")
+            # vector_db_service.insert_vectors logs internally
+            success = vector_db_service.insert_vectors([vector_record]) # This is sync in your provided code
+            step_end_time = datetime.now()
             
             if success:
-                logger.info(f"文檔 {doc_id_str} 成功存儲到向量資料庫")
-                await self._save_semantic_summary_to_db(db, semantic_summary) # 保存摘要
-                await update_document_vector_status(db, doc_id_uuid, VectorStatus.VECTORIZED)
+                logger.info(f"[{step_end_time.isoformat()}] Vector stored successfully for document {doc_id_str}. Duration: {step_end_time - step_start_time}")
+                await self._save_semantic_summary_to_db(db, semantic_summary) # Assuming this is a quick metadata save or similar
+                
+                # Final status update to VECTORIZED
+                await update_document_vector_status(db, doc_id_uuid, VectorStatus.VECTORIZED) # crud_documents.update_document_vector_status also logs
+                
+                total_duration = datetime.now() - process_start_time
+                logger.info(f"[{datetime.now().isoformat()}] Successfully processed document {doc_id_str} for vector DB. Total duration: {total_duration}")
+                await log_event(db=db, level=LogLevel.INFO, message="Document successfully processed and vectorized.",
+                                source="service.semantic_summary.process_doc_for_vector_db.success", 
+                                details={**log_details_base, "total_duration_seconds": total_duration.total_seconds()})
                 return True
             else:
-                logger.error(f"文檔 {doc_id_str} 存儲到向量資料庫失敗")
-                await update_document_vector_status(db, doc_id_uuid, VectorStatus.FAILED, "向量存儲失敗")
+                logger.error(f"[{step_end_time.isoformat()}] Failed to store vector for document {doc_id_str}. Duration: {step_end_time - step_start_time}")
+                await log_event(db=db, level=LogLevel.ERROR, message="Failed to store document vector in vector DB.",
+                                source="service.semantic_summary.process_doc_for_vector_db.vector_storage_failed", details=log_details_base)
+                await update_document_vector_status(db, doc_id_uuid, VectorStatus.FAILED, "向量存儲失敗") # crud_documents.update_document_vector_status also logs
+                total_duration = datetime.now() - process_start_time
+                logger.info(f"[{datetime.now().isoformat()}] Failed to process document {doc_id_str} for vector DB (vector storage). Total duration: {total_duration}")
                 return False
                 
         except Exception as e:
-            logger.error(f"處理文檔 {doc_id_str} 到向量資料庫時發生意外錯誤: {e}", exc_info=True)
-            await update_document_vector_status(db, doc_id_uuid, VectorStatus.FAILED, f"處理時發生意外錯誤: {str(e)}")
+            current_time = datetime.now()
+            logger.error(f"[{current_time.isoformat()}] Error processing document {doc_id_str} for vector DB: {str(e)}", exc_info=True)
+            # Ensure log_event has the error string
+            error_str = str(e)
+            await log_event(db=db, level=LogLevel.ERROR, 
+                            message=f"Unexpected error processing document for vector DB: {error_str}",
+                            source="service.semantic_summary.process_doc_for_vector_db.exception", 
+                            details={**log_details_base, "error": error_str, "error_type": type(e).__name__})
+            try:
+                await update_document_vector_status(db, doc_id_uuid, VectorStatus.FAILED, f"處理時發生意外錯誤: {error_str}")
+            except Exception as e_update_status:
+                 logger.error(f"[{datetime.now().isoformat()}] CRITICAL: Failed to update status to FAILED for doc {doc_id_str} after main processing exception: {str(e_update_status)}", exc_info=True)
+                 await log_event(db=db, level=LogLevel.CRITICAL, 
+                                 message=f"CRITICAL: Failed to update status to FAILED for doc {doc_id_str} after main processing exception: {str(e_update_status)}",
+                                 source="service.semantic_summary.process_doc_for_vector_db.exception_status_update_failed",
+                                 details={**log_details_base, "main_error": error_str, "status_update_error": str(e_update_status)})
+
+
+            total_duration = datetime.now() - process_start_time
+            logger.info(f"[{datetime.now().isoformat()}] Failed to process document {doc_id_str} for vector DB due to exception. Total duration: {total_duration}")
             return False
     
     async def _save_semantic_summary_to_db(
@@ -342,44 +357,60 @@ class SemanticSummaryService:
         注意：當前的實現是逐個調用 process_document_for_vector_db。
         一個更優化的批量處理可以考慮批量生成摘要、批量向量化、批量插入。
         """
-        logger.info(f"開始批量處理 {len(document_ids)} 個文檔到向量資料庫")
-        from app.crud.crud_documents import get_document_by_id # 延遲導入
+        await log_event(db=db, level=LogLevel.INFO,
+                        message=f"Starting batch processing of {len(document_ids)} documents for vector DB.",
+                        source="service.semantic_summary.batch_process",
+                        details={"num_documents_to_process": len(document_ids), "batch_size_param": batch_size})
 
-        results = {
-            "processed_successfully": [],
-            "failed_to_process": [],
-            "not_found": []
-        }
+        from app.crud.crud_documents import get_document_by_id # Keep lazy import if it's for a specific reason
+
+        results = {"processed_successfully": [], "failed_to_process": [], "not_found": []}
+        processed_count = 0
+        success_count = 0
 
         for doc_id_str in document_ids:
+            processed_count +=1
+            log_details_item = {"document_id": doc_id_str, "batch_total_count": len(document_ids)}
             try:
                 doc_uuid = uuid.UUID(doc_id_str)
                 document = await get_document_by_id(db, doc_uuid)
                 if not document:
-                    logger.warning(f"批量處理：未找到文檔 {doc_id_str}")
+                    await log_event(db=db, level=LogLevel.WARNING, message=f"Document not found during batch processing: {doc_id_str}",
+                                    source="service.semantic_summary.batch_process", details=log_details_item)
                     results["not_found"].append(doc_id_str)
                     continue
                 
-                # 調用單個文檔處理函數，它內部會處理狀態更新和覆蓋邏輯
+                # process_document_for_vector_db will log its own detailed steps and errors
                 success = await self.process_document_for_vector_db(db, document)
                 if success:
                     results["processed_successfully"].append(doc_id_str)
+                    success_count +=1
                 else:
-                    results["failed_to_process"].append(doc_id_str)
+                    results["failed_to_process"].append(doc_id_str) # Already logged by the called function
             except ValueError:
-                 logger.error(f"批量處理：無效的文檔ID格式 {doc_id_str}")
-                 results["failed_to_process"].append({"id": doc_id_str, "error": "無效的ID格式"})
+                await log_event(db=db, level=LogLevel.ERROR, message=f"Invalid document ID format in batch: {doc_id_str}",
+                                source="service.semantic_summary.batch_process", details=log_details_item)
+                results["failed_to_process"].append({"id": doc_id_str, "error": "Invalid ID format"})
             except Exception as e:
-                logger.error(f"批量處理文檔 {doc_id_str} 時發生錯誤: {e}", exc_info=True)
+                await log_event(db=db, level=LogLevel.ERROR, message=f"Error processing document {doc_id_str} in batch: {str(e)}",
+                                source="service.semantic_summary.batch_process", exc_info=True, details={**log_details_item, "error": str(e)})
                 results["failed_to_process"].append({"id": doc_id_str, "error": str(e)})
-                # 確保即使發生未知錯誤，文檔狀態也能被更新為 FAILED (如果 process_document_for_vector_db 內部未處理)
-                try:
+                try: # Attempt to mark doc as failed if general error occurs here
                     doc_uuid_for_fail_update = uuid.UUID(doc_id_str)
-                    await update_document_vector_status(db, doc_uuid_for_fail_update, VectorStatus.FAILED, f"批量處理時發生錯誤: {str(e)}")
+                    await update_document_vector_status(db, doc_uuid_for_fail_update, VectorStatus.FAILED, f"Batch processing error: {str(e)}")
                 except Exception as update_err:
-                    logger.error(f"嘗試更新失敗狀態時再次發生錯誤，文檔ID {doc_id_str}: {update_err}")
+                     await log_event(db=db, level=LogLevel.ERROR, message=f"Failed to update status to FAILED for doc {doc_id_str} after batch error: {update_err}",
+                                    source="service.semantic_summary.batch_process", details=log_details_item)
 
-        logger.info(f"批量處理完成。成功: {len(results['processed_successfully'])}, 失敗: {len(results['failed_to_process'])}, 未找到: {len(results['not_found'])}")
+        summary_message = f"Batch processing completed. Total requested: {len(document_ids)}, Processed: {processed_count}, Succeeded: {success_count}, Failed: {len(results['failed_to_process'])}, Not Found: {len(results['not_found'])}."
+        await log_event(db=db, level=LogLevel.INFO, message=summary_message,
+                        source="service.semantic_summary.batch_process",
+                        details={
+                            "total_requested": len(document_ids), "processed_count": processed_count,
+                            "successful_vectorization": success_count,
+                            "failed_vectorization": len(results['failed_to_process']),
+                            "docs_not_found": len(results['not_found'])
+                        })
         return results
 
 # 全局語義摘要服務實例

@@ -24,11 +24,12 @@ export const getVectorDatabaseStats = async (): Promise<VectorDatabaseStats> => 
 };
 
 // 語義搜索
-export const performSemanticSearch = async (query: string, topK = 10, threshold = 0.7): Promise<SemanticSearchResult[]> => {
+export const performSemanticSearch = async (query: string, topK = 10, threshold = 0.7, collectionName?: string): Promise<SemanticSearchResult[]> => {
   const response = await apiClient.post<SemanticSearchResult[]>('/vector-db/semantic-search', {
     query,
     top_k: topK,
-    similarity_threshold: threshold
+    similarity_threshold: threshold,
+    collection_name: collectionName
   });
   return response.data;
 };

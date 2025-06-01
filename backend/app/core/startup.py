@@ -61,23 +61,34 @@ class ApplicationPreloader:
         try:
             logger.info("開始初始化向量數據庫...")
             
-            # 檢查集合是否存在
             stats = await vector_db_service.get_collection_stats()
-            if 'error' in stats and '集合未初始化' in stats.get('error', ''):
-                # 確保模型已加載以獲取向量維度
+            error_message = stats.get('error')
+
+            # 更寬鬆的判斷條件，檢查是否包含關鍵字
+            needs_initialization = False
+            if error_message:
+                if "未初始化" in error_message or "not initialized" in error_message.lower() or "不可用" in error_message:
+                    needs_initialization = True
+            
+            if needs_initialization:
+                logger.info(f"檢測到向量數據庫集合 '{vector_db_service.collection_name}' 需要初始化 (原始錯誤: '{error_message}')，準備創建...")
                 if not embedding_service._model_loaded:
+                    logger.info("Embedding 模型未加載，嘗試在向量庫初始化前加載...")
                     await self._preload_embedding_model()
                 
                 vector_dimension = embedding_service.vector_dimension
                 if vector_dimension:
+                    logger.info(f"獲取到向量維度: {vector_dimension}，開始創建集合 '{vector_db_service.collection_name}'...")
                     vector_db_service.create_collection(vector_dimension)
-                    logger.info("向量數據庫初始化成功")
+                    logger.info(f"向量數據庫集合 '{vector_db_service.collection_name}' 初始化成功。")
                 else:
-                    logger.warning("無法獲取向量維度，跳過向量數據庫初始化")
-            else:
-                logger.info("向量數據庫已經就緒")
+                    logger.warning("無法獲取向量維度，跳過向量數據庫集合創建。")
+            elif error_message: # 如果有其他錯誤，但不是明確的未初始化錯誤
+                logger.error(f"獲取向量數據庫統計信息時返回了未預期的錯誤。完整統計信息: {stats}")
+            else: # 沒有錯誤，表示已就緒
+                logger.info(f"向量數據庫集合 '{vector_db_service.collection_name}' 已經就緒。統計信息: {stats}")
         except Exception as e:
-            logger.error(f"向量數據庫初始化失敗: {e}")
+            logger.error(f"向量數據庫初始化過程中發生未預期錯誤: {e}", exc_info=True)
 
 # 創建全局預熱器實例
 app_preloader = ApplicationPreloader()

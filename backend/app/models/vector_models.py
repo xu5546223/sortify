@@ -41,6 +41,7 @@ class SemanticSearchRequest(BaseModel):
     top_k: int = Field(default=10, ge=1, le=100, description="返回結果數量")
     similarity_threshold: float = Field(default=0.5, ge=0.0, le=1.0, description="相似度閾值")
     filter_conditions: Optional[Dict[str, Any]] = Field(None, description="過濾條件")
+    collection_name: Optional[str] = Field(None, description="要搜索的集合名稱")
 
 class SemanticSearchResult(BaseModel):
     """語義搜索結果"""
@@ -56,6 +57,8 @@ class AIQARequest(BaseModel):
     use_semantic_search: bool = Field(default=True, description="是否使用語義搜索")
     use_structured_filter: bool = Field(default=True, description="是否使用結構化過濾")
     session_id: Optional[str] = Field(None, description="會話ID，用於追蹤多輪對話")
+    document_ids: Optional[List[str]] = Field(None, description="用於上下文的特定文檔ID列表 (可選)")
+    model_preference: Optional[str] = Field(None, description="偏好的AI模型 (例如 'gemini-pro', 'gpt-4')")
 
 class QueryRewriteResult(BaseModel):
     """查詢重寫結果"""

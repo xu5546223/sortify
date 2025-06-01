@@ -5,11 +5,61 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from ..models.log_models import LogLevel, LogEntryCreate
 from ..crud import crud_logs
+from urllib.parse import urlparse # Added for MONGODB_URL masking
 # 考慮加入標準庫的 logging，用於備份日誌或記錄 logging_utils 本身的錯誤
 import logging
 
 # 標準庫 logger，用於 logging_utils.py 內部日誌
 module_logger = logging.getLogger(__name__)
+
+SENSITIVE_KEYS = [
+    "password", "token", "secret", "api_key", "credentials",
+    "MONGODB_URL", "SECRET_KEY", "GOOGLE_API_KEY",
+    "access_token", "refresh_token"
+]
+
+# Keys for which mask_string_part should be applied
+STRING_MASK_TARGET_KEYS = [
+    "GOOGLE_API_KEY", "access_token", "refresh_token", "api_key" # Add other keys if needed
+]
+
+def mask_string_part(value: str, unmasked_prefix_len: int = 4, unmasked_suffix_len: int = 4) -> str:
+    """Masks the middle part of a string."""
+    if not isinstance(value, str):
+        return value # Or raise an error, depending on desired handling
+    if len(value) <= unmasked_prefix_len + unmasked_suffix_len:
+        return "[MASKED]" # String too short to mask meaningfully, mask entirely
+    prefix = value[:unmasked_prefix_len]
+    suffix = value[-unmasked_suffix_len:]
+    return f"{prefix}[...]{suffix}"
+
+def mask_sensitive_data(data: Any) -> Any:
+    """Recursively masks sensitive data in dictionaries and lists."""
+    if isinstance(data, dict):
+        masked_dict = {}
+        for key, value in data.items():
+            if key in SENSITIVE_KEYS:
+                if key == "MONGODB_URL" and isinstance(value, str):
+                    try:
+                        parsed_url = urlparse(value)
+                        if parsed_url.password:
+                            masked_url = parsed_url._replace(netloc=f"{parsed_url.username}:[MASKED]@{parsed_url.hostname}")
+                            masked_dict[key] = masked_url.geturl()
+                        else:
+                            masked_dict[key] = "[MASKED]" # Or mask_string_part if preferred for the whole URL
+                    except Exception: # Fallback if URL parsing fails
+                        masked_dict[key] = "[MASKED]"
+                elif key in STRING_MASK_TARGET_KEYS and isinstance(value, str):
+                    masked_dict[key] = mask_string_part(value)
+                else:
+                    masked_dict[key] = "[MASKED]"
+            else:
+                masked_dict[key] = mask_sensitive_data(value)
+        return masked_dict
+    elif isinstance(data, list):
+        return [mask_sensitive_data(item) for item in data]
+    else:
+        return data
 
 class AppLogger:
     def __init__(self, name: str, level: int = logging.INFO):
@@ -61,19 +111,72 @@ async def log_event(
 ):
     """
     創建一個日誌條目並將其儲存到資料庫。
+    如果 db is None，則使用標準 Python logger (module_logger) 記錄到控制台/檔案。
     """
+    # 防呆：確保 details 一定是 dict
+    if details is not None and not isinstance(details, dict):
+        try:
+            import json
+            details = json.loads(details)
+        except Exception:
+            details = {"raw_details": str(details)}
+
+    # Handle db=None case first by logging to console/file
+    if db is None:
+        level_mapping = {
+            LogLevel.DEBUG: logging.DEBUG,
+            LogLevel.INFO: logging.INFO,
+            LogLevel.WARNING: logging.WARNING,
+            LogLevel.ERROR: logging.ERROR,
+            LogLevel.CRITICAL: logging.CRITICAL,
+        }
+        std_log_level = level_mapping.get(level, logging.INFO) # Default to INFO
+
+        # Mask details before logging to console if db is None
+        # This ensures sensitive data is masked even for non-DB logs if details are provided.
+        console_details_to_log = mask_sensitive_data(details) if details else None
+
+        log_message_for_console = f"{message}"
+        if source:
+            log_message_for_console = f"[{source}] {log_message_for_console}"
+        # Auto-fill caller info for console logs if not provided and auto_fill is true
+        actual_module_for_console = module_name
+        actual_func_for_console = func_name
+        if auto_fill_caller_info:
+            auto_module_c, auto_function_c = await get_caller_info(depth=2 + caller_depth_offset)
+            if actual_module_for_console is None: actual_module_for_console = auto_module_c
+            if actual_func_for_console is None: actual_func_for_console = auto_function_c
+
+        if actual_module_for_console and actual_func_for_console:
+             log_message_for_console = f"({actual_module_for_console}.{actual_func_for_console}) {log_message_for_console}"
+        elif actual_module_for_console:
+             log_message_for_console = f"({actual_module_for_console}) {log_message_for_console}"
+
+
+        if console_details_to_log: # Use masked details for console
+            log_message_for_console += f" | Details: {console_details_to_log}"
+        if request_id:
+            log_message_for_console += f" | Request ID: {request_id}"
+        if user_id:
+            log_message_for_console += f" | User ID: {user_id}"
+        if device_id: # Added device_id to console log
+            log_message_for_console += f" | Device ID: {device_id}"
+
+        module_logger.log(std_log_level, log_message_for_console)
+        return # Important: return here to bypass database logging attempt
+
+    # Existing database logging logic if db is not None
     actual_module_name = module_name
     actual_func_name = func_name
 
     if auto_fill_caller_info:
-        # 預設情況下，直接調用 log_event 的是第2層堆疊，
-        # get_caller_info 內部會再上一層，所以 depth=2 應指向 log_event 的調用者。
-        # caller_depth_offset 允許外部調用者根據其封裝層級進行調整。
         auto_module, auto_function = await get_caller_info(depth=2 + caller_depth_offset)
         if actual_module_name is None:
             actual_module_name = auto_module
         if actual_func_name is None:
             actual_func_name = auto_function
+
+    masked_details = mask_sensitive_data(details) if details else None
             
     log_data = LogEntryCreate(
         level=level,
@@ -84,13 +187,19 @@ async def log_event(
         user_id=user_id,
         device_id=device_id,
         request_id=request_id,
-        details=details
+        details=masked_details # Use masked details
     )
     try:
         await crud_logs.create_log_entry(db, log_data)
     except Exception as e:
         # 如果資料庫日誌記錄失敗，使用標準 logger 記錄到控制台/檔案作為備援
+        # Ensure log_data for fallback also uses masked_details by re-serializing or constructing a new dict
+        fallback_log_dict = log_data.model_dump()
+        # No need to explicitly set details again as log_data was created with masked_details
+        # fallback_log_dict["details"] = masked_details # This line is redundant
+
         module_logger.critical(
-            f"Failed to save log entry to database: {e}. Original log: {log_data.model_dump_json()}",
+            f"Failed to save log entry to database: {e}. Original log: {fallback_log_dict}",
             exc_info=True
-        ) 
+        )
+

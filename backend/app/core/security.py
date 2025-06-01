@@ -8,7 +8,7 @@ from fastapi.security import OAuth2PasswordBearer
 from pydantic import ValidationError
 
 from .config import settings
-from ..dependencies import get_db
+from app.db.mongodb_utils import get_db
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from ..crud.crud_users import crud_users
 from ..models.user_models import UserInDB
@@ -89,10 +89,14 @@ async def get_current_user(
         await log_event(
             db=db,
             level=LogLevel.WARNING,
-            message=f"Token validation failed due to JWTError.",
+            message="Token validation failed due to JWTError.", # Generic message
             source="get_current_user",
             request_id=request_id_for_log,
-            details={"error_type": type(e).__name__, "error_message": str(e)}
+            details={
+                "error_type": type(e).__name__,
+                "error_message": "JWT processing error", # More generic message in details
+                "guidance": "Verify token structure, signature, and claims. The token may be malformed, expired, or have an invalid signature."
+            }
         )
         raise credentials_exception
     except ValidationError as e:

@@ -11,8 +11,11 @@ from docx import Document as DocxDocument
 
 from ..models.document_models import DocumentStatus
 
+from ..core.logging_utils import log_event, LogLevel # Added
+from ..models.document_models import Document # For type hinting if needed by log_event context, though not directly used now
+
 # Setup logger
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) # Existing logger can remain for very fine-grained internal logs
 
 # Supported file types for text extraction
 SUPPORTED_TEXT_EXTRACTION_TYPES = {
@@ -35,77 +38,86 @@ class DocumentProcessingService:
         pass
 
     async def _extract_text_from_pdf(self, file_path: Path) -> str:
-        """Extracts text from a PDF file and converts to Markdown."""
+        """Extracts text from a PDF file."""
+        await log_event(db=None, level=LogLevel.DEBUG, message="Attempting PDF text extraction.",
+                        source="service.doc_processing.pdf_extractor", details={"file_path": str(file_path)})
         try:
-            logger.info(f"Attempting to extract text from PDF: {file_path}")
-            # PyMuPDF4LLM offers direct to_markdown, which is ideal
-            # For older PyMuPDF or more control, extract text then convert
-            # md_text = fitz.open(file_path).convert_to_markdown() # Simplified if pymupdf4llm is used
-            
             doc = fitz.open(file_path)
             text_content = ""
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
-                text_content += page.get_text("text") + "\n\n" # Add double newline between pages
+                text_content += page.get_text("text") + "\n\n"
             doc.close()
-            
-            # Convert the combined text to Markdown if not already Markdown
-            # For now, we assume get_text() gives plain text that's good enough,
-            # or we can use a more sophisticated HTML to Markdown if get_text("html") was used.
-            # markdown_content = md(text_content) 
-            # Let's return plain text for now, Markdown conversion can be a refinement.
-            logger.info(f"Successfully extracted text from PDF: {file_path}")
+            await log_event(db=None, level=LogLevel.DEBUG, message="PDF text extraction successful.",
+                            source="service.doc_processing.pdf_extractor", details={"file_path": str(file_path), "extracted_length": len(text_content)})
             return text_content.strip()
         except Exception as e:
-            logger.error(f"Error extracting text from PDF {file_path}: {e}", exc_info=True)
+            await log_event(db=None, level=LogLevel.ERROR, message=f"Error extracting text from PDF: {str(e)}",
+                            source="service.doc_processing.pdf_extractor", exc_info=True,
+                            details={"file_path": str(file_path), "error_type": type(e).__name__})
             raise
 
     async def _extract_text_from_docx(self, file_path: Path) -> str:
         """Extracts text from a DOCX file."""
+        await log_event(db=None, level=LogLevel.DEBUG, message="Attempting DOCX text extraction.",
+                        source="service.doc_processing.docx_extractor", details={"file_path": str(file_path)})
         try:
-            logger.info(f"Attempting to extract text from DOCX: {file_path}")
             document = DocxDocument(file_path)
             full_text = [para.text for para in document.paragraphs]
             extracted_text = '\n'.join(full_text)
-            # Consider converting to Markdown if formatting is important
-            # markdown_content = md(extracted_text) # This might not work well if no HTML
-            logger.info(f"Successfully extracted text from DOCX: {file_path}")
+            await log_event(db=None, level=LogLevel.DEBUG, message="DOCX text extraction successful.",
+                            source="service.doc_processing.docx_extractor", details={"file_path": str(file_path), "extracted_length": len(extracted_text)})
             return extracted_text.strip()
         except Exception as e:
-            logger.error(f"Error extracting text from DOCX {file_path}: {e}", exc_info=True)
+            await log_event(db=None, level=LogLevel.ERROR, message=f"Error extracting text from DOCX: {str(e)}",
+                            source="service.doc_processing.docx_extractor", exc_info=True,
+                            details={"file_path": str(file_path), "error_type": type(e).__name__})
             raise
 
     async def _extract_text_from_txt(self, file_path: Path) -> str:
         """Extracts text from a TXT file."""
+        await log_event(db=None, level=LogLevel.DEBUG, message="Attempting TXT text extraction.",
+                        source="service.doc_processing.txt_extractor", details={"file_path": str(file_path)})
         try:
-            logger.info(f"Attempting to extract text from TXT: {file_path}")
             with open(file_path, 'r', encoding='utf-8') as f:
                 text_content = f.read()
-            logger.info(f"Successfully extracted text from TXT: {file_path}")
+            await log_event(db=None, level=LogLevel.DEBUG, message="TXT text extraction successful.",
+                            source="service.doc_processing.txt_extractor", details={"file_path": str(file_path), "extracted_length": len(text_content)})
             return text_content.strip()
         except Exception as e:
-            logger.error(f"Error extracting text from TXT {file_path}: {e}", exc_info=True)
+            await log_event(db=None, level=LogLevel.ERROR, message=f"Error extracting text from TXT: {str(e)}",
+                            source="service.doc_processing.txt_extractor", exc_info=True,
+                            details={"file_path": str(file_path), "error_type": type(e).__name__})
             raise
 
     async def get_image_bytes(self, file_path_str: str) -> Optional[bytes]:
         """Reads and returns the bytes of an image file."""
         file_path = Path(file_path_str)
+        log_details = {"file_path": file_path_str}
+        await log_event(db=None, level=LogLevel.DEBUG, message="Attempting to read image bytes.",
+                        source="service.doc_processing.get_image_bytes", details=log_details)
+
         if not file_path.exists():
-            logger.error(f"Image file not found: {file_path_str}")
+            await log_event(db=None, level=LogLevel.ERROR, message="Image file not found.",
+                            source="service.doc_processing.get_image_bytes", details=log_details)
             return None
         
         file_ext = file_path.suffix.lower()
         if file_ext not in SUPPORTED_IMAGE_TYPES_FOR_AI:
-            logger.warning(f"File {file_path_str} is not a supported image type for AI analysis.")
+            await log_event(db=None, level=LogLevel.WARNING, message="Unsupported image type for AI analysis.",
+                            source="service.doc_processing.get_image_bytes", details=log_details)
             return None
         
         try:
             with open(file_path, 'rb') as f:
                 image_bytes = f.read()
-            logger.info(f"Successfully read image bytes from: {file_path_str}")
+            await log_event(db=None, level=LogLevel.DEBUG, message="Successfully read image bytes.",
+                            source="service.doc_processing.get_image_bytes", details=log_details)
             return image_bytes
         except Exception as e:
-            logger.error(f"Error reading image file {file_path_str}: {e}", exc_info=True)
+            await log_event(db=None, level=LogLevel.ERROR, message=f"Error reading image file: {str(e)}",
+                            source="service.doc_processing.get_image_bytes", exc_info=True,
+                            details={"file_path": file_path_str, "error_type": type(e).__name__})
             return None
 
     async def extract_text_from_document(
@@ -124,13 +136,22 @@ class DocumentProcessingService:
             - new_status (DocumentStatus): The new status for the document.
             - error_message (Optional[str]): An error message if extraction failed.
         """
+        # document_id and user_id are not available here, pass None or get them if service context changes
+        # For now, db=None for log_event as this service layer might not have direct db access.
+        # If this service is always called with a document context, consider passing document_id.
+        log_details_initial = {"file_path": file_path_str, "declared_file_type": file_type}
+        await log_event(db=None, level=LogLevel.INFO, message="Starting text extraction.",
+                        source="service.doc_processing.extract_text", details=log_details_initial)
+
         file_path = Path(file_path_str)
         extracted_text: Optional[str] = None
         error_message: Optional[str] = None
         
         if not file_path.exists():
-            logger.error(f"File not found for extraction: {file_path_str}")
-            return None, DocumentStatus.PROCESSING_ERROR, "File not found for extraction."
+            error_message = "File not found for extraction."
+            await log_event(db=None, level=LogLevel.ERROR, message=error_message,
+                            source="service.doc_processing.extract_text", details=log_details_initial)
+            return None, DocumentStatus.PROCESSING_ERROR, error_message
 
         file_ext = file_path.suffix.lower()
         
@@ -141,26 +162,33 @@ class DocumentProcessingService:
                 extracted_text = await self._extract_text_from_docx(file_path)
             elif file_type == SUPPORTED_TEXT_EXTRACTION_TYPES.get(".txt") or file_ext == ".txt":
                 extracted_text = await self._extract_text_from_txt(file_path)
-            # Check if it's a supported image type for AI (but not for text extraction here)
             elif file_ext in SUPPORTED_IMAGE_TYPES_FOR_AI or file_type in SUPPORTED_IMAGE_TYPES_FOR_AI.values():
-                logger.info(f"File {file_path_str} is an image. Text extraction is not applicable directly. Will be handled by AI service.")
-                # For images, text extraction is not done here. Status remains UPLOADED or similar until AI processing.
-                # The caller will decide to use get_image_bytes and then call AI.
-                return None, DocumentStatus.UPLOADED, "Image file, text extraction not applicable via this method."
+                message = "Image file, text extraction not applicable via this method."
+                await log_event(db=None, level=LogLevel.INFO, message=message,
+                                source="service.doc_processing.extract_text", details=log_details_initial)
+                return None, DocumentStatus.UPLOADED, message
             else:
-                logger.warning(f"Unsupported file type for text extraction: {file_type} (path: {file_path_str})")
-                return None, DocumentStatus.UPLOADED, f"Unsupported file type: {file_type or file_ext}"
+                error_message = f"Unsupported file type for text extraction: {file_type or file_ext}"
+                await log_event(db=None, level=LogLevel.WARNING, message=error_message,
+                                source="service.doc_processing.extract_text", details=log_details_initial)
+                return None, DocumentStatus.UPLOADED, error_message
 
             if extracted_text is not None:
-                logger.info(f"Text extraction successful for {file_path_str}. Length: {len(extracted_text)}")
+                await log_event(db=None, level=LogLevel.INFO, message="Text extraction successful.",
+                                source="service.doc_processing.extract_text",
+                                details={"file_path": file_path_str, "extracted_length": len(extracted_text)})
                 return extracted_text, DocumentStatus.TEXT_EXTRACTED, None
-            else: # Should not happen if no exception, but as a safeguard
-                logger.error(f"Text extraction resulted in None for {file_path_str} without explicit error.")
-                return None, DocumentStatus.PROCESSING_ERROR, "Text extraction failed with no specific error message."
+            else:
+                error_message = "Text extraction resulted in None without explicit error."
+                await log_event(db=None, level=LogLevel.ERROR, message=error_message,
+                                source="service.doc_processing.extract_text", details=log_details_initial)
+                return None, DocumentStatus.PROCESSING_ERROR, error_message
 
         except Exception as e:
-            logger.error(f"Failed to extract text from {file_path_str}: {e}", exc_info=True)
             error_message = f"Text extraction failed: {str(e)}"
+            await log_event(db=None, level=LogLevel.ERROR, message=error_message,
+                            source="service.doc_processing.extract_text", exc_info=True, # exc_info for traceback in internal logs
+                            details={"file_path": file_path_str, "error_type": type(e).__name__})
             return None, DocumentStatus.PROCESSING_ERROR, error_message
 
 # Example usage (for testing or direct calls if needed)
