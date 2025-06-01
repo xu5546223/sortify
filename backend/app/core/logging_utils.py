@@ -111,14 +111,57 @@ async def log_event(
 ):
     """
     創建一個日誌條目並將其儲存到資料庫。
+    如果 db is None，則使用標準 Python logger (module_logger) 記錄到控制台/檔案。
     """
+    # Handle db=None case first by logging to console/file
+    if db is None:
+        level_mapping = {
+            LogLevel.DEBUG: logging.DEBUG,
+            LogLevel.INFO: logging.INFO,
+            LogLevel.WARNING: logging.WARNING,
+            LogLevel.ERROR: logging.ERROR,
+            LogLevel.CRITICAL: logging.CRITICAL,
+        }
+        std_log_level = level_mapping.get(level, logging.INFO) # Default to INFO
+
+        # Mask details before logging to console if db is None
+        # This ensures sensitive data is masked even for non-DB logs if details are provided.
+        console_details_to_log = mask_sensitive_data(details) if details else None
+
+        log_message_for_console = f"{message}"
+        if source:
+            log_message_for_console = f"[{source}] {log_message_for_console}"
+        # Auto-fill caller info for console logs if not provided and auto_fill is true
+        actual_module_for_console = module_name
+        actual_func_for_console = func_name
+        if auto_fill_caller_info:
+            auto_module_c, auto_function_c = await get_caller_info(depth=2 + caller_depth_offset)
+            if actual_module_for_console is None: actual_module_for_console = auto_module_c
+            if actual_func_for_console is None: actual_func_for_console = auto_function_c
+
+        if actual_module_for_console and actual_func_for_console:
+             log_message_for_console = f"({actual_module_for_console}.{actual_func_for_console}) {log_message_for_console}"
+        elif actual_module_for_console:
+             log_message_for_console = f"({actual_module_for_console}) {log_message_for_console}"
+
+
+        if console_details_to_log: # Use masked details for console
+            log_message_for_console += f" | Details: {console_details_to_log}"
+        if request_id:
+            log_message_for_console += f" | Request ID: {request_id}"
+        if user_id:
+            log_message_for_console += f" | User ID: {user_id}"
+        if device_id: # Added device_id to console log
+            log_message_for_console += f" | Device ID: {device_id}"
+
+        module_logger.log(std_log_level, log_message_for_console)
+        return # Important: return here to bypass database logging attempt
+
+    # Existing database logging logic if db is not None
     actual_module_name = module_name
     actual_func_name = func_name
 
     if auto_fill_caller_info:
-        # 預設情況下，直接調用 log_event 的是第2層堆疊，
-        # get_caller_info 內部會再上一層，所以 depth=2 應指向 log_event 的調用者。
-        # caller_depth_offset 允許外部調用者根據其封裝層級進行調整。
         auto_module, auto_function = await get_caller_info(depth=2 + caller_depth_offset)
         if actual_module_name is None:
             actual_module_name = auto_module
