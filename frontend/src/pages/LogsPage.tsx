@@ -9,7 +9,7 @@ import {
   TableRow,
   TableCell
 } from '../components';
-import { HeaderConfig } from '../components/Table';
+import { HeaderConfig } from '../components/table/Table';
 import type { LogEntry, LogLevel } from '../types/apiTypes';
 import { getLogs } from '../services/logService';
 

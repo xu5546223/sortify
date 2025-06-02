@@ -1,6 +1,6 @@
 import React from 'react';
 import { Tag, Tooltip } from 'antd';
-import type { DocumentStatus } from '../types/apiTypes';
+import type { DocumentStatus } from '../../types/apiTypes'; // Updated import path
 import {
   InfoCircleOutlined,
   CloudUploadOutlined,

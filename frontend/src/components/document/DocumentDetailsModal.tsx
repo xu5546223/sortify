@@ -1,7 +1,8 @@
 import React from 'react';
-import { Card, Button } from './index';
+import { Card, Button } from '../ui'; // Updated import path
+import DocumentStatusTag from './DocumentStatusTag'; // Corrected import path
 import { Descriptions, Alert, Collapse, Tag, Tooltip } from 'antd';
-import type { Document, DocumentAnalysis, AITextAnalysisOutput, AITextAnalysisIntermediateStep } from '../types/apiTypes';
+import type { Document, DocumentAnalysis, AITextAnalysisOutput, AITextAnalysisIntermediateStep, DocumentStatus } from '../../types/apiTypes'; // Updated import path
 import {
   InfoCircleOutlined,
   CloudUploadOutlined,
@@ -16,126 +17,13 @@ import {
   SyncOutlined,
   FileProtectOutlined
 } from '@ant-design/icons';
+import { formatBytes, formatDate, mapMimeTypeToSimpleType } from '../../utils/documentFormatters'; // Updated import path
 
 interface DocumentDetailsModalProps {
   document: Document | null;
   isOpen: boolean;
   onClose: () => void;
 }
-
-// 輔助函數：格式化文件大小
-const formatBytes = (bytes?: number, decimals = 2): string => {
-  if (bytes === undefined || bytes === null || bytes === 0) return '0 Bytes';
-  const k = 1024;
-  const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
-};
-
-// 輔助函數：格式化日期
-const formatDate = (dateString?: string): string => {
-  if (!dateString) return 'N/A';
-  try {
-    let adjustedDateString = dateString;
-    if (dateString.includes('T') && !dateString.endsWith('Z') && dateString.length >= 19) {
-      adjustedDateString = dateString + 'Z';
-    }
-    const dateObj = new Date(adjustedDateString);
-    return dateObj.toLocaleString('zh-TW', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false
-    });
-  } catch (e) {
-    console.error("Error formatting date:", dateString, e);
-    return dateString;
-  }
-};
-
-// 輔助函數：文件類型映射
-const mapMimeTypeToSimpleType = (mimeType?: string | null): string => {
-  if (!mimeType) return '未知類型';
-
-  const lowerMimeType = mimeType.toLowerCase();
-
-  // 精確匹配
-  if (lowerMimeType === 'application/pdf') return 'PDF 文件';
-  if (lowerMimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') return 'Word 文件 (DOCX)';
-  if (lowerMimeType === 'application/msword') return 'Word 文件 (DOC)';
-  if (lowerMimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') return 'Excel 文件 (XLSX)';
-  if (lowerMimeType === 'application/vnd.ms-excel') return 'Excel 文件 (XLS)';
-  if (lowerMimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') return 'PowerPoint 文件 (PPTX)';
-  if (lowerMimeType === 'application/vnd.ms-powerpoint') return 'PowerPoint 文件 (PPT)';
-  if (lowerMimeType === 'application/zip') return 'ZIP 壓縮檔';
-  if (lowerMimeType === 'application/json') return 'JSON 文件';
-  if (lowerMimeType === 'application/xml') return 'XML 文件';
-
-  // 前綴匹配
-  if (lowerMimeType.startsWith('text/plain')) return '純文字文件';
-  if (lowerMimeType.startsWith('text/')) return '文字文件';
-  if (lowerMimeType.startsWith('image/jpeg')) return 'JPEG 圖片';
-  if (lowerMimeType.startsWith('image/png')) return 'PNG 圖片';
-  if (lowerMimeType.startsWith('image/gif')) return 'GIF 圖片';
-  if (lowerMimeType.startsWith('image/svg+xml')) return 'SVG 圖片';
-  if (lowerMimeType.startsWith('image/')) return '圖片';
-  if (lowerMimeType.startsWith('audio/')) return '音訊檔案';
-  if (lowerMimeType.startsWith('video/')) return '影片檔案';
-
-  return mimeType;
-};
-
-// 獲取狀態顯示文本的輔助函數
-const getStatusText = (status: string): string => {
-  switch (status) {
-    case 'uploaded': return '已上傳';
-    case 'pending_extraction': return '等待提取';
-    case 'text_extracted': return '文本已提取';
-    case 'extraction_failed': return '提取失敗';
-    case 'pending_analysis': return '等待分析';
-    case 'analyzing': return '分析中';
-    case 'analysis_completed': return '分析完成';
-    case 'analysis_failed': return '分析失敗';
-    case 'processing_error': return '處理錯誤';
-    case 'completed': return '已完成';
-    default: return status;
-  }
-};
-
-// 狀態標籤組件
-const DocumentStatusTag: React.FC<{ status: string; errorDetails?: string | null }> = ({ status, errorDetails }) => {
-  let color = 'default';
-  let icon = <InfoCircleOutlined />;
-
-  switch (status) {
-    case 'uploaded': color = 'blue'; icon = <CloudUploadOutlined />; break;
-    case 'pending_extraction': color = 'gold'; icon = <ClockCircleOutlined />; break;
-    case 'text_extracted': color = 'geekblue'; icon = <FileTextOutlined />; break;
-    case 'extraction_failed': color = 'volcano'; icon = <ExclamationCircleOutlined />; break;
-    case 'pending_analysis': color = 'orange'; icon = <ExperimentOutlined />; break;
-    case 'analyzing': color = 'purple'; icon = <SyncOutlined spin />; break;
-    case 'analysis_completed': color = 'green'; icon = <CheckCircleOutlined />; break;
-    case 'analysis_failed': color = 'red'; icon = <CloseCircleOutlined />; break;
-    case 'processing_error': color = 'magenta'; icon = <WarningOutlined />; break;
-    case 'completed': color = 'cyan'; icon = <FileProtectOutlined />; break;
-    default: break;
-  }
-
-  return (
-    <Tag icon={icon} color={color}>
-      {getStatusText(status)}
-      {errorDetails && (status === 'processing_error' || status === 'extraction_failed' || status === 'analysis_failed') && (
-        <Tooltip title={errorDetails}>
-          <QuestionCircleOutlined style={{ marginLeft: 4, color: 'red' }} />
-        </Tooltip>
-      )}
-    </Tag>
-  );
-};
 
 // 基本資訊組件
 const DocumentBasicInfo: React.FC<{ document: Document }> = ({ document }) => {
@@ -148,7 +36,7 @@ const DocumentBasicInfo: React.FC<{ document: Document }> = ({ document }) => {
       <Descriptions.Item label="上傳時間">{formatDate(document.created_at)}</Descriptions.Item>
       <Descriptions.Item label="最後修改">{formatDate(document.updated_at)}</Descriptions.Item>
       <Descriptions.Item label="狀態">
-        <DocumentStatusTag status={document.status} errorDetails={document.error_details} />
+        <DocumentStatusTag status={document.status as DocumentStatus} errorDetails={document.error_details} />
       </Descriptions.Item>
       {document.owner_id && (
         <Descriptions.Item label="擁有者 ID">{document.owner_id}</Descriptions.Item>
