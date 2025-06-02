@@ -11,12 +11,10 @@ from ..models.document_models import (
     DocumentStatus, 
     VectorStatus, # <-- Import VectorStatus
     DocumentInDBBase, # 用於構建更新返回
-    # DocumentAnalysis # 移除此處的導入，因為函數參數類型改變
 )
 from ..core.config import settings
-from ..core.logging_utils import AppLogger, log_event # Added log_event
-from ..models.log_models import LogLevel # Added LogLevel
-# from ..models.ai_models import AIImageAnalysisOutput # 移除此導入
+from ..core.logging_utils import AppLogger, log_event 
+from ..models.log_models import LogLevel 
 
 DOCUMENT_COLLECTION = "documents"
 
@@ -49,13 +47,11 @@ async def create_document(
     file_path: Optional[str] = None # 實際儲存路徑
 ) -> Document:
     """創建新的文件記錄。"""
-    document_id_uuid = uuid.uuid4() # 生成 UUID 對象
-    # document_id_str = str(document_id_uuid) # 不再需要此行，id 由模型層處理
+    document_id_uuid = uuid.uuid4() 
 
     db_document_data = document_data.model_dump()
-    db_document_data["_id"] = document_id_uuid # 存儲實際的 UUID 對象到 _id
-    # db_document_data["id"] = document_id_str   # <--- 移除此行，讓模型和 root_validator 處理 id
-    db_document_data["owner_id"] = owner_id # owner_id 來自參數，應該已是 UUID
+    db_document_data["_id"] = document_id_uuid 
+    db_document_data["owner_id"] = owner_id 
     db_document_data["created_at"] = datetime.utcnow()
     db_document_data["updated_at"] = datetime.utcnow()
     db_document_data["status"] = DocumentStatus.UPLOADED
@@ -177,7 +173,6 @@ async def get_documents(
         except Exception as e: # Catches Pydantic ValidationError and other potential errors
             logger.error(f"Error validating document data for ID {doc_id_for_log} in get_documents: {e}", exc_info=True)
             # Skip this document and continue with others
-    # return [Document(**doc) for doc in documents_from_db] # 舊的返回方式
     return processed_documents
 
 async def update_document(
@@ -428,89 +423,6 @@ async def count_documents(
     )
     count = await db[DOCUMENT_COLLECTION].count_documents(query)
     return count 
-
-# update_document_after_extraction 函數可以被 update_document_on_extraction_success 
-# 和 update_document_status(..., DocumentStatus.EXTRACTION_FAILED, error_message) 替代
-# 因此，可以考慮移除它，除非它有其他特定用途。
-# 為了更清晰，我們移除它，並確保 documents.py 使用新的/調整後的函數。
-# async def update_document_after_extraction(...): 
-#    ... (舊代碼)
-
-# 移除了 set_extracted_text，因為 update_document_on_extraction_success 提供了更完整的專用功能。
-
-# 更多專用更新函數可以按需添加，例如：
-# async def update_document_status(
-#     db: AsyncIOMotorDatabase, document_id: uuid.UUID, new_status: DocumentStatus, error_details: Optional[str] = None
-# ) -> Optional[Document]:
-#     update_payload: Dict[str, Any] = {"status": new_status.value, "updated_at": datetime.utcnow()}
-#     if error_details and new_status == DocumentStatus.PROCESSING_ERROR:
-#         update_payload["error_details"] = error_details
-#     elif new_status != DocumentStatus.PROCESSING_ERROR and "error_details" in update_payload:
-#         # 如果狀態不是ERROR，清除之前的錯誤信息
-#         update_payload["error_details"] = None 
-#     return await update_document(db, document_id, update_payload)
-
-# async def set_extracted_text(
-#     db: AsyncIOMotorDatabase, document_id: uuid.UUID, text: str
-# ) -> Optional[Document]:
-#     update_payload = {
-#         "extracted_text": text,
-#         "text_extraction_completed_at": datetime.utcnow(),
-#         "status": DocumentStatus.TEXT_EXTRACTED.value,
-#         "updated_at": datetime.utcnow()
-#     }
-#     return await update_document(db, document_id, update_payload)
-
-# async def set_document_analysis(
-#     db: AsyncIOMotorDatabase, 
-#     document_id: uuid.UUID, 
-#     analysis_result: Dict[str, Any], # AI 服務返回的 model_dump() 結果
-#     tokens_consumed: Optional[int] = None,
-#     # model_used 參數將從 analysis_result 中獲取，不再單獨傳遞
-# ) -> Optional[Document]:
-#     current_doc = await get_document_by_id(db, document_id)
-#     if not current_doc:
-#         return None
-
-#     analysis_data_to_update: Dict[str, Any] = {}
-
-#     # 將 AI 服務的完整分析結果儲存起來
-#     analysis_data_to_update["ai_analysis_output"] = analysis_result
-
-#     # 從 analysis_result 中提取 model_used
-#     model_used_from_result = analysis_result.get("model_used")
-#     if model_used_from_result:
-#         analysis_data_to_update["analysis_model_used"] = model_used_from_result
-#     
-#     if tokens_consumed is not None:
-#         analysis_data_to_update["tokens_used"] = tokens_consumed
-
-#     # 檢查 analysis_result 中是否有錯誤信息 (假設 AI 服務返回的字典中會包含 error_message 鍵)
-#     # 或者，調用此函數的地方應該已經處理了錯誤，並相應地設置狀態
-#     # 這裡我們簡化：如果 analysis_result 中有 error_message，則認為是錯誤
-#     has_error = bool(analysis_result.get("error_message"))
-
-#     final_status = DocumentStatus.PROCESSING_ERROR if has_error else DocumentStatus.ANALYSIS_COMPLETED
-#     
-#     # 確保分析完成時間被設定
-#     # 假設 analysis_result 裡可能包含 analysis_started_at, analysis_completed_at
-#     # 為了簡化，我們在這裡統一設置，如果 AI 服務那邊已經設置了，會被覆蓋
-#     analysis_data_to_update["analysis_started_at"] = analysis_result.get("analysis_started_at", datetime.utcnow())
-#     if not has_error:
-#         analysis_data_to_update["analysis_completed_at"] = analysis_result.get("analysis_completed_at", datetime.utcnow())
-#     else:
-#         analysis_data_to_update["analysis_completed_at"] = None # 錯誤情況下不設置完成時間
-#         # 將錯誤信息也記錄在 DocumentAnalysis 層級，如果有的話
-#         if analysis_result.get("error_message"):
-#              analysis_data_to_update["error_message"] = analysis_result.get("error_message")
-
-#     update_payload = {
-#         "analysis": analysis_data_to_update,
-#         "status": final_status.value,
-#         "updated_at": datetime.utcnow()
-#     }
-#     
-#     return await update_document(db, document_id, update_payload) 
 
 async def update_document_vector_status(
     db: AsyncIOMotorDatabase, 
