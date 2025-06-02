@@ -14,7 +14,7 @@ from ..crud import crud_documents
 from ..core.config import Settings
 from ..services.document_processing_service import DocumentProcessingService, SUPPORTED_IMAGE_TYPES_FOR_AI
 from ..services.unified_ai_service_simplified import AIRequest, TaskType as AIServiceTaskType, unified_ai_service_simplified
-from ..services import unified_ai_config
+from ..services.unified_ai_config import unified_ai_config
 from ..core.logging_utils import log_event, LogLevel, AppLogger
 
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
@@ -230,7 +230,7 @@ class DocumentTasksService:
         processing_type = "unknown"
         
         try:
-            if document.file_type and document.file_type in SUPPORTED_IMAGE_TYPES_FOR_AI:
+            if document.file_type and document.file_type in SUPPORTED_IMAGE_TYPES_FOR_AI.values():
                 processing_type = "image_analysis"
                 analysis_data, token_usage, model_used, processing_status = await self._process_image_document(
                     document, db, user_id_for_log, request_id_for_log, ai_ensure_chinese_output, ai_model_preference, ai_max_output_tokens)
@@ -270,7 +270,7 @@ class DocumentTasksService:
             except KeyError: logger.warning(f"無效的 task_type_str: {task_type_str}, 將回退到根據文件類型決定。")
         
         if not effective_task_type:
-            if document.file_type and document.file_type in SUPPORTED_IMAGE_TYPES_FOR_AI:
+            if document.file_type and document.file_type in SUPPORTED_IMAGE_TYPES_FOR_AI.values():
                 effective_task_type = AIServiceTaskType.IMAGE_ANALYSIS
             elif document.file_type and document.file_type in SUPPORTED_TEXT_TYPES_FOR_AI_PROCESSING:
                 effective_task_type = AIServiceTaskType.TEXT_GENERATION
@@ -366,4 +366,4 @@ class DocumentTasksService:
                                                   DocumentStatus.PROCESSING_ERROR, processing_type_for_save)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"觸發文件分析時發生意外錯誤: {str(e)}")
 
-```
+

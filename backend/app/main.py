@@ -26,7 +26,7 @@ from .core.config import settings
 
 # 配置標準日誌記錄器
 logging.basicConfig(
-    level=logging.INFO, 
+    level=logging.DEBUG, 
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler() # 輸出到控制台，也可以配置輸出到檔案
@@ -272,7 +272,7 @@ app.include_router(unified_ai_api_v1.router, prefix="/api/v1/unified-ai", tags=[
 # 直接在 app 上註冊 CopilotKit 端點
 try:
     from .copilot_setup import python_backend_sdk
-    from .copilotkit.integrations.fastapi import add_fastapi_endpoint
+    from copilotkit.integrations.fastapi import add_fastapi_endpoint
     if python_backend_sdk:
         # 同時註冊有無斜線的路徑
         add_fastapi_endpoint(app, python_backend_sdk, "/api/v1/copilotkit_actions")

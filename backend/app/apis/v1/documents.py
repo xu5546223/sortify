@@ -424,7 +424,7 @@ async def update_document_details(
             
             background_tasks.add_task(
                 document_tasks_service.process_document_content_analysis, # Changed to service method
-                doc_id=str(document_id), 
+                doc_id_str=str(document_id), # Corrected parameter name from doc_id to doc_id_str
                 db=db, 
                 user_id_for_log=str(current_user.id), 
                 request_id_for_log=request_id_for_log, 
