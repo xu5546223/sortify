@@ -1,37 +1,29 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Card, Button, Input } from '.'; // Added Input for page number
-import type { Document as DocumentType } from '../types/apiTypes'; // Renamed to avoid conflict with react-pdf Document
-import { apiClient } from '../services/apiClient';
-import { Document, Page, pdfjs } from 'react-pdf'; // react-pdf components
-import { formatBytes } from '../utils/documentUtils'; // 添加 formatBytes 導入
+import { Card, Button, Input } from '../ui'; // Updated import path
+import type { Document as DocumentType } from '../../types/apiTypes'; // Updated import path
+import { apiClient } from '../../services/apiClient'; // Updated import path
+import { Document, Page, pdfjs } from 'react-pdf';
+import { formatBytes } from '../../utils/documentFormatters'; // Updated import path
 
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
-// Configure PDF.js worker
-// Make sure pdfjs-dist is installed (yarn add pdfjs-dist or npm install pdfjs-dist)
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url,
 ).toString();
-// Alternative if the above doesn't work with your bundler or for CDN:
-// pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 interface PreviewModalProps {
   isOpen: boolean;
   onClose: () => void;
-  doc: DocumentType | null; // Use the renamed DocumentType
+  doc: DocumentType | null;
 }
 
 const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
-  const [pdfFile, setPdfFile] = useState<string | Blob | null>(null); // For react-pdf file prop
+  const [pdfFile, setPdfFile] = useState<string | Blob | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  
-  // Image states
   const imageContainerRef = useRef<HTMLDivElement>(null); 
-
-  // PDF states
   const [numPages, setNumPages] = useState<number>(0);
   const [pageNumber, setPageNumber] = useState<number>(1);
   const [pdfPageInput, setPdfPageInput] = useState<string>("1");
@@ -40,11 +32,9 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => 
     setPdfPageInput(String(pageNumber));
   }, [pageNumber]);
 
-  // 添加鍵盤事件監聽
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!isOpen) return;
-      
       switch (event.key) {
         case 'Escape':
           onClose();
@@ -61,13 +51,10 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => 
           break;
       }
     };
-
     if (isOpen) {
       document.addEventListener('keydown', handleKeyDown);
-      // 防止背景滾動
       document.body.style.overflow = 'hidden';
     }
-
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
       document.body.style.overflow = 'unset';
@@ -108,8 +95,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => 
           .then(response => {
             if (current) {
               if (response.data.type === 'application/pdf'){
-                // const objectUrl = URL.createObjectURL(response.data); // Keep as blob for react-pdf
-                setPdfFile(response.data); // Pass the blob directly to react-pdf
+                setPdfFile(response.data);
               } else {
                 console.error('Fetched data is not a PDF for doc:', doc.filename);
                 setPreviewError(`預覽失敗: ${doc.filename} 的文件內容非預期的PDF格式。`);
@@ -130,8 +116,6 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => 
   useEffect(() => {
     return () => {
       if (imageSrc) URL.revokeObjectURL(imageSrc);
-      // No need to revoke blob for pdfFile if it's passed directly, react-pdf handles it.
-      // If we were creating an object URL for pdfFile, we would revoke it here.
     };
   }, [imageSrc]);
 
@@ -141,10 +125,9 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => 
     if (e.target === e.currentTarget) onClose();
   };
 
-  // PDF Handlers
   function onDocumentLoadSuccess({ numPages: loadedNumPages }: { numPages: number }): void {
     setNumPages(loadedNumPages);
-    setPageNumber(1); // Reset to first page on new document load
+    setPageNumber(1);
   }
 
   function onDocumentLoadError(error: Error): void {
@@ -165,7 +148,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => 
     if (!isNaN(newPageNum) && newPageNum >= 1 && newPageNum <= numPages) {
       setPageNumber(newPageNum);
     } else {
-      setPdfPageInput(String(pageNumber)); // Reset to current valid page number
+      setPdfPageInput(String(pageNumber));
     }
   };
 
@@ -174,7 +157,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => 
   const isTextPreviewable = hasExtractedText && (fileType.startsWith('text/') || fileType === 'application/json' || !fileType);
 
   let canDisplayImage = !!imageSrc;
-  let canDisplayPdf = !!pdfFile; // Now based on pdfFile blob
+  let canDisplayPdf = !!pdfFile;
   if (previewError) {
     canDisplayImage = false;
     canDisplayPdf = false;
@@ -188,12 +171,10 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => 
       className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50"
       onClick={handleOverlayClick}
     >
-      {/* 主要預覽容器 */}
       <div 
         onClick={(e: React.MouseEvent) => e.stopPropagation()} 
         className="relative w-full h-full max-w-7xl max-h-[95vh] bg-surface-50 rounded-lg shadow-xl flex flex-col overflow-hidden"
       >
-        {/* 標題欄和關閉按鈕 - 固定在頂部 */}
         <div className="flex items-center justify-between p-4 border-b border-surface-200 bg-surface-50 rounded-t-lg flex-shrink-0">
           <h2 className="text-xl font-semibold text-surface-900 truncate">
             預覽: {doc.filename}
@@ -209,7 +190,6 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => 
           </Button>
         </div>
 
-        {/* 內容區域 - 可滾動 */}
         <div className="flex-grow overflow-hidden flex flex-col min-h-0">
           {previewError && !pdfFile && (
             <div className="flex items-center justify-center h-full p-8">
@@ -217,7 +197,6 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => 
             </div>
           )}
           
-          {/* 圖片預覽 */} 
           {canDisplayImage && (
             <div className="flex-grow flex items-center justify-center p-4 overflow-hidden">
               <div className="max-w-full max-h-full flex items-center justify-center">
@@ -226,7 +205,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => 
                   alt={`預覽 ${doc.filename}`}
                   className="max-w-full max-h-full object-contain rounded-lg shadow-sm"
                   style={{
-                    maxHeight: 'calc(95vh - 120px)', // 減去標題欄和底部按鈕的高度
+                    maxHeight: 'calc(95vh - 120px)',
                     maxWidth: '100%'
                   }}
                 />
@@ -234,10 +213,8 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => 
             </div>
           )}
 
-          {/* PDF 預覽 */} 
           {canDisplayPdf && (
             <div className="flex-grow flex flex-col overflow-hidden">
-              {/* PDF 控制欄 */}
               <div className="flex justify-center items-center space-x-2 py-3 px-4 border-b border-surface-200 bg-surface-100 flex-shrink-0">
                 <Button onClick={goToPrevPage} disabled={pageNumber <= 1} variant="outline" size="sm">
                   <i className="fas fa-arrow-left mr-1"></i>上一頁
@@ -259,7 +236,6 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => 
                 </Button>
               </div>
               
-              {/* PDF 檢視器 */}
               <div className="flex-grow overflow-auto bg-surface-100 p-4 flex justify-center">
                 <Document
                   file={pdfFile}
@@ -281,7 +257,6 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => 
             </div>
           )}
           
-          {/* 文字預覽 */} 
           {isTextPreviewable && !canDisplayImage && !canDisplayPdf && (
             <div className="flex-grow overflow-auto p-4">
               <pre className="whitespace-pre-wrap text-sm bg-surface-100 p-4 rounded-lg border border-surface-200 font-mono text-surface-900">
@@ -290,7 +265,6 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => 
             </div>
           )}
           
-          {/* 無可預覽內容的狀態 */}
           {!previewError && !canDisplayImage && !canDisplayPdf && !isTextPreviewable && (
             <div className="flex-grow flex items-center justify-center p-8">
               <div className="text-center">
@@ -303,7 +277,6 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => 
           )}
         </div>
 
-        {/* 底部操作欄 - 固定在底部 */}
         <div className="border-t border-surface-200 bg-surface-100 p-4 flex justify-between items-center flex-shrink-0 rounded-b-lg">
           <div className="text-sm text-surface-600">
             檔案大小: {doc.size ? formatBytes(doc.size) : '未知'}

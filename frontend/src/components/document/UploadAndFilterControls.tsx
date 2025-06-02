@@ -1,6 +1,6 @@
 import React from 'react';
-import { Input, Select, Button, Card } from './index';
-import type { DocumentStatus } from '../types/apiTypes';
+import { Input, Select, Button, Card } from '../ui'; // Updated import path
+import type { DocumentStatus } from '../../types/apiTypes'; // Updated import path
 
 interface QuickFilterOption {
   id: string;
@@ -76,7 +76,7 @@ const UploadAndFilterControls: React.FC<UploadAndFilterControlsProps> = ({
             <Select
               label="篩選狀態"
               value={filterStatus}
-              onChange={(e) => onFilterStatusChange(e.target.value as DocumentStatus | 'all')}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => onFilterStatusChange(e.target.value as DocumentStatus | 'all')}
               options={documentStatusOptions}
               className="w-full"
             />

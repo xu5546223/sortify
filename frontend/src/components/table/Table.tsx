@@ -1,5 +1,5 @@
 import React from 'react';
-import Checkbox from './Checkbox'; // Corrected import for default export
+import Checkbox from '../ui/Checkbox'; // Corrected import for default export
 
 // New interface for richer header configuration
 export interface HeaderConfig {

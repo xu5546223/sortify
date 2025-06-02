@@ -9,12 +9,12 @@ import {
   CheckCircleOutlined,
   LoadingOutlined
 } from '@ant-design/icons';
-import type { EmbeddingModelConfig } from '../types/apiTypes';
+import type { EmbeddingModelConfig } from '../../types/apiTypes'; // Updated import path
 import {
   getEmbeddingModelConfig,
   loadEmbeddingModel,
   configureEmbeddingModel
-} from '../services/embeddingService';
+} from '../../services/embeddingService'; // Updated import path
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -248,20 +248,11 @@ const ModelConfigCard: React.FC<ModelConfigCardProps> = ({ onModelStateChange })
         {!config.model_loaded && (
           <Alert
             message="建議預先加載模型"
-            description="首次使用向量搜索或 AI 問答功能時，模型加載可能需要幾秒鐘時間。建議預先加載模型以獲得最佳用戶體驗。"
+            description="加載 Embedding 模型可能需要一些時間。建議在系統空閒時操作。"
             type="info"
             showIcon
-            className="ai-qa-alert"
-          />
-        )}
-
-        {config.gpu_info && config.current_device === 'cpu' && (
-          <Alert
-            message="GPU 加速可用"
-            description={`檢測到 ${config.gpu_info.device_name}，切換到 GPU 模式可以顯著提升性能。`}
-            type="warning"
-            showIcon
-            className="ai-qa-alert"
+            className="ai-qa-alert mt-4"
+            icon={<InfoCircleOutlined />}
           />
         )}
       </Space>
@@ -269,4 +260,4 @@ const ModelConfigCard: React.FC<ModelConfigCardProps> = ({ onModelStateChange })
   );
 };
 
-export default ModelConfigCard; 
+export default ModelConfigCard;

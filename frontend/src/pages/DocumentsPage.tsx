@@ -14,7 +14,7 @@ import {
   DocumentTableActions,
   UploadAndFilterControls
 } from '../components';
-import { HeaderConfig } from '../components/Table';
+import { HeaderConfig } from '../components/table/Table';
 import type {
   Document,
   DocumentStatus,
@@ -28,8 +28,9 @@ import {
   getDocumentsByIds,
   deleteDocument
 } from '../services/documentService';
-import { formatBytes, formatDate, mapMimeTypeToSimpleType, canPreview } from '../utils/documentUtils';
-import PreviewModal from '../components/PreviewModal';
+import { formatBytes, formatDate, mapMimeTypeToSimpleType } from '../utils/documentFormatters';
+import { canPreview } from '../utils/documentUtils';
+import PreviewModal from '../components/document/PreviewModal';
 import { SettingsContext, SettingsContextType } from '../contexts/SettingsContext';
 
 // Define API_BASE_URL - User should configure this via .env ideally

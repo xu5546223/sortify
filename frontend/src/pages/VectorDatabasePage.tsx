@@ -64,7 +64,7 @@ import {
   getDocuments,
   getDocumentById,
 } from '../services/documentService';
-import ModelConfigCard from '../components/ModelConfigCard';
+import ModelConfigCard from '../components/settings/ModelConfigCard';
 import SemanticSearchInterface from '../components/SemanticSearchInterface';
 
 const { Title, Paragraph, Text } = Typography;
