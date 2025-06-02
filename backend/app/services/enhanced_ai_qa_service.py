@@ -1,21 +1,23 @@
 from typing import List, Optional, Dict, Any, Tuple
 import time
-import json
-import uuid  # Add uuid import
+# import json # Unused
+import uuid
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from app.core.logging_utils import AppLogger, log_event, LogLevel # Added
+from app.core.logging_utils import AppLogger, log_event, LogLevel
 from app.services.unified_ai_service_simplified import unified_ai_service_simplified, AIResponse as UnifiedAIResponse # Alias
 from app.services.embedding_service import embedding_service
 from app.services.vector_db_service import vector_db_service
 from app.models.vector_models import (
     AIQARequest, AIQAResponse, QueryRewriteResult, LLMContextDocument,
-    SemanticSearchRequest, SemanticSearchResult, SemanticContextDocument
+    # SemanticSearchRequest, # Unused
+    SemanticSearchResult, SemanticContextDocument
 )
 from app.models.ai_models_simplified import TokenUsage
 from app.models.ai_models_simplified import (
-    AITextAnalysisOutput, AIQueryRewriteOutput,
-    AIDocumentAnalysisOutputDetail, AIDocumentKeyInformation,
-    AIGeneratedAnswerOutput # Added new model for answer generation
+    # AITextAnalysisOutput, # Unused
+    AIQueryRewriteOutput,
+    AIDocumentAnalysisOutputDetail, AIDocumentKeyInformation, # AIDocumentKeyInformation is likely used by AIDocumentAnalysisOutputDetail
+    AIGeneratedAnswerOutput 
 )
 from app.crud.crud_documents import get_documents_by_ids
 from pydantic import ValidationError
@@ -62,10 +64,8 @@ class EnhancedAIQAService:
         semantic_contexts_for_response: List[SemanticContextDocument] = [] # Ensure defined
 
         try:
-            # logger.info(f"開始處理AI問答請求: {request.question[:100]}... (用戶: {user_id})") # Replaced
-            
             query_rewrite_result, rewrite_tokens = await self._rewrite_query_unified(
-                db, request.question, user_id, request_id # Pass user_id and request_id
+                db, request.question, user_id, request_id
             )
             total_tokens += rewrite_tokens
             
@@ -141,13 +141,11 @@ class EnhancedAIQAService:
                     elif isinstance(user_id, str):
                         user_uuid = uuid.UUID(user_id)
                     else:
-                        # 如果 user_id 不是 UUID 也不是 str，記錄錯誤並可能跳過權限檢查或拋出配置錯誤
                         logger.error(f"無法識別的 user_id 類型: {type(user_id)}，值: {user_id}. 無法執行權限檢查。")
-                        full_documents = [] # 或者根據策略決定是否拋出異常
-                        # raise TypeError(f"Invalid user_id type: {type(user_id)}") 
+                        full_documents = [] 
 
                     accessible_documents = []
-                    if full_documents: # 確保 full_documents 不是 None 或空列表
+                    if full_documents: 
                         for doc in full_documents:
                             # Ensure doc.owner_id is also a UUID object for comparison
                             # (It should be if retrieved from DB correctly and model types are right)
@@ -200,7 +198,7 @@ class EnhancedAIQAService:
             
         except Exception as e:
             processing_time_on_error = time.time() - start_time
-            error_trace = traceback.format_exc()
+            error_trace = traceback.format_exc() # Make sure traceback is imported
             await log_event(db=db, level=LogLevel.ERROR, message=f"Enhanced AI QA failed: {str(e)}",
                             source="service.enhanced_ai_qa.process_request_error", user_id=str(user_id) if user_id else None, request_id=request_id,
                             details={"error": str(e), "error_type": type(e).__name__, "traceback": error_trace, **log_details_initial})
@@ -230,12 +228,62 @@ class EnhancedAIQAService:
                 tokens_used=current_total_tokens,
                 processing_time=processing_time_on_error,
                 query_rewrite_result=current_qrr,
-                semantic_search_contexts=current_semantic_contexts, # Use checked list
+                semantic_search_contexts=current_semantic_contexts, 
                 session_id=request.session_id,
-                llm_context_documents=[], # Default to empty list instead of None in error case
-                error_message=str(e) # Include error message in response model
+                llm_context_documents=[], 
+                error_message=str(e) 
             )
-    
+
+    async def _filter_accessible_documents(
+        self, 
+        db: AsyncIOMotorDatabase, # For logging
+        full_documents: List[Any], # Assuming Document model instances
+        user_id_str: Optional[str], 
+        request_id: Optional[str]
+    ) -> List[Any]:
+        """
+        Filters a list of documents based on user ownership.
+        Logs access attempts and errors.
+        """
+        if not user_id_str: # No user_id means public access or no filtering needed at this stage
+            return full_documents
+
+        accessible_documents = []
+        user_uuid: Optional[uuid.UUID] = None
+
+        try:
+            user_uuid = uuid.UUID(user_id_str)
+        except ValueError as e_uuid:
+            await log_event(db=db, level=LogLevel.ERROR, 
+                            message=f"Invalid user_id format for access filtering: {user_id_str} (Error: {e_uuid}). No documents will be accessible.",
+                            source="service.enhanced_ai_qa._filter_accessible_documents", user_id=user_id_str, request_id=request_id)
+            return [] # No documents accessible if user_id is malformed
+
+        if not full_documents:
+            return []
+
+        for doc in full_documents:
+            doc_id_for_log = getattr(doc, 'id', 'N/A')
+            owner_id_for_log = getattr(doc, 'owner_id', 'N/A')
+
+            if hasattr(doc, 'owner_id') and isinstance(doc.owner_id, uuid.UUID) and doc.owner_id == user_uuid:
+                accessible_documents.append(doc)
+            else:
+                if hasattr(doc, 'owner_id') and not isinstance(doc.owner_id, uuid.UUID):
+                    logger.warning(f"Document ID {doc_id_for_log} has owner_id of type {type(doc.owner_id)}, expected UUID.")
+                
+                log_details_permission = {
+                    "document_id": str(doc_id_for_log),
+                    "document_owner_id": str(owner_id_for_log),
+                    "target_user_uuid": str(user_uuid)
+                }
+                await log_event(db=db, level=LogLevel.DEBUG, # Changed to DEBUG as it's an expected operational log
+                                message=f"User {user_id_str} does not have permission for document {doc_id_for_log}.",
+                                source="service.enhanced_ai_qa._filter_accessible_documents", user_id=user_id_str, request_id=request_id,
+                                details=log_details_permission)
+        
+        return accessible_documents
+
     async def _rewrite_query_unified(
         self, 
         db: AsyncIOMotorDatabase,
@@ -398,8 +446,6 @@ class EnhancedAIQAService:
 
             filter_conditions: Dict[str, Any] = {"_id": {"$in": uuid_document_ids}}
             
-            # logger.debug(f"T2Q Filter - Input parameters: {extracted_parameters}") # AppLogger
-
             for key, value in extracted_parameters.items():
                 if key not in allowed_filter_keys:
                     await log_event(db=db, level=LogLevel.DEBUG, message=f"T2Q Filter: Ignoring disallowed filter key '{key}'.",
@@ -463,10 +509,9 @@ class EnhancedAIQAService:
         query_rewrite_result: QueryRewriteResult,
         user_id: Optional[str], # Added
         request_id: Optional[str], # Added
-        model_preference: Optional[str] = None # Added
+        model_preference: Optional[str] = None 
     ) -> Tuple[str, int, float, List[LLMContextDocument]]:
         """步驟4: 生成最終答案（使用統一AI服務）"""
-        # qa_start_time = time.time() # Already timed by parent
         actual_contexts_for_llm: List[LLMContextDocument] = []
 
         log_details_context = {
@@ -492,7 +537,6 @@ class EnhancedAIQAService:
                 if doc.analysis and doc.analysis.ai_analysis_output and isinstance(doc.analysis.ai_analysis_output, dict):
                     try:
                         analysis_output_data = AIDocumentAnalysisOutputDetail(**doc.analysis.ai_analysis_output)
-                        # logger.debug(f"Successfully parsed doc.analysis.ai_analysis_output for doc_id: {doc_id_str} using Pydantic models.") # AppLogger
                         current_summary = analysis_output_data.initial_summary or analysis_output_data.initial_description
                         if analysis_output_data.key_information:
                             key_info_model = analysis_output_data.key_information

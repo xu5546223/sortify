@@ -157,7 +157,11 @@ class UnifiedAIServiceSimplified:
         prompt_params = request.prompt_params or {}
         if isinstance(request.content, str):
             if 'user_query' not in prompt_params: prompt_params['user_query'] = request.content
-            if 'input_text' not in prompt_params: prompt_params['input_text'] = request.content 
+            if 'input_text' not in prompt_params: prompt_params['input_text'] = request.content
+            # If the task is text analysis (TEXT_GENERATION) and the prompt template might expect {text_content}
+            if request.task_type == TaskType.TEXT_GENERATION:
+                 if 'text_content' not in prompt_params: # Avoid overwriting if 'text_content' was explicitly passed in request.prompt_params
+                    prompt_params['text_content'] = request.content
         elif isinstance(request.content, Image.Image):
             if 'image_input' not in prompt_params: prompt_params['image_input'] = request.content 
         
@@ -175,6 +179,7 @@ class UnifiedAIServiceSimplified:
             apply_chinese_instruction=ensure_chinese,
             **prompt_params
         )
+        
         
         ai_prompt_request_to_use = AIPromptRequest(
             user_prompt=formatted_user_prompt,
