@@ -146,7 +146,7 @@ app = FastAPI(
 # 注意：在生產環境中，應將 allow_origins 明確指定為您的前端域名
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,  # 使用 settings 中的配置
+    allow_origins=settings.ALLOWED_ORIGINS + ["http://localhost:3000"],  # 使用 settings 中的配置
     allow_credentials=True, # 允許cookies
     allow_methods=["*"],  # 允許所有 HTTP 方法
     allow_headers=["*"],  # 允許所有 HTTP 標頭

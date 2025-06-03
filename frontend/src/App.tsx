@@ -66,7 +66,14 @@ const AppWithTheme: React.FC = () => {
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
       <MessageBoxPC message={messageBox.message} type={messageBox.type} visible={messageBox.visible} />
-      <CopilotPopup />
+      <CopilotPopup
+        instructions="You are Sortify AI, A useful project assistant.Always respond in 繁體中文. "
+        defaultOpen={false}
+        labels={{
+          title: "Sortify AI Assistant",
+          initial: "Hi! How can I help you with your Sortify project today?"
+        }}
+      />
     </ConfigProvider>
   );
 };
