@@ -13,7 +13,12 @@ const root = ReactDOM.createRoot(
 // runtimeUrl 應指向您在後端 FastAPI 設定的 CopilotKit 端點的完整 URL
 // 例如: http://localhost:8000/api/v1/copilotkit_actions (本地開發時)
 // 或在 Docker 環境中指向後端服務的 URL
-const copilotRuntimeUrl = process.env.REACT_APP_COPILOT_RUNTIME_URL || "http://localhost:8000/api/v1/copilotkit_actions"; // 移除結尾斜線，與後端新註冊路徑匹配
+// 更新 runtimeUrl 指向新的 Node.js CopilotKit Runtime
+// 假設新的 Node.js Runtime 運行在 http://localhost:3001 (端口可自訂)
+// 並且其 API 端點是 /api/copilotkit
+const copilotRuntimeUrl = "http://localhost:3001/api/copilotkit";
+
+console.log("Copilot Runtime URL (pointing to Main Node.js Runtime):", copilotRuntimeUrl);
 
 root.render(
   <CopilotKit runtimeUrl={copilotRuntimeUrl}>
