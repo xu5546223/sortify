@@ -66,7 +66,14 @@ const AppWithTheme: React.FC = () => {
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
       <MessageBoxPC message={messageBox.message} type={messageBox.type} visible={messageBox.visible} />
-      <CopilotPopup />
+      <CopilotPopup
+        instructions="I am Sortify AI, your project assistant. You can ask me questions about your documents (e.g., 'What is document X about?'), request text summarization (e.g., 'Summarize this: [text]'), or ask for general project information (e.g., 'What is the project status?'). Use the action 'getProjectInfo' for project status, 'askAboutProjectDocuments' for document questions, and 'summarizeText' for summarization."
+        defaultOpen={false}
+        labels={{
+          title: "Sortify AI Assistant",
+          initial: "Hi! How can I help you with your Sortify project today?"
+        }}
+      />
     </ConfigProvider>
   );
 };
