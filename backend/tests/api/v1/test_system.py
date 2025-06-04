@@ -2,8 +2,9 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, AsyncMock # 引入 AsyncMock
 
-from app.models import SettingsData, ConnectionInfo, TunnelStatus, UpdatableSettingsData
+from app.models import  ConnectionInfo, TunnelStatus, UpdatableSettingsData
 from app.core.config import settings as app_env_settings # 用於獲取預設值
+from app.models.system_models import AIServiceSettingsStored
 
 # System API 路由前綴
 SYSTEM_API_PREFIX = "/api/v1/system"
@@ -14,7 +15,7 @@ def test_get_system_settings_default(client: TestClient):
     # 注意：這裡的模擬路徑需要是 API 檔案中實際 import crud_settings 的路徑
     with patch("app.apis.v1.system.crud_settings.get_system_settings", new_callable=AsyncMock) as mock_get:
         # 模擬從 .env 或預設 Pydantic 設定返回
-        mock_response = SettingsData(
+        mock_response = AIServiceSettingsStored(
             ai_api_key="********" + app_env_settings.AI_API_KEY[-4:] if app_env_settings.AI_API_KEY else None,
             ai_max_output_tokens=app_env_settings.AI_MAX_OUTPUT_TOKENS
         )
@@ -33,7 +34,7 @@ def test_get_system_settings_default(client: TestClient):
 def test_get_system_settings_from_db(client: TestClient):
     """測試 GET /settings 從資料庫獲取設定。"""
     with patch("app.apis.v1.system.crud_settings.get_system_settings", new_callable=AsyncMock) as mock_get:
-        db_settings = SettingsData(ai_api_key="db_key_****", ai_max_output_tokens=1024)
+        db_settings = AIServiceSettingsStored(ai_api_key="db_key_****", ai_max_output_tokens=1024)
         mock_get.return_value = db_settings
 
         response = client.get(f"{SYSTEM_API_PREFIX}/settings")
@@ -48,7 +49,7 @@ def test_update_system_settings(client: TestClient):
     with patch("app.apis.v1.system.crud_settings.update_system_settings", new_callable=AsyncMock) as mock_update:
         update_payload = UpdatableSettingsData(ai_api_key="new_key", ai_max_output_tokens=2048)
         # 模擬更新成功後返回的設定
-        updated_settings_response = SettingsData(ai_api_key="new_key_****", ai_max_output_tokens=2048)
+        updated_settings_response = AIServiceSettingsStored(ai_api_key="new_key_****", ai_max_output_tokens=2048)
         mock_update.return_value = updated_settings_response
 
         response = client.post(f"{SYSTEM_API_PREFIX}/settings", json=update_payload.model_dump())

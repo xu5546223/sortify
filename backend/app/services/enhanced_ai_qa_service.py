@@ -378,6 +378,8 @@ class EnhancedAIQAService:
         query_rewrite_result: Optional[QueryRewriteResult] = None # New parameter
     ) -> List[SemanticSearchResult]:
         """步驟2: 向量搜索 - Modified to handle multiple queries, combine results, and apply metadata filters."""
+        final_user_id_for_log: Optional[str] = str(user_id) if user_id is not None else None
+
         logger.debug(f"In _semantic_search, entry: type(db) is {type(db)}, db is {str(db)[:200]}")
 
         if not isinstance(queries, list) or not all(isinstance(q, str) for q in queries):
@@ -395,7 +397,7 @@ class EnhancedAIQAService:
             "user_id_filter_for_search": user_id
         }
         await log_event(db=db, level=LogLevel.DEBUG, message="Starting semantic search for multiple queries.",
-                        source="service.enhanced_ai_qa.semantic_search_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details)
+                        source="service.enhanced_ai_qa.semantic_search_internal", user_id=final_user_id_for_log, request_id=request_id, details=log_details)
 
         all_results_map: Dict[str, SemanticSearchResult] = {}
 
@@ -449,7 +451,7 @@ class EnhancedAIQAService:
 
                 if not isinstance(q_item, str) or not q_item.strip():
                     await log_event(db=db, level=LogLevel.WARNING, message=f"Skipping empty or invalid query string at index {i}.",
-                                    source="service.enhanced_ai_qa.semantic_search_internal.skip_query", user_id=user_id, request_id=request_id, details=query_log_details)
+                                    source="service.enhanced_ai_qa.semantic_search_internal.skip_query", user_id=final_user_id_for_log, request_id=request_id, details=query_log_details)
                     continue
 
                 stripped_q_item = q_item.strip()
@@ -468,16 +470,16 @@ class EnhancedAIQAService:
                         self.query_embedding_cache[stripped_q_item] = query_vector
                     except Exception as e_single_encode:
                         await log_event(db=db, level=LogLevel.ERROR, message=f"Failed to encode query '{stripped_q_item[:50]}...': {e_single_encode}",
-                                        source="service.enhanced_ai_qa.semantic_search_internal.encode_error", user_id=user_id, request_id=request_id, details=query_log_details)
+                                        source="service.enhanced_ai_qa.semantic_search_internal.encode_error", user_id=final_user_id_for_log, request_id=request_id, details=query_log_details)
                         continue # Skip this query if encoding fails
 
                 if query_vector is None: # Should not happen if logic above is correct, but as a safeguard
                     await log_event(db=db, level=LogLevel.ERROR, message=f"Query vector is None for '{stripped_q_item[:50]}...' after caching/encoding attempts.",
-                                    source="service.enhanced_ai_qa.semantic_search_internal.vector_none", user_id=user_id, request_id=request_id, details=query_log_details)
+                                    source="service.enhanced_ai_qa.semantic_search_internal.vector_none", user_id=final_user_id_for_log, request_id=request_id, details=query_log_details)
                     continue
 
                 await log_event(db=db, level=LogLevel.DEBUG, message=f"Processing query {i+1}/{len(queries)}: '{stripped_q_item[:100]}...' (Embedding from: {query_log_details.get('embedding_source', 'unknown')})",
-                                source="service.enhanced_ai_qa.semantic_search_internal.query_item", user_id=user_id, request_id=request_id, details=query_log_details)
+                                source="service.enhanced_ai_qa.semantic_search_internal.query_item", user_id=final_user_id_for_log, request_id=request_id, details=query_log_details)
 
                 current_results = vector_db_service.search_similar_vectors(
                     query_vector=query_vector, # type: ignore # query_vector is List[float] here
@@ -488,13 +490,13 @@ class EnhancedAIQAService:
                 )
 
                 await log_event(db=db, level=LogLevel.DEBUG, message=f"Query '{q_item[:50]}...' (with metadata_filter: {chroma_metadata_filter if chroma_metadata_filter else 'None'}) yielded {len(current_results)} results.",
-                                source="service.enhanced_ai_qa.semantic_search_internal.query_results", user_id=str(user_id) if user_id else None, request_id=request_id,
+                                source="service.enhanced_ai_qa.semantic_search_internal.query_results", user_id=final_user_id_for_log, request_id=request_id,
                                 details={**query_log_details, "results_for_this_query": len(current_results)})
 
                 for result in current_results:
                     if not isinstance(result, SemanticSearchResult) or not result.document_id:
                         await log_event(db=db, level=LogLevel.WARNING, message=f"Skipping invalid search result object: {type(result)}",
-                                        source="service.enhanced_ai_qa.semantic_search_internal.skip_invalid_result_obj", user_id=str(user_id) if user_id else None, request_id=request_id)
+                                        source="service.enhanced_ai_qa.semantic_search_internal.skip_invalid_result_obj", user_id=final_user_id_for_log, request_id=request_id)
                         continue # Skip if result is not as expected
 
                     if result.document_id in all_results_map:
@@ -507,14 +509,15 @@ class EnhancedAIQAService:
             combined_results.sort(key=lambda r: r.similarity_score, reverse=True)
             
             await log_event(db=db, level=LogLevel.DEBUG, message=f"Semantic search completed. Combined {len(combined_results)} unique results from {len(queries)} queries.",
-                            source="service.enhanced_ai_qa.semantic_search_internal.final_results", user_id=str(user_id) if user_id else None, request_id=request_id,
+                            source="service.enhanced_ai_qa.semantic_search_internal.final_results", user_id=final_user_id_for_log, request_id=request_id,
                             details={**log_details, "combined_results_count": len(combined_results)})
             return combined_results
             
         except Exception as e:
             error_trace = traceback.format_exc()
             await log_event(db=db, level=LogLevel.ERROR, message=f"Semantic search failed: {str(e)}",
-                            source="service.enhanced_ai_qa.semantic_search_internal.exception", user_id=str(user_id) if user_id else None, request_id=request_id,
+                            source="service.enhanced_ai_qa.semantic_search_internal.exception", # This is the failing one
+                            user_id=final_user_id_for_log, request_id=request_id,
                             details={**log_details, "error": str(e), "error_type": type(e).__name__, "traceback": error_trace})
             return []
 
