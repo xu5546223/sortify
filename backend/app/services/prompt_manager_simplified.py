@@ -186,21 +186,46 @@ MIME類型: {{image_mime_type}}
         
         self._prompts[PromptType.QUERY_REWRITE] = PromptTemplate(
             prompt_type=PromptType.QUERY_REWRITE,
-            system_prompt='''你是查詢優化專家。用戶的原始查詢將在 <user_query>...</user_query> 標籤中。任務：
-1. 理解用戶查詢意圖
-2. 重寫為語義搜索友好的形式
-3. 提取結構化參數
+            system_prompt='''你是高級查詢優化專家，旨在將用戶查詢轉換為最適合語義搜索引擎的格式，並提取關鍵參數。用戶的原始查詢將在 <user_query>...</user_query> 標籤中。
 
-JSON格式：
+**主要任務：**
+
+1.  **理解用戶查詢意圖：**
+    *   在 `intent_analysis` 字段中簡要說明你對用戶查詢核心意圖的理解。
+
+2.  **生成多樣化的重寫查詢：**
+    *   目標是生成與包含以下信息的文檔片段最匹配的查詢：內容摘要、關鍵詞列表、語義標籤、知識領域、主要主題和核心概念。
+    *   在 `rewritten_queries` 列表中生成 **3 種**不同的重寫查詢：
+        *   **類型 A (關鍵詞式查詢)：** 提取原始查詢中的核心名詞、概念和實體，組成一個簡潔、由關鍵術語構成的查詢。例如，如果原始查詢是 "我想了解去年發布的關於人工智能的最新產品報告"，此類型查詢可能是 "人工智能 產品報告 最新 去年"。
+        *   **類型 B (語義變體查詢)：** 用不同的詞語、句式或問法來表達原始查詢的相同或相近意圖，保持自然語言風格。例如，可以改變句子的主被動語態，或使用更正式/口語化的表達。
+        *   **類型 C (概念擴展查詢)：** 適度擴展原始查詢中的核心術語，可包含其直接同義詞或非常相關的概念。例如，"人工智能" 可以擴展為 "機器學習" 或 "深度學習" (如果上下文相關)。請謹慎擴展，避免過度泛化導致主題漂移。
+
+3.  **提取結構化參數：**
+    *   在 `extracted_parameters` JSON 對象中準確提取以下參數。
+    *   如果某參數未在用戶查詢中明確提及或無法可靠推斷，請在JSON中省略該參數的字段，或者將其值設為 `null` 或空列表/對象。不要猜測不存在的信息。
+    *   參數列表：
+        *   `"time_range"`: (例如 "去年", "2023年上半年", "最近一個月")
+        *   `"document_types"`: (例如 ["報告", "演示文稿", "郵件"])
+        *   `"key_entities"`: (例如 ["特定公司名", "產品名", "人名"])
+        *   `"amounts"`: (例如 `{{"min": 100, "max": 500, "currency": "美元"}}`)
+        *   `"other_filters"`: (用於捕獲其他任何可結構化的過濾條件)
+
+**JSON輸出格式要求：**
+嚴格遵循以下JSON結構。確保 `rewritten_queries` 列表包含三個字符串元素，對應上述三種類型。
+
 ```json
 {{
-  "intent_analysis": "意圖分析說明",
-  "rewritten_queries": ["重寫查詢1", "重寫查詢2"],
+  "intent_analysis": "此處填寫意圖分析說明",
+  "rewritten_queries": [
+    "類型 A 重寫查詢示例",
+    "類型 B 重寫查詢示例",
+    "類型 C 重寫查詢示例"
+  ],
   "extracted_parameters": {{
-    "time_range": "時間範圍",
-    "document_types": ["文檔類型"],
-    "key_entities": ["重要實體"],
-    "amounts": {{"min": 數值, "max": 數值}},
+    "time_range": null,
+    "document_types": [],
+    "key_entities": [],
+    "amounts": {{"min": null, "max": null, "currency": null}},
     "other_filters": {{}}
   }}
 }}
