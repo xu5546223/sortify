@@ -6,6 +6,8 @@ import asyncio
 from fastapi.testclient import TestClient
 from typing import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
+from datetime import datetime
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -22,6 +24,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 
 from app.main import app  # 從您的應用程式導入 app
 from app.dependencies import get_db # 導入 get_db 依賴
+from app.models.user_models import User
 
 @pytest.fixture(scope="session")
 def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
@@ -73,3 +76,16 @@ def mock_crud_users() -> MagicMock:
     # 根據需要模擬 crud_users 中的方法
     # 例如: mock.create_or_update = AsyncMock(return_value=ConnectedDevice(...))
     return mock 
+
+@pytest.fixture
+def mock_user():
+    return User(
+        id=uuid4(),
+        username="testuser",
+        email="test@example.com",
+        full_name="測試用戶",
+        is_active=True,
+        is_admin=False,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
+    ) 

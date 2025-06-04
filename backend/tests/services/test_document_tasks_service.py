@@ -4,9 +4,16 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 from pathlib import Path
 
-from sortify.backend.app.services.document_tasks_service import DocumentTasksService
-from sortify.backend.app.models.document_models import Document, DocumentStatus
-from sortify.backend.app.core.config import Settings
+from app.services.document_tasks_service import DocumentTasksService
+from app.models.document_models import Document, DocumentStatus
+from app.core.config import Settings
+from app.models.ai_models_simplified import AIImageAnalysisOutput, AITextAnalysisOutput, TokenUsage
+from app.models.log_models import LogLevel
+from app.services.document_processing_service import DocumentProcessingService
+import io
+from fastapi import HTTPException
+
+
 
 @pytest_asyncio.fixture
 async def document_tasks_service():

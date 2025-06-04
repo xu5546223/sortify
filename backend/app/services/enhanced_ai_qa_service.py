@@ -25,6 +25,8 @@ import logging
 from datetime import datetime
 import traceback
 
+from cachetools import LRUCache # Added for caching
+
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
 
 class EnhancedAIQAService:
@@ -32,7 +34,8 @@ class EnhancedAIQAService:
     
     def __init__(self):
         # 使用統一的AI服務，不再需要單獨的AI服務實例
-        pass
+        self.query_embedding_cache: LRUCache[str, List[float]] = LRUCache(maxsize=128)
+        logger.info(f"EnhancedAIQAService initialized with LRUCache for query embeddings (maxsize={self.query_embedding_cache.maxsize}).")
     
     async def process_qa_request(
         self, 
@@ -366,50 +369,158 @@ class EnhancedAIQAService:
             return QueryRewriteResult(original_query=original_query, rewritten_queries=[original_query], extracted_parameters={}, intent_analysis=f"Query rewrite error: {str(e)}"), 0
     
     async def _semantic_search(
-        self, 
-        db: AsyncIOMotorDatabase, # Added
-        query: str, 
+        self,
+        db: AsyncIOMotorDatabase,
+        queries: List[str],
         top_k: int = 10,
-        user_id: Optional[str] = None, # Added
-        request_id: Optional[str] = None # Added
+        user_id: Optional[str] = None,
+        request_id: Optional[str] = None,
+        query_rewrite_result: Optional[QueryRewriteResult] = None # New parameter
     ) -> List[SemanticSearchResult]:
-        """步驟2: 向量搜索（保持不變）"""
-        # 型別檢查與自動修正
-        # Add debug log for db type
+        """步驟2: 向量搜索 - Modified to handle multiple queries, combine results, and apply metadata filters."""
+        final_user_id_for_log: Optional[str] = str(user_id) if user_id is not None else None
+
         logger.debug(f"In _semantic_search, entry: type(db) is {type(db)}, db is {str(db)[:200]}")
 
-        if not isinstance(query, str):
-            logger.error(f"_semantic_search: query 不是 str，而是 {type(query)}，值為 {query}，自動轉為 str。這可能是上游資料異常！")
-            query = str(query)
-        log_details = {"query_length": len(query), "top_k": top_k, "user_id_filter_for_search": user_id}
-        await log_event(db=db, level=LogLevel.DEBUG, message="Starting semantic search.",
-                        source="service.enhanced_ai_qa.semantic_search_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details)
+        if not isinstance(queries, list) or not all(isinstance(q, str) for q in queries):
+            logger.error(f"_semantic_search: queries is not a list of strings. Received: {type(queries)}. Auto-wrapping original query if possible, or using empty list.")
+            # Attempt to recover if a single string was passed, else log error and use empty list
+            if isinstance(queries, str): # This case should ideally not happen if called correctly
+                 queries = [queries]
+            else:
+                 queries = [] # Cannot proceed with non-string queries
+
+        log_details = {
+            "num_queries": len(queries),
+            "first_query_length": len(queries[0]) if queries else 0,
+            "top_k_per_query": top_k,
+            "user_id_filter_for_search": user_id
+        }
+        await log_event(db=db, level=LogLevel.DEBUG, message="Starting semantic search for multiple queries.",
+                        source="service.enhanced_ai_qa.semantic_search_internal", user_id=final_user_id_for_log, request_id=request_id, details=log_details)
+
+        all_results_map: Dict[str, SemanticSearchResult] = {}
+
+        chroma_metadata_filter: Dict[str, Any] = {}
+        if query_rewrite_result and query_rewrite_result.extracted_parameters:
+            file_type_param = query_rewrite_result.extracted_parameters.get("file_type")
+            document_types_param = query_rewrite_result.extracted_parameters.get("document_types")
+
+            if isinstance(file_type_param, str) and file_type_param.strip():
+                chroma_metadata_filter["file_type"] = file_type_param.strip()
+                logger.debug(f"Applying metadata filter for file_type: {file_type_param.strip()}")
+            elif isinstance(document_types_param, list) and document_types_param and isinstance(document_types_param[0], str) and document_types_param[0].strip():
+                chroma_metadata_filter["file_type"] = document_types_param[0].strip()
+                logger.debug(f"Applying metadata filter for file_type from document_types: {document_types_param[0].strip()}")
+
+        log_details["metadata_filter_applied"] = list(chroma_metadata_filter.keys()) if chroma_metadata_filter else "None"
+
+        # --- Batch Embedding Attempt (Fallback Strategy) ---
+        unique_valid_queries_to_embed = []
+        if queries:
+            seen_queries = set()
+            for q_item_for_batch in queries:
+                if isinstance(q_item_for_batch, str) and q_item_for_batch.strip():
+                    stripped_q = q_item_for_batch.strip()
+                    if stripped_q not in self.query_embedding_cache and stripped_q not in seen_queries:
+                        unique_valid_queries_to_embed.append(stripped_q)
+                        seen_queries.add(stripped_q)
+
+        if unique_valid_queries_to_embed:
+            logger.info(f"Found {len(unique_valid_queries_to_embed)} unique queries not in cache. Attempting batch encoding.")
+            try:
+                if hasattr(embedding_service, 'encode_batch'):
+                    query_vectors_batch = embedding_service.encode_batch(unique_valid_queries_to_embed)
+                    for q_str, vec in zip(unique_valid_queries_to_embed, query_vectors_batch):
+                        self.query_embedding_cache[q_str] = vec
+                    logger.info(f"Successfully batch encoded and cached {len(unique_valid_queries_to_embed)} new query embeddings.")
+                else:
+                    logger.warning("embedding_service does not have 'encode_batch' method. Falling back to per-query encoding within the loop for uncached items.")
+                    # No explicit action needed here, per-query logic below will handle it.
+            except Exception as e_batch_embed:
+                logger.error(f"Error during batch embedding: {e_batch_embed}. Will attempt per-query encoding for these items.", exc_info=True)
+        # --- End of Batch Embedding Attempt ---
+
         try:
-            query_vector = embedding_service.encode_text(query) # encode_text 是同步函數
-            
-            # Ensure owner_id_filter is a string if it's a UUID
             owner_id_filter_for_vector_db = user_id
             if isinstance(owner_id_filter_for_vector_db, uuid.UUID):
                 owner_id_filter_for_vector_db = str(owner_id_filter_for_vector_db)
+
+            for i, q_item in enumerate(queries):
+                query_log_details = {**log_details, "current_query_index": i, "current_query_length": len(q_item)}
+
+                if not isinstance(q_item, str) or not q_item.strip():
+                    await log_event(db=db, level=LogLevel.WARNING, message=f"Skipping empty or invalid query string at index {i}.",
+                                    source="service.enhanced_ai_qa.semantic_search_internal.skip_query", user_id=final_user_id_for_log, request_id=request_id, details=query_log_details)
+                    continue
+
+                stripped_q_item = q_item.strip()
+                query_vector: Optional[List[float]] = None
+
+                # Caching Logic
+                if stripped_q_item in self.query_embedding_cache:
+                    query_vector = self.query_embedding_cache[stripped_q_item]
+                    logger.debug(f"Query embedding cache HIT for: '{stripped_q_item[:50]}...'")
+                    query_log_details["embedding_source"] = "cache_hit"
+                else:
+                    logger.debug(f"Query embedding cache MISS for: '{stripped_q_item[:50]}...'. Encoding now.")
+                    query_log_details["embedding_source"] = "cache_miss_encoded_now"
+                    try:
+                        query_vector = embedding_service.encode_text(stripped_q_item)
+                        self.query_embedding_cache[stripped_q_item] = query_vector
+                    except Exception as e_single_encode:
+                        await log_event(db=db, level=LogLevel.ERROR, message=f"Failed to encode query '{stripped_q_item[:50]}...': {e_single_encode}",
+                                        source="service.enhanced_ai_qa.semantic_search_internal.encode_error", user_id=final_user_id_for_log, request_id=request_id, details=query_log_details)
+                        continue # Skip this query if encoding fails
+
+                if query_vector is None: # Should not happen if logic above is correct, but as a safeguard
+                    await log_event(db=db, level=LogLevel.ERROR, message=f"Query vector is None for '{stripped_q_item[:50]}...' after caching/encoding attempts.",
+                                    source="service.enhanced_ai_qa.semantic_search_internal.vector_none", user_id=final_user_id_for_log, request_id=request_id, details=query_log_details)
+                    continue
+
+                await log_event(db=db, level=LogLevel.DEBUG, message=f"Processing query {i+1}/{len(queries)}: '{stripped_q_item[:100]}...' (Embedding from: {query_log_details.get('embedding_source', 'unknown')})",
+                                source="service.enhanced_ai_qa.semantic_search_internal.query_item", user_id=final_user_id_for_log, request_id=request_id, details=query_log_details)
+
+                current_results = vector_db_service.search_similar_vectors(
+                    query_vector=query_vector, # type: ignore # query_vector is List[float] here
+                    top_k=top_k,
+                    similarity_threshold=0.3,
+                    owner_id_filter=owner_id_filter_for_vector_db,
+                    metadata_filter=chroma_metadata_filter # Pass the constructed filter
+                )
+
+                await log_event(db=db, level=LogLevel.DEBUG, message=f"Query '{q_item[:50]}...' (with metadata_filter: {chroma_metadata_filter if chroma_metadata_filter else 'None'}) yielded {len(current_results)} results.",
+                                source="service.enhanced_ai_qa.semantic_search_internal.query_results", user_id=final_user_id_for_log, request_id=request_id,
+                                details={**query_log_details, "results_for_this_query": len(current_results)})
+
+                for result in current_results:
+                    if not isinstance(result, SemanticSearchResult) or not result.document_id:
+                        await log_event(db=db, level=LogLevel.WARNING, message=f"Skipping invalid search result object: {type(result)}",
+                                        source="service.enhanced_ai_qa.semantic_search_internal.skip_invalid_result_obj", user_id=final_user_id_for_log, request_id=request_id)
+                        continue # Skip if result is not as expected
+
+                    if result.document_id in all_results_map:
+                        if result.similarity_score > all_results_map[result.document_id].similarity_score:
+                            all_results_map[result.document_id] = result
+                    else:
+                        all_results_map[result.document_id] = result
             
-            results = vector_db_service.search_similar_vectors(
-                query_vector=query_vector,
-                top_k=top_k,
-                similarity_threshold=0.3,
-                owner_id_filter=owner_id_filter_for_vector_db # Pass the potentially converted string
-            )
+            combined_results = list(all_results_map.values())
+            combined_results.sort(key=lambda r: r.similarity_score, reverse=True)
             
-            await log_event(db=db, level=LogLevel.DEBUG, message=f"Semantic search completed, found {len(results)} results.",
-                            source="service.enhanced_ai_qa.semantic_search_internal", user_id=str(user_id) if user_id else None, request_id=request_id,
-                            details={**log_details, "results_count": len(results)})
-            return results
+            await log_event(db=db, level=LogLevel.DEBUG, message=f"Semantic search completed. Combined {len(combined_results)} unique results from {len(queries)} queries.",
+                            source="service.enhanced_ai_qa.semantic_search_internal.final_results", user_id=final_user_id_for_log, request_id=request_id,
+                            details={**log_details, "combined_results_count": len(combined_results)})
+            return combined_results
             
         except Exception as e:
+            error_trace = traceback.format_exc()
             await log_event(db=db, level=LogLevel.ERROR, message=f"Semantic search failed: {str(e)}",
-                            source="service.enhanced_ai_qa.semantic_search_internal", user_id=str(user_id) if user_id else None, request_id=request_id,
-                            details={**log_details, "error": str(e), "error_type": type(e).__name__})
+                            source="service.enhanced_ai_qa.semantic_search_internal.exception", # This is the failing one
+                            user_id=final_user_id_for_log, request_id=request_id,
+                            details={**log_details, "error": str(e), "error_type": type(e).__name__, "traceback": error_trace})
             return []
-    
+
     async def _t2q_filter(
         self, 
         db: AsyncIOMotorDatabase,

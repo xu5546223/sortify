@@ -3,8 +3,10 @@ import uuid
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from sortify.backend.app.utils.file_handling_utils import prepare_upload_filepath
-from sortify.backend.app.core.config import Settings
+from app.utils.file_handling_utils import prepare_upload_filepath
+from app.core.config import Settings
+from unittest.mock import AsyncMock, MagicMock, patch
+from fastapi import UploadFile
 
 # Minimal settings mock or fixture for testing
 @pytest.fixture
@@ -86,12 +88,12 @@ def test_prepare_upload_filepath_content_type_guessing(mock_settings: Settings):
 
 # Tests for save_uploaded_file
 @pytest.mark.asyncio
-@patch("sortify.backend.app.utils.file_handling_utils.aiofiles.open", new_callable=MagicMock)
+@patch("app.utils.file_handling_utils.aiofiles.open", new_callable=MagicMock)
 async def test_save_uploaded_file_success(mock_aio_open, tmp_path: Path):
-    from sortify.backend.app.utils.file_handling_utils import save_uploaded_file
+    from app.utils.file_handling_utils import save_uploaded_file
     
     mock_file_content = b"test content"
-    mock_upload_file = MagicMock(spec=Uploa...) # Needs UploadFile from fastapi
+    mock_upload_file = MagicMock(spec=UploadFile) # Needs UploadFile from fastapi
     mock_upload_file.read = AsyncMock(return_value=mock_file_content)
     
     # Configure the async context manager for aiofiles.open
@@ -113,9 +115,9 @@ async def test_save_uploaded_file_success(mock_aio_open, tmp_path: Path):
 @patch("sortify.backend.app.utils.file_handling_utils.os.remove")
 @patch("sortify.backend.app.utils.file_handling_utils.os.path.exists")
 async def test_save_uploaded_file_write_exception(mock_os_path_exists, mock_os_remove, mock_aio_open, tmp_path: Path):
-    from sortify.backend.app.utils.file_handling_utils import save_uploaded_file, HTTPException, status
+    from app.utils.file_handling_utils import save_uploaded_file, HTTPException, status
 
-    mock_upload_file = MagicMock(spec=Uploa...) # Needs UploadFile
+    mock_upload_file = MagicMock(spec=UploadFile) # Needs UploadFile
     mock_upload_file.read = AsyncMock(return_value=b"test")
 
     mock_async_file = AsyncMock()
@@ -139,7 +141,7 @@ async def test_save_uploaded_file_write_exception(mock_os_path_exists, mock_os_r
 @pytest.mark.asyncio
 @patch("sortify.backend.app.utils.file_handling_utils.log_event", new_callable=AsyncMock)
 async def test_validate_and_correct_file_type_zero_size(mock_log_event, tmp_path: Path):
-    from sortify.backend.app.utils.file_handling_utils import validate_and_correct_file_type
+    from app.utils.file_handling_utils import validate_and_correct_file_type
     mock_db = AsyncMock()
     file_path = tmp_path / "zero.txt" # Doesn't need to exist for this test part
     
@@ -154,7 +156,7 @@ async def test_validate_and_correct_file_type_zero_size(mock_log_event, tmp_path
 @patch("sortify.backend.app.utils.file_handling_utils.zipfile.ZipFile")
 @patch("sortify.backend.app.utils.file_handling_utils.log_event", new_callable=AsyncMock)
 async def test_validate_and_correct_file_type_valid_docx(mock_log_event, mock_zipfile, tmp_path: Path):
-    from sortify.backend.app.utils.file_handling_utils import validate_and_correct_file_type
+    from app.utils.file_handling_utils import validate_and_correct_file_type
     mock_db = AsyncMock()
     file_path = tmp_path / "valid.docx" # Doesn't need to exist if ZipFile is mocked
     
@@ -174,7 +176,7 @@ async def test_validate_and_correct_file_type_valid_docx(mock_log_event, mock_zi
 @patch("sortify.backend.app.utils.file_handling_utils.zipfile.ZipFile")
 @patch("sortify.backend.app.utils.file_handling_utils.log_event", new_callable=AsyncMock)
 async def test_validate_and_correct_file_type_invalid_docx_bad_zip(mock_log_event, mock_zipfile, tmp_path: Path):
-    from sortify.backend.app.utils.file_handling_utils import validate_and_correct_file_type, zipfile
+    from app.utils.file_handling_utils import validate_and_correct_file_type, zipfile
     mock_db = AsyncMock()
     file_path = tmp_path / "invalid.docx"
 
@@ -196,7 +198,7 @@ async def test_validate_and_correct_file_type_invalid_docx_bad_zip(mock_log_even
 @pytest.mark.asyncio
 @patch("sortify.backend.app.utils.file_handling_utils.log_event", new_callable=AsyncMock)
 async def test_validate_and_correct_file_type_pdf(mock_log_event, tmp_path: Path):
-    from sortify.backend.app.utils.file_handling_utils import validate_and_correct_file_type
+    from app.utils.file_handling_utils import validate_and_correct_file_type
     mock_db = AsyncMock()
     file_path = tmp_path / "test.pdf"
     declared_type = "application/pdf"
