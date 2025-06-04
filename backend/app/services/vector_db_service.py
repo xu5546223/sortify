@@ -127,15 +127,16 @@ class VectorDatabaseService:
     
     def search_similar_vectors(
         self, 
-        query_vector: List[float], 
+        query_vector: List[float],
         top_k: int = 10,
         similarity_threshold: float = 0.5,
         owner_id_filter: Optional[str] = None,
+        metadata_filter: Optional[Dict[str, Any]] = None, # New parameter
         collection_name: Optional[str] = None
     ) -> List[SemanticSearchResult]:
-        """搜索相似向量，可選根據 owner_id 過濾，並可指定集合"""
+        """搜索相似向量，可選根據 owner_id 和 metadata 過濾，並可指定集合"""
         try:
-            target_collection = self.collection 
+            target_collection = self.collection
             if collection_name:
                 if not self.client:
                     logger.error("ChromaDB client not initialized, cannot switch collection.")
@@ -143,14 +144,14 @@ class VectorDatabaseService:
                 try:
                     target_collection = self.client.get_collection(name=collection_name)
                     logger.info(f"Performing search on specified collection: {collection_name}")
-                except Exception as e_get_coll: 
+                except Exception as e_get_coll:
                     logger.error(f"Failed to get specified collection '{collection_name}': {e_get_coll}. Falling back to default collection or erroring.")
                     raise ValueError(f"Specified collection '{collection_name}' not found or not accessible.")
 
-            if not target_collection: 
+            if not target_collection:
                 logger.error("Target collection for search is not initialized.")
                 raise ValueError("集合未初始化")
-            
+
             # 準備查詢參數
             query_params: Dict[str, Any] = {
                 "query_embeddings": [query_vector],
@@ -158,8 +159,21 @@ class VectorDatabaseService:
                 "include": ["documents", "metadatas", "distances"]
             }
 
+            where_clause: Dict[str, Any] = {}
             if owner_id_filter:
-                query_params["where"] = {"owner_id": owner_id_filter}
+                where_clause["owner_id"] = owner_id_filter
+
+            if metadata_filter:
+                for key, value in metadata_filter.items():
+                    # Ensure keys don't conflict and are valid for ChromaDB metadata query
+                    if key in where_clause:
+                        logger.warning(f"Metadata filter key '{key}' conflicts with existing where clause key (e.g., owner_id). Overwriting is not standard. Check logic.")
+                        # For now, let it overwrite, but this might need specific handling for $and if owner_id and metadata_filter key are the same.
+                        # However, standard ChromaDB where clause implies AND for top-level keys.
+                    where_clause[key] = value
+
+            if where_clause:
+                query_params["where"] = where_clause
             
             # 執行搜索
             results = target_collection.query(**query_params)
@@ -170,11 +184,8 @@ class VectorDatabaseService:
                 for i, (doc_id, metadata, distance) in enumerate(zip(
                     results["ids"][0], results["metadatas"][0], results["distances"][0]
                 )):
-                    # ChromaDB返回的是距離，需要轉換為相似度
-                    # 對於餘弦距離，相似度 = 1 - 距離
                     similarity_score = 1.0 - distance
                     
-                    # 檢查相似度閾值
                     if similarity_score >= similarity_threshold:
                         search_result = SemanticSearchResult(
                             document_id=metadata.get("document_id", ""),
@@ -184,21 +195,26 @@ class VectorDatabaseService:
                                 "file_type": metadata.get("file_type", ""),
                                 "created_at": metadata.get("created_at", ""),
                                 "owner_id": metadata.get("owner_id", ""),
-                                "vector_id": doc_id
+                                "vector_id": doc_id # Chroma's internal ID for the vector
                             }
                         )
                         search_results.append(search_result)
             
-            logger.info(f"搜索完成，在集合 '{target_collection.name}' 中找到 {len(search_results)} 個相似結果。Owner filter: {'applied' if owner_id_filter else 'not applied'}")
+            log_message = (
+                f"搜索完成，在集合 '{target_collection.name}' 中找到 {len(search_results)} 個相似結果。"
+                f" Owner filter: {'applied' if owner_id_filter else 'not applied'}."
+                f" Metadata filter: {'applied with keys: ' + str(list(metadata_filter.keys())) if metadata_filter else 'not applied'}."
+            )
+            logger.info(log_message)
             return search_results
             
-        except ValueError as ve: 
+        except ValueError as ve:
             logger.warning(f"向量搜索中的輸入或配置錯誤: {ve}")
             raise
         except Exception as e:
-            logger.error(f"向量搜索失敗: {e}", exc_info=True) 
+            logger.error(f"向量搜索失敗: {e}", exc_info=True)
             return []
-    
+
     def delete_by_document_id(self, document_id: str) -> bool:
         """根據文檔ID刪除向量"""
         try:

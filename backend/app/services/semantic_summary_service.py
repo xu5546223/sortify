@@ -220,42 +220,67 @@ class SemanticSummaryService:
             step_start_time = datetime.now()
             logger.info(f"[{step_start_time.isoformat()}] Vectorizing text for document {doc_id_str}.")
             text_parts = []
-            if semantic_summary.summary_text and semantic_summary.summary_text.strip():
-                text_parts.append(semantic_summary.summary_text.strip())
+            key_info = None
 
-            if semantic_summary.key_terms: 
-                valid_key_terms = [
-                    str(term).strip() for term in semantic_summary.key_terms 
-                    if term and str(term).strip()
-                ]
-                if valid_key_terms:
-                    text_parts.append("相關標籤：" + "，".join(valid_key_terms)) # Consider localizing or standardizing log messages
-            
             if semantic_summary.full_ai_analysis and isinstance(semantic_summary.full_ai_analysis, dict):
                 key_info = semantic_summary.full_ai_analysis.get("key_information")
-                if isinstance(key_info, dict):
-                    searchable_keywords = key_info.get("searchable_keywords")
-                    if isinstance(searchable_keywords, list):
-                        valid_keywords = [str(kw).strip() for kw in searchable_keywords if kw and str(kw).strip()]
-                        if valid_keywords:
-                            text_parts.append("搜索關鍵詞：" + "，".join(valid_keywords))
-                    
-                    knowledge_domains = key_info.get("knowledge_domains")
-                    if isinstance(knowledge_domains, list):
-                        valid_domains = [str(kd).strip() for kd in knowledge_domains if kd and str(kd).strip()]
-                        if valid_domains:
-                            text_parts.append("知識領域：" + "，".join(valid_domains))
 
-            text_to_embed = "\n".join(filter(None, text_parts)) # filter(None,..) to remove empty strings from join
+            if isinstance(key_info, dict):
+                # 1. content_summary
+                content_summary = key_info.get("content_summary", "")
+                if isinstance(content_summary, str) and content_summary.strip():
+                    text_parts.append(content_summary.strip())
+
+                # 2. searchable_keywords
+                searchable_keywords = key_info.get("searchable_keywords", [])
+                if isinstance(searchable_keywords, list):
+                    valid_keywords = [str(kw).strip() for kw in searchable_keywords if kw and isinstance(kw, str) and str(kw).strip()]
+                    if valid_keywords:
+                        text_parts.append(" ".join(valid_keywords))
+
+                # 3. semantic_tags
+                semantic_tags = key_info.get("semantic_tags", [])
+                if isinstance(semantic_tags, list):
+                    valid_tags = [str(tag).strip() for tag in semantic_tags if tag and isinstance(tag, str) and str(tag).strip()]
+                    if valid_tags:
+                        text_parts.append(" ".join(valid_tags))
+
+                # 4. knowledge_domains
+                knowledge_domains = key_info.get("knowledge_domains", [])
+                if isinstance(knowledge_domains, list):
+                    valid_domains = [str(kd).strip() for kd in knowledge_domains if kd and isinstance(kd, str) and str(kd).strip()]
+                    if valid_domains:
+                        text_parts.append(" ".join(valid_domains))
+
+                # 5. main_topics
+                main_topics = key_info.get("main_topics", [])
+                if isinstance(main_topics, list):
+                    valid_topics = [str(topic).strip() for topic in main_topics if topic and isinstance(topic, str) and str(topic).strip()]
+                    if valid_topics:
+                        text_parts.append(" ".join(valid_topics))
+
+                # 6. key_concepts
+                key_concepts = key_info.get("key_concepts", [])
+                if isinstance(key_concepts, list):
+                    valid_concepts = [str(concept).strip() for concept in key_concepts if concept and isinstance(concept, str) and str(concept).strip()]
+                    if valid_concepts:
+                        text_parts.append(" ".join(valid_concepts))
             
+            # Fallback: if key_info was not available or did not yield any text_parts,
+            # try to use semantic_summary.summary_text (which might be from an older analysis or basic fallback)
+            if not text_parts and semantic_summary.summary_text and semantic_summary.summary_text.strip():
+                logger.info(f"No structured key_information found or it yielded no text parts for doc {doc_id_str}. Using semantic_summary.summary_text for embedding.")
+                text_parts.append(semantic_summary.summary_text.strip())
+
+            text_to_embed = "\n".join(filter(None, text_parts))
+
             if not text_to_embed.strip():
-                fallback_reason = "Combined text for embedding was empty"
-                logger.warning(f"文檔 {doc_id_str} 的組合向量化文本為空，將僅使用摘要或文件名作為後備。")
-                if semantic_summary.summary_text and semantic_summary.summary_text.strip():
-                    text_to_embed = semantic_summary.summary_text.strip()
-                    fallback_reason += ", using summary."
-                elif document.filename:
-                     text_to_embed = f"文件名：{document.filename}"
+                fallback_reason = "Combined text for embedding was empty after processing key_information and summary_text"
+                logger.warning(f"文檔 {doc_id_str} 的組合向量化文本為空，將使用文件名作為最終後備。")
+                # The original code had semantic_summary.summary_text here, but if that was already tried and text_parts is empty,
+                # it means it was also empty or not useful. So, proceeding to filename.
+                if document.filename:
+                     text_to_embed = document.filename # Removed "文件名：" prefix for cleaner embedding
                      fallback_reason += ", using filename."
                 else:
                     text_to_embed = "文檔內容無法確定" 

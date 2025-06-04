@@ -269,6 +269,10 @@ app.include_router(embedding_api_v1.router, prefix="/api/v1/embedding", tags=["v
 # 註冊新的統一AI路由
 app.include_router(unified_ai_api_v1.router, prefix="/api/v1/unified-ai", tags=["v1 - Unified AI Services"])
 
+# 註冊新的 Evaluation 路由
+from .apis.v1 import evaluation as evaluation_api_v1 # Import the evaluation router
+app.include_router(evaluation_api_v1.router, prefix="/api/v1/evaluation", tags=["v1 - Evaluation"])
+
 # 直接在 app 上註冊 CopilotKit 端點
 try:
     from .copilot_setup import python_backend_sdk
