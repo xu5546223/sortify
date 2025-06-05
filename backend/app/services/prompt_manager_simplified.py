@@ -13,6 +13,7 @@ class PromptType(Enum):
     TEXT_ANALYSIS = "text_analysis"
     QUERY_REWRITE = "query_rewrite"
     ANSWER_GENERATION = "answer_generation"
+    MONGODB_DETAIL_QUERY_GENERATION = "mongodb_detail_query_generation"
 
 @dataclass
 class PromptTemplate:
@@ -269,7 +270,35 @@ MIME類型: {{image_mime_type}}
             variables=["user_question", "intent_analysis", "document_context"],
             description="基於文檔生成JSON格式的回答"
         )
-    
+
+        self._prompts[PromptType.MONGODB_DETAIL_QUERY_GENERATION] = PromptTemplate(
+            prompt_type=PromptType.MONGODB_DETAIL_QUERY_GENERATION,
+            system_prompt='''Your goal is to generate a MongoDB query projection dictionary and/or a filter dictionary portion to retrieve specific details from a single document. You will be given a user question and schema information about the document. The query will operate on a single, known document ID (which will be supplied externally to your generated query components). Focus on identifying which fields to return (projection) or which sub-fields/array elements to filter within the document.
+
+Expected JSON output structure:
+```json
+{
+  "projection": {"field_to_include": 1, "another_field": 1},
+  "sub_filter": {"array_field": {"$elemMatch": {"key": "value"}}},
+  "reasoning": "Explanation of why this query was chosen."
+}
+```
+
+- `projection`: Use to select specific top-level or nested fields. If no specific projection is needed (i.e., return all fields), this can be null or omitted.
+- `sub_filter`: Use for criteria within the document, such as matching elements in an array field or conditions on sub-document fields. If no sub-filter is needed, this can be null or omitted.
+- `reasoning`: Explain your choices for projection and sub_filter.
+
+The query will always be anchored to a specific document ID, so you do not need to worry about matching the document ID itself.
+''' ,
+            user_prompt_template='''User Question: {user_question}
+Target Document ID: {document_id}
+Document Structure Information: {document_schema_info}
+
+Generate MongoDB query components (projection and/or filter for sub-fields) to find the answer within this specific document.''',
+            variables=["user_question", "document_id", "document_schema_info"],
+            description="Generates MongoDB query components (projection and/or sub-filter) for detailed data retrieval from a specific document."
+        )
+
     async def get_prompt(
         self, 
         prompt_type: PromptType,
@@ -363,7 +392,7 @@ MIME類型: {{image_mime_type}}
             # Add main system prompt first
             final_system_prompt_parts.append(system_prompt)
 
-            if prompt_template.prompt_type in [PromptType.IMAGE_ANALYSIS, PromptType.TEXT_ANALYSIS, PromptType.QUERY_REWRITE, PromptType.ANSWER_GENERATION]:
+            if prompt_template.prompt_type in [PromptType.IMAGE_ANALYSIS, PromptType.TEXT_ANALYSIS, PromptType.QUERY_REWRITE, PromptType.ANSWER_GENERATION, PromptType.MONGODB_DETAIL_QUERY_GENERATION]:
                 if apply_chinese_instruction:
                     # Insert language instruction before safety, but after main content for clarity
                     final_system_prompt_parts.append(self.CHINESE_OUTPUT_INSTRUCTION)

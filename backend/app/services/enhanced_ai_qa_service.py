@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any, Tuple
 import time
-# import json # Unused
+import json # Added
 import uuid
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.logging_utils import AppLogger, log_event, LogLevel
@@ -16,9 +16,12 @@ from app.models.ai_models_simplified import TokenUsage
 from app.models.ai_models_simplified import (
     # AITextAnalysisOutput, # Unused
     AIQueryRewriteOutput,
+    AIMongoDBQueryDetailOutput, # Added
     AIDocumentAnalysisOutputDetail, AIDocumentKeyInformation, # AIDocumentKeyInformation is likely used by AIDocumentAnalysisOutputDetail
     AIGeneratedAnswerOutput 
 )
+from app.models.document_models import Document # Ensure Document model is available
+# from bson import ObjectId # Potentially needed for sanitize_mongo_output
 from app.crud.crud_documents import get_documents_by_ids
 from pydantic import ValidationError
 import logging
@@ -49,6 +52,8 @@ class EnhancedAIQAService:
         """
         start_time = time.time()
         total_tokens = 0
+        detailed_document_data: Optional[Dict[str, Any]] = None
+        ai_generated_query_reasoning: Optional[str] = None
         
         log_details_initial = {
             "question_length": len(request.question) if request.question else 0,
@@ -174,12 +179,116 @@ class EnhancedAIQAService:
                     processing_time=time.time() - start_time,
                     query_rewrite_result=query_rewrite_result,
                     semantic_search_contexts=semantic_contexts_for_response, # 傳遞
+                    session_id=request.session_id,
+                    ai_generated_query_reasoning=ai_generated_query_reasoning,
+                    detailed_document_data_from_ai_query=detailed_document_data
+                )
+
+            # --- New: AI-driven MongoDB Detail Query Generation (Conditional) ---
+            if request.use_ai_detailed_query and full_documents: # Ensure flag is true and we have at least one document
+                logger.info(f"AI detailed query feature is enabled for request_id: {request_id}. Proceeding with detailed query generation.")
+                target_document: Document = full_documents[0] # Example: use the first document
+
+                document_schema_info = {
+                    "description": "Schema for a document stored in MongoDB. Your query will operate on the single document specified by 'Target Document ID'.",
+                    "fields": {
+                        "id": "UUID (string), unique identifier of the document. This is provided as 'Target Document ID'. Your query will be scoped to this ID already.",
+                        "filename": "string, original filename.",
+                        "file_type": "string, MIME type.",
+                        "content_type_human_readable": "string, e.g. 'PDF document', 'Word document', 'Email'.",
+                        "extracted_text": "string, full extracted text content of the document. Can be very long. Use regex for partial matches if needed.",
+                        "analysis": {
+                            "type": "object",
+                            "description": "Contains AI-generated analysis of the document.",
+                            "properties": {
+                                "ai_analysis_output": {
+                                    "type": "object",
+                                    "description": "Structured output from a previous AI analysis (e.g., from text or image analysis). This object can be nested and its structure may vary. Common keys are provided below.",
+                                    "example_keys": ["initial_summary", "content_type", "key_information", "semantic_tags", "extracted_entities", "main_topics", "key_concepts", "dynamic_fields", "action_items", "dates_mentioned", "amounts_mentioned", "document_purpose", "note_structure", "thinking_patterns", "business_context", "legal_context"]
+                                },
+                                "summary": "string, a brief summary of the document.",
+                                "key_terms": "list of strings, important terms extracted from the document."
+                            }
+                        },
+                        "tags": "list of strings, user-defined tags.",
+                        "metadata": "object, other miscellaneous metadata (e.g., source URL, author). Structure can vary.",
+                        "created_at": "datetime string (ISO format), when the document record was created.",
+                        "updated_at": "datetime string (ISO format), when the document record was last updated."
+                    },
+                    "query_notes": "Your goal is to generate 'projection' to select specific fields, and/or 'sub_filter' to apply conditions *within* the specified document's fields. For example, use 'sub_filter' for regex matching on 'extracted_text', or matching elements in 'analysis.ai_analysis_output.semantic_tags' array, or conditions on specific keys in 'analysis.ai_analysis_output.dynamic_fields' or 'metadata'. Do not generate a filter for the document '_id' itself as that is already handled."
+                }
+
+                ai_query_response = await unified_ai_service_simplified.generate_mongodb_detail_query(
+                    user_question=request.question, # Consider using a rewritten query if more specific
+                    document_id=str(target_document.id),
+                    document_schema_info=document_schema_info,
+                    db=db,
+                    model_preference=request.model_preference, # Or a specific model like "gemini-1.5-flash-latest"
+                    user_id=str(user_id) if user_id else None,
                     session_id=request.session_id
                 )
-            
+
+                if ai_query_response.success and ai_query_response.output_data and isinstance(ai_query_response.output_data, AIMongoDBQueryDetailOutput):
+                    query_components: AIMongoDBQueryDetailOutput = ai_query_response.output_data
+                    ai_generated_query_reasoning = query_components.reasoning
+                    logger.info(f"AI generated query components for doc {target_document.id}. Reasoning: {ai_generated_query_reasoning}")
+
+                    mongo_filter = {"_id": target_document.id}
+                    mongo_projection: Optional[Dict[str, Any]] = query_components.projection
+
+                    if query_components.sub_filter and isinstance(query_components.sub_filter, dict) and query_components.sub_filter:
+                        # Ensure sub_filter doesn't try to overwrite _id
+                        if "_id" in query_components.sub_filter:
+                            logger.warning("AI-generated sub_filter contained '_id', removing it to avoid conflict.")
+                            del query_components.sub_filter["_id"]
+                        mongo_filter.update(query_components.sub_filter)
+
+                    # Ensure projection is not an empty dict, which might cause issues.
+                    if mongo_projection is not None and not mongo_projection: # if mongo_projection == {}
+                        mongo_projection = None
+                        logger.debug("AI-generated projection was empty, setting to None.")
+
+                    if mongo_projection or query_components.sub_filter: # Only query if there's something to project or filter by
+                        db_query = db.documents.find_one(mongo_filter, projection=mongo_projection if mongo_projection else None)
+                        fetched_detailed_data_from_db = await db_query
+
+                        if fetched_detailed_data_from_db:
+                            def sanitize_mongo_output(data_item: Any) -> Any:
+                                if isinstance(data_item, dict):
+                                    return {k: sanitize_mongo_output(v) for k, v in data_item.items()}
+                                elif isinstance(data_item, list):
+                                    return [sanitize_mongo_output(i) for i in data_item]
+                                elif isinstance(data_item, uuid.UUID): # Ensure this is before other type checks if needed
+                                    return str(data_item)
+                                # from bson import ObjectId # Uncomment if ObjectId is not auto-handled
+                                # if isinstance(data_item, ObjectId):
+                                #    return str(data_item)
+                                return data_item
+
+                            detailed_document_data = sanitize_mongo_output(fetched_detailed_data_from_db)
+                            logger.info(f"Successfully fetched detailed data for doc {target_document.id} using AI-generated query. Projection: {mongo_projection}, Sub-filter: {query_components.sub_filter}")
+                        else:
+                            logger.warning(f"AI-generated query for doc {target_document.id} yielded no data. Filter: {mongo_filter}, Projection: {mongo_projection}")
+                    else:
+                        logger.info(f"AI did not suggest specific projection or sub-filter for doc {target_document.id}. Skipping detailed query. Reasoning: {ai_generated_query_reasoning}")
+                elif ai_query_response.error_message:
+                     logger.error(f"AI MongoDB detail query generation failed for doc {target_document.id}: {ai_query_response.error_message}")
+                else:
+                    logger.warning(f"AI MongoDB detail query generation did not succeed or returned no output data for doc {target_document.id}.")
+            # --- End of AI-driven MongoDB Detail Query Generation ---
+
             # 步驟5: 生成最終答案（使用統一AI服務）
+            # TODO: Modify _generate_answer_unified to accept detailed_document_data and ai_generated_query_reasoning
             answer, answer_tokens, confidence, actual_contexts_for_llm = await self._generate_answer_unified(
-                db, request.question, full_documents, query_rewrite_result, user_id, request_id, request.model_preference # Pass user_id, request_id and model_preference
+                db,
+                request.question,
+                full_documents,
+                query_rewrite_result,
+                detailed_document_data, # New
+                ai_generated_query_reasoning, # New
+                user_id,
+                request_id,
+                request.model_preference
             )
             total_tokens += answer_tokens
             
@@ -189,14 +298,16 @@ class EnhancedAIQAService:
             
             return AIQAResponse(
                 answer=answer,
-                source_documents=[str(doc.id) for doc in full_documents],
+                source_documents=[str(doc.id) for doc in full_documents], # Or filter based on actual_contexts_for_llm
                 confidence_score=confidence,
                 tokens_used=total_tokens,
                 processing_time=processing_time,
                 query_rewrite_result=query_rewrite_result,
-                semantic_search_contexts=semantic_contexts_for_response, # 傳遞
+                semantic_search_contexts=semantic_contexts_for_response,
                 session_id=request.session_id,
-                llm_context_documents=actual_contexts_for_llm
+                llm_context_documents=actual_contexts_for_llm,
+                ai_generated_query_reasoning=ai_generated_query_reasoning,
+                detailed_document_data_from_ai_query=detailed_document_data
             )
             
         except Exception as e:
@@ -233,7 +344,9 @@ class EnhancedAIQAService:
                 query_rewrite_result=current_qrr,
                 semantic_search_contexts=current_semantic_contexts, 
                 session_id=request.session_id,
-                llm_context_documents=[], 
+                llm_context_documents=[],
+                ai_generated_query_reasoning=ai_generated_query_reasoning, # Include even in error if populated
+                detailed_document_data_from_ai_query=detailed_document_data, # Include even in error if populated
                 error_message=str(e) 
             )
 
@@ -618,71 +731,107 @@ class EnhancedAIQAService:
         original_query: str,
         documents_for_context: List[Any], # Assuming Document objects
         query_rewrite_result: QueryRewriteResult,
+        detailed_document_data: Optional[Dict[str, Any]], # New
+        ai_generated_query_reasoning: Optional[str],   # New
         user_id: Optional[str], # Added
         request_id: Optional[str], # Added
         model_preference: Optional[str] = None 
     ) -> Tuple[str, int, float, List[LLMContextDocument]]:
         """步驟4: 生成最終答案（使用統一AI服務）"""
         actual_contexts_for_llm: List[LLMContextDocument] = []
+        context_parts = []
+        processed_doc_ids_for_general_context = set()
 
         log_details_context = {
-            "num_docs_for_context": len(documents_for_context),
+            "num_docs_for_context_initial": len(documents_for_context),
             "original_query_length": len(original_query),
-            "intent": query_rewrite_result.intent_analysis[:100] if query_rewrite_result.intent_analysis else None # Log snippet
+            "intent": query_rewrite_result.intent_analysis[:100] if query_rewrite_result.intent_analysis else None,
+            "has_detailed_document_data": bool(detailed_document_data)
         }
         await log_event(db=db, level=LogLevel.DEBUG, message="Assembling context for AI answer generation.",
                         source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details_context)
 
         try:
-            context_parts = []
-            for i, doc in enumerate(documents_for_context[:5], 1):
+            # Handle detailed_document_data first
+            if detailed_document_data and documents_for_context:
+                # Assume detailed_document_data pertains to documents_for_context[0]
+                primary_doc_for_detail = documents_for_context[0]
+                target_doc_id_for_detail = str(primary_doc_for_detail.id) if hasattr(primary_doc_for_detail, 'id') else "unknown_target_doc"
+
+                detailed_data_str = json.dumps(detailed_document_data, ensure_ascii=False, indent=2)
+
+                context_preamble = f"Detailed information for Document ID {target_doc_id_for_detail} (fetched based on AI-generated query):\n"
+                if ai_generated_query_reasoning:
+                    context_preamble += f"AI Query Reasoning: {ai_generated_query_reasoning}\n"
+                context_preamble += f"Fetched Data:\n{detailed_data_str}\n\n"
+                context_parts.append(context_preamble)
+                actual_contexts_for_llm.append(LLMContextDocument(document_id=target_doc_id_for_detail, content_used=detailed_data_str[:200], source_type="ai_detailed_query"))
+
+                if hasattr(primary_doc_for_detail, 'id'):
+                    processed_doc_ids_for_general_context.add(str(primary_doc_for_detail.id))
+
+            # Process remaining documents_for_context for general content
+            docs_for_general_context = []
+            if documents_for_context:
+                for doc in documents_for_context:
+                    if hasattr(doc, 'id') and str(doc.id) not in processed_doc_ids_for_general_context:
+                        docs_for_general_context.append(doc)
+
+            # Limit the number of general context documents (e.g., up to 4-5 total including detailed one if present)
+            max_general_docs = 5 - (1 if detailed_document_data else 0)
+
+            for i, doc in enumerate(docs_for_general_context[:max_general_docs], 1):
                 doc_content_to_use = ""
-                content_source_type = "unknown"
-                doc_id_str = str(doc.id) if hasattr(doc, 'id') else f"unknown_doc_{i}"
+                content_source_type = "unknown_general" # Default
+                doc_id_str = str(doc.id) if hasattr(doc, 'id') else f"unknown_general_doc_{i}"
 
                 raw_extracted_text: Optional[str] = getattr(doc, 'extracted_text', None)
-                ai_summary: Optional[str] = None
-                ai_dynamic_long_text: Optional[str] = None
-                current_summary: Optional[str] = None
+                ai_summary_general: Optional[str] = None
+                ai_dynamic_long_text_general: Optional[str] = None
+                current_summary_general: Optional[str] = None
 
                 if doc.analysis and doc.analysis.ai_analysis_output and isinstance(doc.analysis.ai_analysis_output, dict):
                     try:
-                        analysis_output_data = AIDocumentAnalysisOutputDetail(**doc.analysis.ai_analysis_output)
-                        current_summary = analysis_output_data.initial_summary or analysis_output_data.initial_description
-                        if analysis_output_data.key_information:
-                            key_info_model = analysis_output_data.key_information
-                            if not current_summary or len(str(current_summary).strip()) < 50:
-                                content_summary_from_key = key_info_model.content_summary
-                                if content_summary_from_key and len(str(content_summary_from_key).strip()) > len(str(current_summary).strip() if current_summary else ""):
-                                    current_summary = content_summary_from_key
-                            if key_info_model.dynamic_fields:
-                                for field_value in key_info_model.dynamic_fields.values():
-                                    if isinstance(field_value, str) and len(field_value) > 200:
-                                        if not ai_dynamic_long_text or len(field_value) > len(ai_dynamic_long_text):
-                                            ai_dynamic_long_text = field_value
-                        if current_summary and isinstance(current_summary, str) and current_summary.strip():
-                            ai_summary = current_summary.strip()
-                    except ValidationError as ve:
-                        await log_event(db=db, level=LogLevel.WARNING, message=f"Validation error parsing doc analysis for doc_id {doc_id_str}: {ve}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
-                        if isinstance(doc.analysis.ai_analysis_output, dict):
-                            current_summary = doc.analysis.ai_analysis_output.get('initial_summary') or doc.analysis.ai_analysis_output.get('initial_description')
-                            if current_summary and isinstance(current_summary, str) and current_summary.strip():
-                                ai_summary = current_summary.strip()
-                    except Exception as e_parse:
-                        await log_event(db=db, level=LogLevel.ERROR, message=f"Unexpected error parsing doc analysis for doc_id {doc_id_str}: {e_parse}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details={"error": str(e_parse)})
+                        analysis_output_data_general = AIDocumentAnalysisOutputDetail(**doc.analysis.ai_analysis_output)
+                        current_summary_general = analysis_output_data_general.initial_summary or analysis_output_data_general.initial_description
+                        if analysis_output_data_general.key_information:
+                            key_info_model_general = analysis_output_data_general.key_information
+                            if not current_summary_general or len(str(current_summary_general).strip()) < 50:
+                                content_summary_from_key_general = key_info_model_general.content_summary
+                                if content_summary_from_key_general and len(str(content_summary_from_key_general).strip()) > len(str(current_summary_general).strip() if current_summary_general else ""):
+                                    current_summary_general = content_summary_from_key_general
+                            if key_info_model_general.dynamic_fields:
+                                for field_value in key_info_model_general.dynamic_fields.values():
+                                    if isinstance(field_value, str) and len(field_value) > 200: # Check length
+                                        if not ai_dynamic_long_text_general or len(field_value) > len(ai_dynamic_long_text_general):
+                                            ai_dynamic_long_text_general = field_value
+                        if current_summary_general and isinstance(current_summary_general, str) and current_summary_general.strip():
+                            ai_summary_general = current_summary_general.strip()
+                    except ValidationError as ve_general:
+                        await log_event(db=db, level=LogLevel.WARNING, message=f"Validation error parsing general doc analysis for doc_id {doc_id_str}: {ve_general}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
+                        if isinstance(doc.analysis.ai_analysis_output, dict): # Fallback for general doc
+                            current_summary_general = doc.analysis.ai_analysis_output.get('initial_summary') or doc.analysis.ai_analysis_output.get('initial_description')
+                            if current_summary_general and isinstance(current_summary_general, str) and current_summary_general.strip():
+                                ai_summary_general = current_summary_general.strip()
+                    except Exception as e_parse_general:
+                         await log_event(db=db, level=LogLevel.ERROR, message=f"Unexpected error parsing general doc analysis for doc_id {doc_id_str}: {e_parse_general}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details={"error": str(e_parse_general)})
                 
-                if ai_dynamic_long_text: doc_content_to_use, content_source_type = ai_dynamic_long_text, "ai_analysis_dynamic_field"
-                elif raw_extracted_text and isinstance(raw_extracted_text, str) and len(raw_extracted_text.strip()) > 0: doc_content_to_use, content_source_type = raw_extracted_text, "extracted_text"
-                elif ai_summary: doc_content_to_use, content_source_type = ai_summary, "ai_analysis_summary"
-                else: doc_content_to_use, content_source_type = f"Document '{getattr(doc, 'filename', 'Unknown')}' ({getattr(doc, 'file_type', 'Unknown Type')}) has no usable content.", "placeholder_no_content"
+                if ai_dynamic_long_text_general:
+                    doc_content_to_use, content_source_type = ai_dynamic_long_text_general, "general_ai_analysis_dynamic_field"
+                elif raw_extracted_text and isinstance(raw_extracted_text, str) and len(raw_extracted_text.strip()) > 0:
+                    doc_content_to_use, content_source_type = raw_extracted_text, "general_extracted_text"
+                elif ai_summary_general:
+                    doc_content_to_use, content_source_type = ai_summary_general, "general_ai_analysis_summary"
+                else:
+                    doc_content_to_use, content_source_type = f"Document '{getattr(doc, 'filename', 'Unknown')}' ({getattr(doc, 'file_type', 'Unknown Type')}) has no usable content.", "general_placeholder_no_content"
                 
-                actual_contexts_for_llm.append(LLMContextDocument(document_id=doc_id_str, content_used=doc_content_to_use[:200], source_type=content_source_type)) # Log snippet
-                context_parts.append(f"Document {i} (ID: {doc_id_str}, Source: {content_source_type}):\n{doc_content_to_use}")
-            
+                actual_contexts_for_llm.append(LLMContextDocument(document_id=doc_id_str, content_used=doc_content_to_use[:200], source_type=content_source_type))
+                context_parts.append(f"General Context Document {i} (ID: {doc_id_str}, Source: {content_source_type}):\n{doc_content_to_use}")
+
             full_document_context = "\n\n".join(context_parts)
             query_for_answer_gen = query_rewrite_result.rewritten_queries[0] if query_rewrite_result.rewritten_queries and query_rewrite_result.rewritten_queries[0] else original_query
 
-            log_details_ai_call = {"query_for_answer_gen_length": len(query_for_answer_gen), "num_docs_in_context": len(documents_for_context), "total_context_length": len(full_document_context), "model_preference": model_preference}
+            log_details_ai_call = {"query_for_answer_gen_length": len(query_for_answer_gen), "num_docs_in_final_context": len(actual_contexts_for_llm), "total_context_length": len(full_document_context), "model_preference": model_preference}
             await log_event(db=db, level=LogLevel.DEBUG, message="Calling AI for answer generation.", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details_ai_call)
             
             ai_response: UnifiedAIResponse = await unified_ai_service_simplified.generate_answer(

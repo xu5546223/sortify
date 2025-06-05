@@ -59,6 +59,7 @@ class AIQARequest(BaseModel):
     session_id: Optional[str] = Field(None, description="會話ID，用於追蹤多輪對話")
     document_ids: Optional[List[str]] = Field(None, description="用於上下文的特定文檔ID列表 (可選)")
     model_preference: Optional[str] = Field(None, description="偏好的AI模型 (例如 'gemini-pro', 'gpt-4')")
+    use_ai_detailed_query: Optional[bool] = Field(False, description="Enable AI to generate specific queries for detailed data extraction from documents.")
 
 class QueryRewriteResult(BaseModel):
     """查詢重寫結果"""
@@ -93,6 +94,8 @@ class AIQAResponse(BaseModel):
     llm_context_documents: Optional[List[LLMContextDocument]] = Field(None, description="實際提供給LLM進行答案生成的文檔上下文片段")
     session_id: Optional[str] = Field(None, description="會話ID")
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    ai_generated_query_reasoning: Optional[str] = Field(None, description="Reasoning behind the AI-generated MongoDB query for detailed data retrieval.")
+    detailed_document_data_from_ai_query: Optional[Dict[str, Any]] = Field(None, description="Specific data fetched from a document using an AI-generated MongoDB query.")
 
 # 新增：用於批量處理請求的模型
 class BatchProcessRequest(BaseModel):

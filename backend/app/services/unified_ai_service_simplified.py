@@ -24,7 +24,8 @@ from app.models.ai_models_simplified import (
     FlexibleKeyInformation,
     IntermediateAnalysisStep,
     AIGeneratedAnswerOutput,
-    AIQueryRewriteOutput
+    AIQueryRewriteOutput,
+    AIMongoDBQueryDetailOutput
 )
 from app.services.prompt_manager_simplified import prompt_manager_simplified, PromptType, PromptTemplate
 from app.services.unified_ai_config import unified_ai_config, AIModelConfig, TaskType
@@ -150,6 +151,8 @@ class UnifiedAIServiceSimplified:
             prompt_type = PromptType.ANSWER_GENERATION
         elif request.task_type == TaskType.QUERY_REWRITE: 
             prompt_type = PromptType.QUERY_REWRITE
+        elif request.task_type == TaskType.MONGODB_DETAIL_QUERY_GENERATION:
+            prompt_type = PromptType.MONGODB_DETAIL_QUERY_GENERATION
         else:
             logger.error(f"未知的任務類型: {request.task_type}")
             return AIResponse(success=False, task_type=request.task_type, error_message=f"未知的任務類型: {request.task_type}", processing_time_seconds=time.time() - start_time)
@@ -257,6 +260,8 @@ class UnifiedAIServiceSimplified:
                         parsed_output.answer_text = direct_answer
                 elif request.task_type == TaskType.QUERY_REWRITE:
                     parsed_output = AIQueryRewriteOutput.model_validate_json(output_text)
+                elif request.task_type == TaskType.MONGODB_DETAIL_QUERY_GENERATION:
+                    parsed_output = AIMongoDBQueryDetailOutput.model_validate_json(output_text)
                 else: 
                     logger.warning(f"任務類型 {request.task_type} 沒有特定的解析邏輯。輸出將是原始文本。")
                     parsed_output = output_text
@@ -487,6 +492,39 @@ class UnifiedAIServiceSimplified:
             user_id=user_id,
             session_id=session_id,
             ai_max_output_tokens=ai_max_output_tokens
+        )
+        return await self.process_request(request, db)
+
+    async def generate_mongodb_detail_query(
+        self,
+        user_question: str,
+        document_id: str,
+        document_schema_info: Dict[str, Any],
+        db: Optional[AsyncIOMotorDatabase] = None,
+        model_preference: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        ai_max_output_tokens: Optional[int] = None
+    ) -> AIResponse:
+        """
+        Generates MongoDB query components (projection and/or sub-filter)
+        for detailed data retrieval from a specific document.
+        """
+        prompt_params = {
+            "user_question": user_question,
+            "document_id": document_id,
+            "document_schema_info": json.dumps(document_schema_info) # Ensure schema is passed as a JSON string if expected by prompt
+        }
+
+        request = AIRequest(
+            task_type=TaskType.MONGODB_DETAIL_QUERY_GENERATION,
+            content=user_question,  # Main content for the request, though specifics are in prompt_params
+            prompt_params=prompt_params,
+            model_preference=model_preference,
+            user_id=user_id,
+            session_id=session_id,
+            ai_max_output_tokens=ai_max_output_tokens,
+            # require_language_consistency can be true by default or configurable if needed
         )
         return await self.process_request(request, db)
 
