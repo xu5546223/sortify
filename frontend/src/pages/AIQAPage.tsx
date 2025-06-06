@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { 
+import {
   PageHeader
 } from '../components';
-import { 
-  Alert, 
-  Space, 
-  Modal, 
+import {
+  Alert,
+  Space,
+  Modal,
   List,
   Row,
   Col,
@@ -24,8 +24,11 @@ import {
   Card,
   Statistic,
   Button,
-  Collapse
+  Collapse,
+  Switch
 } from 'antd';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   RobotOutlined,
   SearchOutlined,
@@ -43,22 +46,25 @@ import {
   InfoCircleOutlined,
   UserOutlined,
   RetweetOutlined,
-  SlidersOutlined
+  SlidersOutlined,
+  ApartmentOutlined,
+  SettingOutlined,
 } from '@ant-design/icons';
 import type {
-  AIQARequest,
   AIQAResponse,
   VectorDatabaseStats,
-  Document,
   QueryRewriteResult,
   LLMContextDocument,
   SemanticContextDocument,
   AIQARequestUnified,
-  AIResponse
+  AIResponse,
+  Document
 } from '../types/apiTypes';
 import { askAIQuestionUnified } from '../services/unifiedAIService';
 import { getVectorDatabaseStats } from '../services/vectorDBService';
+import { getDocumentsByIds } from '../services/documentService';
 import SemanticSearchInterface from '../components/SemanticSearchInterface';
+import AIQASettings, { AIQASettingsConfig, defaultAIQASettings } from '../components/settings/AIQASettings';
 
 const { Text, Title, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -81,8 +87,222 @@ interface QASession {
   queryRewriteResult?: QueryRewriteResult | null;
   llmContextDocuments?: LLMContextDocument[] | null;
   semanticSearchContexts?: SemanticContextDocument[] | null;
+  detailedDocumentDataFromAiQuery?: Record<string, any> | null;
+  detailedQueryReasoning?: string | null;
   sessionId?: string;
+  usedSettings?: AIQASettingsConfig;
 }
+
+// Markdown 渲染組件
+const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
+  // 預處理內容：處理換行符和格式
+  const processedContent = content.replace(/\\n/g, '\n');
+  
+  return (
+    <div 
+      className="markdown-content"
+      style={{
+        color: '#262626', // 更深的文字顏色
+        fontSize: '14px',
+        lineHeight: '1.6'
+      }}
+    >
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          // 自定義樣式
+          h1: (props) => <h1 style={{fontSize: '1.5em', fontWeight: 'bold', marginBottom: '0.5em', color: '#262626'}} {...props} />,
+          h2: (props) => <h2 style={{fontSize: '1.3em', fontWeight: 'bold', marginBottom: '0.4em', color: '#262626'}} {...props} />,
+          h3: (props) => <h3 style={{fontSize: '1.1em', fontWeight: 'bold', marginBottom: '0.3em', color: '#262626'}} {...props} />,
+          p: (props) => <p style={{marginBottom: '0.8em', lineHeight: '1.6', color: '#262626', whiteSpace: 'pre-wrap'}} {...props} />,
+          ul: (props) => <ul style={{marginBottom: '0.8em', paddingLeft: '1.5em', color: '#262626'}} {...props} />,
+          ol: (props) => <ol style={{marginBottom: '0.8em', paddingLeft: '1.5em', color: '#262626'}} {...props} />,
+          li: (props) => <li style={{marginBottom: '0.2em', color: '#262626'}} {...props} />,
+          blockquote: (props) => (
+            <blockquote 
+              style={{
+                borderLeft: '4px solid #d9d9d9',
+                paddingLeft: '1em',
+                margin: '1em 0',
+                color: '#595959',
+                fontStyle: 'italic',
+                backgroundColor: '#fafafa',
+                borderRadius: '4px',
+                padding: '1em'
+              }} 
+              {...props} 
+            />
+          ),
+          code: (props) => {
+            const { children, className, ...rest } = props;
+            const isInline = typeof children === 'string' && !children.includes('\n');
+            
+            return isInline ? (
+              <code 
+                style={{
+                  backgroundColor: '#f5f5f5',
+                  padding: '0.2em 0.4em',
+                  borderRadius: '3px',
+                  fontSize: '0.9em',
+                  color: '#d32f2f',
+                  border: '1px solid #e8e8e8'
+                }}
+                className={className}
+              >
+                {children}
+              </code>
+            ) : (
+              <pre 
+                style={{
+                  backgroundColor: '#f5f5f5',
+                  padding: '1em',
+                  borderRadius: '6px',
+                  fontSize: '0.9em',
+                  overflow: 'auto',
+                  border: '1px solid #e8e8e8',
+                  marginBottom: '1em'
+                }}
+                className={className}
+              >
+                <code style={{ color: '#262626' }}>{children}</code>
+              </pre>
+            );
+          },
+          table: (props) => (
+            <table 
+              style={{
+                borderCollapse: 'collapse',
+                width: '100%',
+                marginBottom: '1em',
+                border: '1px solid #d9d9d9'
+              }} 
+              {...props} 
+            />
+          ),
+          th: (props) => (
+            <th 
+              style={{
+                border: '1px solid #d9d9d9',
+                padding: '0.5em',
+                backgroundColor: '#fafafa',
+                fontWeight: 'bold',
+                color: '#262626'
+              }} 
+              {...props} 
+            />
+          ),
+          td: (props) => (
+            <td 
+              style={{
+                border: '1px solid #d9d9d9',
+                padding: '0.5em',
+                color: '#262626'
+              }} 
+              {...props} 
+            />
+          )
+        }}
+      >
+        {processedContent}
+      </ReactMarkdown>
+    </div>
+  );
+};
+
+// 參考文件顯示組件
+const SourceDocumentsDisplay: React.FC<{ documents: string[] }> = ({ documents }) => {
+  const [documentNames, setDocumentNames] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const fetchDocumentNames = async () => {
+      if (!documents || documents.length === 0) return;
+      
+      setLoading(true);
+      try {
+        const documentsData = await getDocumentsByIds(documents);
+        const nameMap: Record<string, string> = {};
+        
+        documentsData.forEach((doc: Document) => {
+          nameMap[doc.id] = doc.filename;
+        });
+        
+        // 對於沒有找到的文件，使用ID作為顯示名稱
+        documents.forEach(docId => {
+          if (!nameMap[docId]) {
+            nameMap[docId] = `文件 ${docId.substring(0, 8)}...`;
+          }
+        });
+        
+        setDocumentNames(nameMap);
+      } catch (error) {
+        console.error('獲取文件名稱失敗:', error);
+        // 如果獲取失敗，使用文件ID的縮短版本
+        const fallbackMap: Record<string, string> = {};
+        documents.forEach(docId => {
+          fallbackMap[docId] = `文件 ${docId.substring(0, 8)}...`;
+        });
+        setDocumentNames(fallbackMap);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchDocumentNames();
+  }, [documents]);
+
+  if (!documents || documents.length === 0) return null;
+  
+  return (
+    <Card 
+      size="small" 
+      title={
+        <span style={{ color: '#1890ff' }}>
+          <FileTextOutlined style={{ marginRight: '0.5em' }} />
+          參考文件 ({documents.length} 個)
+        </span>
+      }
+      style={{ 
+        marginTop: '1em',
+        border: '2px solid #e6f7ff',
+        backgroundColor: '#f6ffed'
+      }}
+      headStyle={{
+        backgroundColor: '#e6f7ff',
+        borderBottom: '1px solid #91d5ff'
+      }}
+    >
+      {loading ? (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1em' }}>
+          <Spin size="small" />
+          <span style={{ marginLeft: '0.5em' }}>載入文件名稱...</span>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5em' }}>
+          {documents.map((docId, index) => (
+            <Tooltip key={index} title={`文件ID: ${docId}`}>
+              <Tag 
+                color="blue" 
+                icon={<FileTextOutlined />}
+                style={{ 
+                  marginBottom: '0.5em',
+                  fontSize: '0.85em',
+                  padding: '0.3em 0.6em',
+                  maxWidth: '200px',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                {documentNames[docId] || `文件 ${docId.substring(0, 8)}...`}
+              </Tag>
+            </Tooltip>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+};
 
 const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
   // 狀態管理
@@ -94,6 +314,20 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
   const [isAsking, setIsAsking] = useState(false);
   const [qaHistory, setQAHistory] = useState<QASession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  
+  // 新增：AI 問答設定狀態
+  const [aiQASettings, setAIQASettings] = useState<AIQASettingsConfig>(() => {
+    // 從 localStorage 讀取用戶的偏好設定
+    const savedSettings = localStorage.getItem('aiqa-settings');
+    if (savedSettings) {
+      try {
+        return { ...defaultAIQASettings, ...JSON.parse(savedSettings) };
+      } catch (error) {
+        console.warn('Failed to parse saved AI QA settings:', error);
+      }
+    }
+    return defaultAIQASettings;
+  });
   
   // UI 狀態
   const [activeTab, setActiveTab] = useState('qa');
@@ -123,6 +357,18 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
     }
   }, [showPCMessage]);
 
+  // 保存設定到 localStorage
+  const handleSettingsChange = (newSettings: AIQASettingsConfig) => {
+    setAIQASettings(newSettings);
+    localStorage.setItem('aiqa-settings', JSON.stringify(newSettings));
+  };
+
+  // 重置設定
+  const handleSettingsReset = () => {
+    localStorage.removeItem('aiqa-settings');
+    showPCMessage('已重置為預設設定', 'success');
+  };
+
   // AI 問答處理
   const handleAskQuestion = async () => {
     if (!question.trim()) {
@@ -140,9 +386,19 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
       const request: AIQARequestUnified = {
         question: question.trim(),
         session_id: currentSessionId || undefined,
-        use_semantic_search: true,
-        context_limit: 10,
-        ensure_chinese_output: true
+        // 使用用戶設定的參數
+        use_semantic_search: aiQASettings.use_semantic_search,
+        use_structured_filter: aiQASettings.use_structured_filter,
+        context_limit: aiQASettings.context_limit,
+        use_ai_detailed_query: aiQASettings.use_ai_detailed_query,
+        detailed_text_max_length: aiQASettings.detailed_text_max_length,
+        max_chars_per_doc: aiQASettings.max_chars_per_doc,
+        query_rewrite_count: aiQASettings.query_rewrite_count,
+        max_documents_for_selection: aiQASettings.max_documents_for_selection,
+        similarity_threshold: aiQASettings.similarity_threshold,
+        ai_selection_limit: aiQASettings.ai_selection_limit,
+        enable_query_expansion: aiQASettings.enable_query_expansion,
+        context_window_overlap: aiQASettings.context_window_overlap,
       };
       const unifiedResponse: AIResponse<AIQAResponse> = await askAIQuestionUnified(request);
       
@@ -168,7 +424,10 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
         queryRewriteResult: responseContent.query_rewrite_result || null,
         llmContextDocuments: responseContent.llm_context_documents || null,
         semanticSearchContexts: responseContent.semantic_search_contexts || null,
-        sessionId: responseContent.session_id || undefined
+        detailedDocumentDataFromAiQuery: responseContent.detailed_document_data_from_ai_query || null,
+        detailedQueryReasoning: responseContent.detailed_query_reasoning || null,
+        sessionId: responseContent.session_id || undefined,
+        usedSettings: { ...aiQASettings }
       };
 
       setQAHistory(prev => [newSession, ...prev]);
@@ -258,6 +517,13 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
   // 渲染 AI 問答介面
   const renderQAInterface = () => (
     <div className="space-y-6">
+      {/* AI 問答參數設定 */}
+      <AIQASettings
+        settings={aiQASettings}
+        onChange={handleSettingsChange}
+        onReset={handleSettingsReset}
+      />
+
       {/* 問題輸入區域 */}
       <Card title="AI 智能問答" extra={
         <Space>
@@ -289,7 +555,14 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
           />
           
           <div className="flex justify-between items-center">
-            <Text type="secondary">按 Ctrl+Enter 發送問題</Text>
+            <Space>
+              <Text type="secondary" className="hidden sm:inline">按 Ctrl+Enter 發送</Text>
+              <Text type="secondary" className="text-xs">
+                當前模式: <Tag color={aiQASettings.use_ai_detailed_query ? 'green' : 'default'}>
+                  {aiQASettings.use_ai_detailed_query ? '詳細查詢' : '快速查詢'}
+                </Tag>
+              </Text>
+            </Space>
             <Space>
               <Button
                 onClick={handleAskQuestion}
@@ -370,13 +643,35 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
                   }
                   description={
                     <div className="mt-2">
-                      <Paragraph 
-                        ellipsis={{ rows: 3, expandable: true, symbol: '展開' }}
-                        className="text-sm mb-2"
-                      >
-                        {session.answer}
-                      </Paragraph>
+                      <div className="text-sm mb-2">
+                        <MarkdownRenderer content={session.answer} />
+                      </div>
+                      <SourceDocumentsDisplay documents={session.sourceDocuments} />
                       <Collapse ghost size="small" className="mb-2">
+                        {session.detailedDocumentDataFromAiQuery && (
+                          <Panel
+                            header="AI 詳細查詢結果"
+                            key="detailed-query"
+                            extra={<Tooltip title="AI 為了回答問題，對特定文檔進行了深入查詢，並獲取了以下精確信息。"><ApartmentOutlined style={{color: '#8A2BE2'}} /></Tooltip>}
+                          >
+                            <div className="space-y-2">
+                              {session.detailedQueryReasoning && (
+                                <div>
+                                  <Text strong>AI 查詢原因:</Text>
+                                  <Paragraph className="mt-1 p-2 bg-surface-100 rounded text-sm">
+                                    {session.detailedQueryReasoning}
+                                  </Paragraph>
+                                </div>
+                              )}
+                              <div>
+                                <Text strong>查詢到的詳細資料:</Text>
+                                <div className="mt-1 p-2 bg-surface-100 rounded text-xs max-h-48 overflow-y-auto">
+                                  <pre className="whitespace-pre-wrap font-mono">{JSON.stringify(session.detailedDocumentDataFromAiQuery, null, 2)}</pre>
+                                </div>
+                              </div>
+                            </div>
+                          </Panel>
+                        )}
                         {session.queryRewriteResult && (
                           <Panel 
                             header="查詢重寫過程" 
@@ -464,15 +759,61 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
                             />
                           </Panel>
                         )}
+                        {session.usedSettings && (
+                          <Panel 
+                            header="使用的參數設定" 
+                            key="used-settings"
+                            extra={<Tooltip title="本次查詢使用的具體參數設定"><SettingOutlined style={{color: '#52c41a'}} /></Tooltip>}
+                          >
+                            <Row gutter={[16, 8]}>
+                              <Col xs={12} sm={6}>
+                                <Text strong>詳細查詢:</Text><br />
+                                <Tag color={session.usedSettings.use_ai_detailed_query ? 'green' : 'default'}>
+                                  {session.usedSettings.use_ai_detailed_query ? '啟用' : '禁用'}
+                                </Tag>
+                              </Col>
+                              <Col xs={12} sm={6}>
+                                <Text strong>上下文數量:</Text><br />
+                                <Tag color="blue">{session.usedSettings.context_limit}</Tag>
+                              </Col>
+                              <Col xs={12} sm={6}>
+                                <Text strong>相似度閾值:</Text><br />
+                                <Tag color="purple">{(session.usedSettings.similarity_threshold * 100).toFixed(0)}%</Tag>
+                              </Col>
+                              <Col xs={12} sm={6}>
+                                <Text strong>查詢重寫數:</Text><br />
+                                <Tag color="orange">{session.usedSettings.query_rewrite_count}</Tag>
+                              </Col>
+                              <Col xs={12} sm={6}>
+                                <Text strong>候選文件數:</Text><br />
+                                <Tag color="cyan">{session.usedSettings.max_documents_for_selection}</Tag>
+                              </Col>
+                              <Col xs={12} sm={6}>
+                                <Text strong>AI選擇限制:</Text><br />
+                                <Tag color="magenta">{session.usedSettings.ai_selection_limit}</Tag>
+                              </Col>
+                              <Col xs={12} sm={6}>
+                                <Text strong>詳細文本長度:</Text><br />
+                                <Tag color="gold">{(session.usedSettings.detailed_text_max_length / 1000).toFixed(1)}K</Tag>
+                              </Col>
+                              <Col xs={12} sm={6}>
+                                <Text strong>查詢擴展:</Text><br />
+                                <Tag color={session.usedSettings.enable_query_expansion ? 'green' : 'default'}>
+                                  {session.usedSettings.enable_query_expansion ? '啟用' : '禁用'}
+                                </Tag>
+                              </Col>
+                              {session.usedSettings.prompt_input_max_length && (
+                                <Col xs={12} sm={6}>
+                                  <Text strong>提示詞輸入限制:</Text><br />
+                                  <Tag color="volcano">{(session.usedSettings.prompt_input_max_length / 1000).toFixed(1)}K</Tag>
+                                </Col>
+                              )}
+                            </Row>
+                          </Panel>
+                        )}
                       </Collapse>
 
-                      {session.sourceDocuments.length > 0 && (
-                        <div>
-                          <Text type="secondary" className="text-xs">
-                            參考文檔: {session.sourceDocuments.length} 個
-                          </Text>
-                        </div>
-                      )}
+
                       <Text type="secondary" className="text-xs">
                         {session.timestamp.toLocaleString('zh-TW')}
                       </Text>
@@ -585,10 +926,35 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
                   title={<Text strong>{session.question}</Text>}
                   description={
                     <div className="space-y-2">
-                      <Paragraph ellipsis={{ rows: 3, expandable: true }}>
-                        {session.answer}
-                      </Paragraph>
+                      <div>
+                        <MarkdownRenderer content={session.answer} />
+                      </div>
+                      <SourceDocumentsDisplay documents={session.sourceDocuments} />
                       <Collapse ghost size="small" className="mb-2">
+                        {session.detailedDocumentDataFromAiQuery && (
+                          <Panel
+                            header="AI 詳細查詢結果"
+                            key="modal-detailed-query"
+                            extra={<Tooltip title="AI 為了回答問題，對特定文檔進行了深入查詢，並獲取了以下精確信息。"><ApartmentOutlined style={{color: '#8A2BE2'}} /></Tooltip>}
+                          >
+                            <div className="space-y-2">
+                              {session.detailedQueryReasoning && (
+                                <div>
+                                  <Text strong>AI 查詢原因:</Text>
+                                  <Paragraph className="mt-1 p-2 bg-surface-100 rounded text-sm">
+                                    {session.detailedQueryReasoning}
+                                  </Paragraph>
+                                </div>
+                              )}
+                              <div>
+                                <Text strong>查詢到的詳細資料:</Text>
+                                <div className="mt-1 p-2 bg-surface-100 rounded text-xs max-h-48 overflow-y-auto">
+                                  <pre className="whitespace-pre-wrap font-mono">{JSON.stringify(session.detailedDocumentDataFromAiQuery, null, 2)}</pre>
+                                </div>
+                              </div>
+                            </div>
+                          </Panel>
+                        )}
                         {session.queryRewriteResult && (
                           <Panel header="查詢重寫過程" key="modal-query-rewrite">
                             <Steps direction="vertical" size="small" current={session.queryRewriteResult.rewritten_queries.length}>
@@ -651,6 +1017,62 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
                             />
                           </Panel>
                         )}
+                        {session.usedSettings && (
+                          <Panel 
+                            header="使用的參數設定" 
+                            key="used-settings"
+                            extra={<Tooltip title="本次查詢使用的具體參數設定"><SettingOutlined style={{color: '#52c41a'}} /></Tooltip>}
+                          >
+                            <Row gutter={[16, 8]}>
+                              <Col xs={12} sm={6}>
+                                <Text strong>詳細查詢:</Text><br />
+                                <Tag color={session.usedSettings.use_ai_detailed_query ? 'green' : 'default'}>
+                                  {session.usedSettings.use_ai_detailed_query ? '啟用' : '禁用'}
+                                </Tag>
+                              </Col>
+                              <Col xs={12} sm={6}>
+                                <Text strong>上下文數量:</Text><br />
+                                <Tag color="blue">{session.usedSettings.context_limit}</Tag>
+                              </Col>
+                              <Col xs={12} sm={6}>
+                                <Text strong>相似度閾值:</Text><br />
+                                <Tag color="purple">{(session.usedSettings.similarity_threshold * 100).toFixed(0)}%</Tag>
+                              </Col>
+                              <Col xs={12} sm={6}>
+                                <Text strong>查詢重寫數:</Text><br />
+                                <Tag color="orange">{session.usedSettings.query_rewrite_count}</Tag>
+                              </Col>
+                              <Col xs={12} sm={6}>
+                                <Text strong>候選文件數:</Text><br />
+                                <Tag color="cyan">{session.usedSettings.max_documents_for_selection}</Tag>
+                              </Col>
+                              <Col xs={12} sm={6}>
+                                <Text strong>AI選擇限制:</Text><br />
+                                <Tag color="magenta">{session.usedSettings.ai_selection_limit}</Tag>
+                              </Col>
+                              <Col xs={12} sm={6}>
+                                <Text strong>詳細文本長度:</Text><br />
+                                <Tag color="gold">{(session.usedSettings.detailed_text_max_length / 1000).toFixed(1)}K</Tag>
+                              </Col>
+                              <Col xs={12} sm={6}>
+                                <Text strong>單文檔限制:</Text><br />
+                                <Tag color="volcano">{(session.usedSettings.max_chars_per_doc / 1000).toFixed(1)}K</Tag>
+                              </Col>
+                              <Col xs={12} sm={6}>
+                                <Text strong>查詢擴展:</Text><br />
+                                <Tag color={session.usedSettings.enable_query_expansion ? 'green' : 'default'}>
+                                  {session.usedSettings.enable_query_expansion ? '啟用' : '禁用'}
+                                </Tag>
+                              </Col>
+                              {session.usedSettings.prompt_input_max_length && (
+                                <Col xs={12} sm={6}>
+                                  <Text strong>提示詞輸入限制:</Text><br />
+                                  <Tag color="volcano">{(session.usedSettings.prompt_input_max_length / 1000).toFixed(1)}K</Tag>
+                                </Col>
+                              )}
+                            </Row>
+                          </Panel>
+                        )}
                       </Collapse>
                       <div className="flex flex-wrap gap-2">
                         <Tag color="blue">{session.tokensUsed} tokens</Tag>
@@ -660,9 +1082,7 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
                             {(session.confidenceScore * 100).toFixed(0)}% 置信度
                           </Tag>
                         )}
-                        <Tag color="default">
-                          {session.sourceDocuments.length} 個主要參考文檔
-                        </Tag>
+
                       </div>
                       <Text type="secondary" className="text-xs mt-2 block">
                         {session.timestamp.toLocaleString('zh-TW')}

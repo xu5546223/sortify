@@ -114,6 +114,14 @@ class AIGeneratedAnswerOutput(BaseModel):
     answer_text: str = "Could not generate a valid answer."
     # Potentially add other fields like confidence if the LLM provides it directly
 
+class AIDocumentSelectionOutput(BaseModel):
+    """
+    Represents the AI's decision on which documents are most relevant
+    for a detailed query based on their summaries.
+    """
+    selected_document_ids: List[str] = Field(default_factory=list, description="A list of document IDs that the AI has chosen as most relevant for a detailed query.")
+    reasoning: Optional[str] = Field(None, description="AI's explanation for why it chose these specific documents.")
+
 class AIDocumentKeyInformation(BaseModel):
     # Define fields that are expected within key_information
     # This is an example, adjust based on actual consistent fields

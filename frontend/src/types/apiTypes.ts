@@ -289,7 +289,20 @@ export interface AIQARequestUnified extends AIRequest {
   use_semantic_search?: boolean;
   use_structured_filter?: boolean;
   session_id?: string | null;
-  ensure_chinese_output?: boolean | null;
+  use_ai_detailed_query?: boolean;
+  
+  // 新增的用戶可調整參數
+  detailed_text_max_length?: number; // 詳細文本最大長度 (1000-20000)
+  max_chars_per_doc?: number; // 單文檔字符限制 (500-8000)
+  query_rewrite_count?: number; // 查詢重寫數量 (1-8)
+  max_documents_for_selection?: number; // 候選文件最大數量 (3-15)
+  similarity_threshold?: number; // 相似度閾值 (0.1-0.8)
+  ai_selection_limit?: number; // AI選擇文件數量限制 (1-8)
+  enable_query_expansion?: boolean; // 啟用查詢擴展
+  context_window_overlap?: number; // 上下文窗口重疊比例 (0.0-0.5)
+  
+  // AI 輸出控制參數（從全域設定中獲取，但也可以在請求中覆蓋）
+  ensure_chinese_output?: boolean; // 確保中文輸出
 }
 
 export interface QueryRewriteRequest extends AIRequest {
@@ -395,6 +408,8 @@ export interface AIQAResponse { // Content for AIResponse<AIQAResponse>
   query_rewrite_result?: QueryRewriteResult | null;
   semantic_search_contexts?: SemanticContextDocument[] | null;
   llm_context_documents?: LLMContextDocument[] | null;
+  detailed_document_data_from_ai_query?: Record<string, any> | null; // 從 AI 生成的查詢中獲取的詳細數據
+  detailed_query_reasoning?: string | null; // AI 為何以及如何生成詳細查詢的原因
   session_id?: string | null;
   created_at: string;
 }
