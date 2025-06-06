@@ -52,13 +52,27 @@ class SemanticSearchResult(BaseModel):
 
 class AIQARequest(BaseModel):
     """AI問答請求"""
-    question: str = Field(..., max_length=2000, description="用戶問題")
-    context_limit: int = Field(default=5, ge=1, le=20, description="上下文文檔數量限制")
-    use_semantic_search: bool = Field(default=True, description="是否使用語義搜索")
-    use_structured_filter: bool = Field(default=True, description="是否使用結構化過濾")
-    session_id: Optional[str] = Field(None, description="會話ID，用於追蹤多輪對話")
-    document_ids: Optional[List[str]] = Field(None, description="用於上下文的特定文檔ID列表 (可選)")
-    model_preference: Optional[str] = Field(None, description="偏好的AI模型 (例如 'gemini-pro', 'gpt-4')")
+    question: str = Field(..., description="User's question to be answered")
+    document_ids: Optional[List[str]] = Field(None, description="Optional list of specific document IDs to search within")
+    context_limit: Optional[int] = Field(10, ge=1, le=50, description="Maximum number of context documents to include")
+    use_semantic_search: Optional[bool] = Field(True, description="Enable semantic/vector search")
+    use_structured_filter: Optional[bool] = Field(False, description="Enable structured filtering based on query analysis")
+    session_id: Optional[str] = Field(None, description="Optional session ID for conversation continuity")
+    model_preference: Optional[str] = Field(None, description="Preferred AI model for this request")
+    use_ai_detailed_query: Optional[bool] = Field(True, description="Enable AI to generate specific queries for detailed data extraction from documents.")
+    
+    # 新增的用戶可調整參數
+    detailed_text_max_length: Optional[int] = Field(8000, ge=1000, le=20000, description="Maximum length of detailed text content extracted from documents")
+    max_chars_per_doc: Optional[int] = Field(3000, ge=500, le=8000, description="Maximum characters per individual document before truncation")
+    query_rewrite_count: Optional[int] = Field(3, ge=1, le=8, description="Number of different query rewrites to generate for better search coverage")
+    max_documents_for_selection: Optional[int] = Field(8, ge=3, le=15, description="Maximum number of candidate documents for AI selection")
+    similarity_threshold: Optional[float] = Field(0.3, ge=0.1, le=0.8, description="Minimum similarity score threshold for document selection")
+    ai_selection_limit: Optional[int] = Field(3, ge=1, le=8, description="Maximum number of documents AI can select for detailed query")
+    enable_query_expansion: Optional[bool] = Field(True, description="Enable intelligent query expansion and synonym matching")
+    context_window_overlap: Optional[float] = Field(0.1, ge=0.0, le=0.5, description="Overlap ratio between context windows when processing long documents")
+    
+    # AI 輸出控制參數
+    ensure_chinese_output: Optional[bool] = Field(None, description="確保AI回答使用中文輸出，如果未指定則使用全域設定")
 
 class QueryRewriteResult(BaseModel):
     """查詢重寫結果"""
@@ -93,6 +107,8 @@ class AIQAResponse(BaseModel):
     llm_context_documents: Optional[List[LLMContextDocument]] = Field(None, description="實際提供給LLM進行答案生成的文檔上下文片段")
     session_id: Optional[str] = Field(None, description="會話ID")
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    ai_generated_query_reasoning: Optional[str] = Field(None, description="Reasoning behind the AI-generated MongoDB query for detailed data retrieval.")
+    detailed_document_data_from_ai_query: Optional[List[Dict[str, Any]]] = Field(None, description="List of specific data fetched from documents using AI-generated MongoDB queries.")
 
 # 新增：用於批量處理請求的模型
 class BatchProcessRequest(BaseModel):

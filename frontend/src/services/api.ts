@@ -18,6 +18,7 @@ export * from './logService';
 export * from './unifiedAIService';
 export * from './vectorDBService';
 export * from './embeddingService';
+export * from './cacheService';
 
 // Specific functions that were wrappers or might need decision:
 

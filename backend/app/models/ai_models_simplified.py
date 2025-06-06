@@ -17,6 +17,15 @@ class AIResponse(BaseModel):
     token_usage: TokenUsage = Field(..., description="本次呼叫的 Token 使用資訊")
     model_used: str = Field(..., description="實際使用的 AI 模型")
 
+class AIMongoDBQueryDetailOutput(BaseModel):
+    """
+    Represents the AI's suggested MongoDB query components for retrieving
+    specific details from a single, known document.
+    """
+    projection: Optional[Dict[str, Any]] = Field(None, description="MongoDB projection dictionary to select specific fields. e.g., {\"title\": 1, \"sections.content\": 1}")
+    sub_filter: Optional[Dict[str, Any]] = Field(None, description="MongoDB filter dictionary to apply conditions on sub-fields or array elements within the document. e.g., {\"sections.title\": \"Introduction\"} or {\"keywords\": {\"$in\": [\"AI\", \"MongoDB\"]}}")
+    reasoning: Optional[str] = Field(None, description="AI's explanation for why it chose the projection and/or sub-filter.")
+
 # === 核心通用結構 ===
 
 class BaseKeyInformation(BaseModel):
@@ -104,6 +113,14 @@ class AIQueryRewriteOutput(BaseModel):
 class AIGeneratedAnswerOutput(BaseModel):
     answer_text: str = "Could not generate a valid answer."
     # Potentially add other fields like confidence if the LLM provides it directly
+
+class AIDocumentSelectionOutput(BaseModel):
+    """
+    Represents the AI's decision on which documents are most relevant
+    for a detailed query based on their summaries.
+    """
+    selected_document_ids: List[str] = Field(default_factory=list, description="A list of document IDs that the AI has chosen as most relevant for a detailed query.")
+    reasoning: Optional[str] = Field(None, description="AI's explanation for why it chose these specific documents.")
 
 class AIDocumentKeyInformation(BaseModel):
     # Define fields that are expected within key_information

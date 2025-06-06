@@ -1,54 +1,59 @@
 from typing import List, Optional, Dict, Any, Tuple
 import time
-# import json # Unused
+import json
 import uuid
+import traceback
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pydantic import ValidationError
+import logging
+import asyncio
+
 from app.core.logging_utils import AppLogger, log_event, LogLevel
-from app.services.unified_ai_service_simplified import unified_ai_service_simplified, AIResponse as UnifiedAIResponse # Alias
+from app.services.ai_cache_manager import ai_cache_manager
+from app.services.unified_ai_service_simplified import unified_ai_service_simplified, AIResponse as UnifiedAIResponse
 from app.services.embedding_service import embedding_service
 from app.services.vector_db_service import vector_db_service
 from app.models.vector_models import (
     AIQARequest, AIQAResponse, QueryRewriteResult, LLMContextDocument,
-    # SemanticSearchRequest, # Unused
     SemanticSearchResult, SemanticContextDocument
 )
-from app.models.ai_models_simplified import TokenUsage
 from app.models.ai_models_simplified import (
-    # AITextAnalysisOutput, # Unused
     AIQueryRewriteOutput,
-    AIDocumentAnalysisOutputDetail, AIDocumentKeyInformation, # AIDocumentKeyInformation is likely used by AIDocumentAnalysisOutputDetail
-    AIGeneratedAnswerOutput 
+    AIMongoDBQueryDetailOutput,
+    AIDocumentAnalysisOutputDetail,
+    AIGeneratedAnswerOutput,
+    AIDocumentSelectionOutput
 )
+from app.models.document_models import Document
 from app.crud.crud_documents import get_documents_by_ids
-from pydantic import ValidationError
-import logging
-from datetime import datetime
-import traceback
-
-from cachetools import LRUCache # Added for caching
 
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
 
 class EnhancedAIQAService:
-    """增強的AI問答服務 - 使用統一AI管理架構"""
+    """增強的AI問答服務 - 使用統一AI管理架構和專門的緩存管理器"""
     
     def __init__(self):
-        # 使用統一的AI服務，不再需要單獨的AI服務實例
-        self.query_embedding_cache: LRUCache[str, List[float]] = LRUCache(maxsize=128)
-        logger.info(f"EnhancedAIQAService initialized with LRUCache for query embeddings (maxsize={self.query_embedding_cache.maxsize}).")
+        # 使用專門的緩存管理器
+        self.cache_manager = ai_cache_manager
+        logger.info("EnhancedAIQAService 初始化完成，使用專門的 AI 緩存管理器")
     
+# 注意：_get_or_create_schema_cache 和 _get_or_create_system_instruction_cache 方法
+# 現在通過 self.cache_manager 統一管理，不再需要在此類中單獨實現
+
     async def process_qa_request(
         self, 
         db: AsyncIOMotorDatabase,
         request: AIQARequest,
-        user_id: Optional[str] = None, # Made Optional
-        request_id: Optional[str] = None # Added for propagated request_id
+        user_id: Optional[str] = None,
+        request_id: Optional[str] = None
     ) -> AIQAResponse:
         """
         處理AI問答請求的主要流程 - 支持用戶認證
         """
         start_time = time.time()
         total_tokens = 0
+        detailed_document_data: Optional[List[Dict[str, Any]]] = None
+        ai_generated_query_reasoning: Optional[str] = None
         
         log_details_initial = {
             "question_length": len(request.question) if request.question else 0,
@@ -63,35 +68,33 @@ class EnhancedAIQAService:
                         source="service.enhanced_ai_qa.request", user_id=str(user_id) if user_id else None, request_id=request_id,
                         details=log_details_initial)
 
-        query_rewrite_result: Optional[QueryRewriteResult] = None # Ensure it's defined for error return
-        semantic_contexts_for_response: List[SemanticContextDocument] = [] # Ensure defined
+        query_rewrite_result: Optional[QueryRewriteResult] = None
+        semantic_contexts_for_response: List[SemanticContextDocument] = []
 
         try:
             query_rewrite_result, rewrite_tokens = await self._rewrite_query_unified(
-                db, request.question, user_id, request_id
+                db, request.question, user_id, request_id, 
+                query_rewrite_count=getattr(request, 'query_rewrite_count', 3)
             )
             total_tokens += rewrite_tokens
             
             semantic_results_raw = await self._semantic_search(
-                db, # Pass db instance
-                query_rewrite_result.rewritten_queries[0] if query_rewrite_result.rewritten_queries else request.question,
-                request.context_limit,
-                user_id, # Pass user_id
-                request_id # Pass request_id
+                db,
+                query_rewrite_result.rewritten_queries if query_rewrite_result.rewritten_queries else [request.question],
+                getattr(request, 'max_documents_for_selection', request.context_limit),  # 使用候選文件數量
+                user_id,
+                request_id,
+                query_rewrite_result=query_rewrite_result,
+                similarity_threshold=getattr(request, 'similarity_threshold', 0.3),  # 使用相似度閾值
+                enable_query_expansion=getattr(request, 'enable_query_expansion', True)  # 使用查詢擴展設定
             )
 
-            # 將原始 semantic_results 轉換為 SemanticContextDocument 列表
-            semantic_contexts_for_response: List[SemanticContextDocument] = []
-            if not isinstance(semantic_results_raw, list): # Ensure semantic_results_raw is a list
-                logger.error(f"semantic_results_raw is not a list, but {type(semantic_results_raw)}. Defaulting to empty list.")
-                semantic_results_raw = []
-            
             if semantic_results_raw:
                 for res in semantic_results_raw:
                     semantic_contexts_for_response.append(
                         SemanticContextDocument(
                             document_id=res.document_id,
-                            summary_or_chunk_text=res.summary_text, # SemanticSearchResult 有 summary_text
+                            summary_or_chunk_text=res.summary_text,
                             similarity_score=res.similarity_score,
                             metadata=res.metadata
                         )
@@ -106,63 +109,20 @@ class EnhancedAIQAService:
                     tokens_used=total_tokens,
                     processing_time=time.time() - start_time,
                     query_rewrite_result=query_rewrite_result,
-                    semantic_search_contexts=semantic_contexts_for_response, # 即使為空也傳遞
+                    semantic_search_contexts=semantic_contexts_for_response,
                     session_id=request.session_id
                 )
             
-            # 獲取文檔ID列表
             document_ids = [result.document_id for result in semantic_results_raw]
             
-            # 步驟3: T2Q二次過濾（可選）
-            if request.use_structured_filter and query_rewrite_result.extracted_parameters:
-                filtered_document_ids = await self._t2q_filter(
-                    db, document_ids, query_rewrite_result.extracted_parameters, user_id, request_id # Pass user_id and request_id
-                )
-                if filtered_document_ids:
-                    document_ids = filtered_document_ids
-                    # Add check for document_ids before len()
-                    if not isinstance(document_ids, list):
-                        logger.error(f"After _t2q_filter, document_ids is not a list, but {type(document_ids)}. Value: {document_ids}. Defaulting to empty list.")
-                        document_ids = []
-                    logger.info(f"T2Q過濾後剩餘 {len(document_ids)} 個文檔")
-            
-            # Add another check for document_ids before get_documents_by_ids, if not filtered
-            elif not isinstance(document_ids, list): # If not filtered, document_ids comes from semantic_results_raw
-                logger.error(f"Before get_documents_by_ids (no T2Q filter), document_ids is not a list, but {type(document_ids)}. Value: {document_ids}. Defaulting to empty list.")
+            if not isinstance(document_ids, list):
+                logger.error(f"Before get_documents_by_ids, document_ids is not a list, but {type(document_ids)}. Defaulting to empty list.")
                 document_ids = []
 
-            # 步驟4: 獲取完整文檔內容（檢查用戶權限）
             full_documents = await get_documents_by_ids(db, document_ids)
             
-            # 過濾用戶有權限訪問的文檔
             if user_id:
-                try:
-                    # user_uuid = uuid.UUID(user_id)
-                    # 修正 user_uuid 的獲取方式
-                    if isinstance(user_id, uuid.UUID):
-                        user_uuid = user_id
-                    elif isinstance(user_id, str):
-                        user_uuid = uuid.UUID(user_id)
-                    else:
-                        logger.error(f"無法識別的 user_id 類型: {type(user_id)}，值: {user_id}. 無法執行權限檢查。")
-                        full_documents = [] 
-
-                    accessible_documents = []
-                    if full_documents: 
-                        for doc in full_documents:
-                            # Ensure doc.owner_id is also a UUID object for comparison
-                            # (It should be if retrieved from DB correctly and model types are right)
-                            if hasattr(doc, 'owner_id') and isinstance(doc.owner_id, uuid.UUID) and doc.owner_id == user_uuid:
-                                accessible_documents.append(doc)
-                            else:
-                                # Log if owner_id is not a UUID for debugging data issues
-                                if hasattr(doc, 'owner_id') and not isinstance(doc.owner_id, uuid.UUID):
-                                    logger.warning(f"Document ID {getattr(doc, 'id', 'N/A')} has owner_id of type {type(doc.owner_id)}, expected UUID.")
-                                logger.debug(f"用戶 {user_id} (UUID: {user_uuid if 'user_uuid' in locals() else 'N/A'}) 無權訪問文檔 {getattr(doc, 'id', 'N/A')} (Owner: {getattr(doc, 'owner_id', 'N/A')})")
-                        full_documents = accessible_documents
-                except ValueError as e_uuid:
-                    logger.error(f"無效的 user_id 格式: {user_id} (錯誤: {e_uuid})，無法執行權限過濾。")
-                    full_documents = [] # Treat as no accessible documents if user_id is invalid string
+                full_documents = await self._filter_accessible_documents(db, full_documents, str(user_id), request_id)
             
             if not full_documents:
                 logger.warning("用戶無權限訪問相關文檔或獲取文檔內容失敗")
@@ -173,13 +133,166 @@ class EnhancedAIQAService:
                     tokens_used=total_tokens,
                     processing_time=time.time() - start_time,
                     query_rewrite_result=query_rewrite_result,
-                    semantic_search_contexts=semantic_contexts_for_response, # 傳遞
-                    session_id=request.session_id
+                    semantic_search_contexts=semantic_contexts_for_response,
+                    session_id=request.session_id,
+                    ai_generated_query_reasoning=ai_generated_query_reasoning,
+                    detailed_document_data_from_ai_query=detailed_document_data
                 )
+
+            # --- Refactored: Two-Stage Smart Context Generation ---
+            all_detailed_data: List[Dict[str, Any]] = []
+            if full_documents:
+                # Stage 1: AI 智慧篩選最佳文件（使用用戶設定的參數）
+                selected_doc_ids_for_detail = await self._select_documents_for_detailed_query(
+                    db, request.question, semantic_contexts_for_response, 
+                    str(user_id) if user_id else None, request_id,
+                    ai_selection_limit=getattr(request, 'ai_selection_limit', 3),
+                    similarity_threshold=getattr(request, 'similarity_threshold', 0.3)
+                )
+
+                logger.info(f"AI 選擇了 {len(selected_doc_ids_for_detail)} 個文件進行詳細查詢: {selected_doc_ids_for_detail}")
+
+                if selected_doc_ids_for_detail:
+                    full_documents_map = {str(doc.id): doc for doc in full_documents}
+                    
+                    document_schema_info = {
+                        "description": "這是儲存在 MongoDB 中的單一文件 Schema。您的查詢將針對 'Target Document ID' 所指定的單一文件進行操作。",
+                        "fields": {
+                            "id": "UUID (字串), 文件的唯一標識符。這個 ID 已經被用來定位文件，您的查詢不需要再過濾 `_id`。",
+                            "filename": "字串, 原始文件名。",
+                            "file_type": "字串, 文件的 MIME 類型。",
+                            "content_type_human_readable": "字串, 人類可讀的文件類型，例如 'PDF document', 'Word document', 'Email'。",
+                            "extracted_text": "字串, 從文件中提取的完整文字內容。可能非常長，如有需要，請使用正則表達式進行部分匹配。",
+                            "analysis": {
+                                "type": "object",
+                                "description": "包含對文件進行 AI 分析後產生的結果。",
+                                "properties": {
+                                    "ai_analysis_output": {
+                                        "type": "object",
+                                        "description": "這是先前 AI 分析任務（基於 AITextAnalysisOutput 或 AIImageAnalysisOutput 模型）產生的核心結構化輸出。這是最詳細、最有價值的資料來源。",
+                                        "properties": {
+                                            "initial_summary": "字串, 對文件的初步摘要。",
+                                            "content_type": "字串, AI 識別的內容類型。",
+                                            "key_information": {
+                                                "type": "object",
+                                                "description": "這是基於 `FlexibleKeyInformation` 模型提取的最重要的結構化資訊。詳細查詢應優先針對此對象。",
+                                                "properties": {
+                                                    "content_summary": "字串, 約 2-3 句話的內容摘要，非常適合回答總結性問題。",
+                                                    "semantic_tags": "字串列表, 用於語義搜索的標籤。",
+                                                    "main_topics": "字串列表, 文件討論的主要主題。",
+                                                    "key_concepts": "字串列表, 提到的核心概念。",
+                                                    "action_items": "字串列表, 文件中提到的待辦事項。",
+                                                    "dates_mentioned": "字串列表, 提及的日期。",
+                                                    "dynamic_fields": {
+                                                        "type": "object",
+                                                        "description": "由 AI 根據文件內容動態生成的欄位字典。如果用戶的問題暗示了特定的資訊（例如『專案經理是誰？』），您可以嘗試查詢這裡的鍵，例如 `analysis.ai_analysis_output.key_information.dynamic_fields.project_manager`。"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "summary": "字串, 一個較舊的或由用戶提供的摘要。",
+                                    "key_terms": "字串列表, 從文件中提取的關鍵術語。"
+                                }
+                            },
+                            "tags": "字串列表, 用戶自定義的標籤。",
+                            "metadata": "物件, 其他元數據（例如，來源 URL、作者）。結構可能不同。",
+                            "created_at": "日期時間字串 (ISO 格式), 文件記錄的創建時間。",
+                            "updated_at": "日期時間字串 (ISO 格式), 文件記錄的最後更新時間。"
+                        },
+                        "query_notes": "您的目標是生成 'projection' 來選擇特定欄位，和/或 'sub_filter' 來對文件內的欄位施加條件。例如，在 'extracted_text' 上使用正則表達式，或匹配 'analysis.ai_analysis_output.key_information.semantic_tags' 陣列中的元素。不要為 `_id` 生成過濾器，因為這已經處理好了。"
+                    }
+
+                    # Stage 2: 對每個被選中的文件執行詳細查詢
+                    for doc_id in selected_doc_ids_for_detail:
+                        if doc_id in full_documents_map:
+                            target_document: Document = full_documents_map[doc_id]
+                            logger.info(f"對文件 {doc_id} ({target_document.filename if hasattr(target_document, 'filename') else 'Unknown'}) 執行詳細查詢")
+                            
+                            ai_query_response = await unified_ai_service_simplified.generate_mongodb_detail_query(
+                                user_question=request.question,
+                                document_id=str(target_document.id),
+                                document_schema_info=document_schema_info,
+                                db=db,
+                                model_preference=request.model_preference,
+                                user_id=str(user_id) if user_id else None,
+                                session_id=request.session_id
+                            )
+
+                            if ai_query_response.success and ai_query_response.output_data and isinstance(ai_query_response.output_data, AIMongoDBQueryDetailOutput):
+                                query_components = ai_query_response.output_data
+                                if not ai_generated_query_reasoning:  # 取第一個文件的推理作為示例
+                                    ai_generated_query_reasoning = query_components.reasoning
+
+                                mongo_filter = {"_id": target_document.id}
+                                mongo_projection = query_components.projection
+
+                                if query_components.sub_filter:
+                                    mongo_filter.update(query_components.sub_filter)
+
+                                if mongo_projection or query_components.sub_filter:
+                                    # 嘗試 AI 生成的詳細查詢
+                                    logger.debug(f"執行AI查詢 - Filter: {mongo_filter}, Projection: {mongo_projection}")
+                                    fetched_data = await db.documents.find_one(mongo_filter, projection=mongo_projection or None)
+                                    
+                                    if fetched_data:
+                                        def sanitize(data: Any) -> Any:
+                                            if isinstance(data, dict): return {k: sanitize(v) for k, v in data.items()}
+                                            if isinstance(data, list): return [sanitize(i) for i in data]
+                                            if isinstance(data, uuid.UUID): return str(data)
+                                            return data
+                                        all_detailed_data.append(sanitize(fetched_data))
+                                        logger.info(f"成功獲取文件 {doc_id} 的詳細資料")
+                                    else:
+                                        # 回退策略：使用基本查詢
+                                        logger.warning(f"文件 {doc_id} 的AI詳細查詢沒有返回資料，嘗試回退查詢")
+                                        fallback_filter = {"_id": target_document.id}
+                                        fallback_projection = {
+                                            "_id": 1,
+                                            "filename": 1,
+                                            "extracted_text": 1,
+                                            "analysis.ai_analysis_output.key_information.content_summary": 1,
+                                            "analysis.ai_analysis_output.key_information.semantic_tags": 1,
+                                            "analysis.ai_analysis_output.key_information.key_concepts": 1
+                                        }
+                                        
+                                        fallback_data = await db.documents.find_one(fallback_filter, projection=fallback_projection)
+                                        if fallback_data:
+                                            def sanitize(data: Any) -> Any:
+                                                if isinstance(data, dict): return {k: sanitize(v) for k, v in data.items()}
+                                                if isinstance(data, list): return [sanitize(i) for i in data]
+                                                if isinstance(data, uuid.UUID): return str(data)
+                                                return data
+                                            all_detailed_data.append(sanitize(fallback_data))
+                                            logger.info(f"回退查詢成功獲取文件 {doc_id} 的基本資料")
+                                        else:
+                                            logger.error(f"文件 {doc_id} 連基本查詢都失敗，可能文件不存在或權限問題")
+                                else:
+                                    logger.info(f"文件 {doc_id} 的查詢組件為空，跳過詳細查詢")
+                            elif ai_query_response.error_message:
+                                logger.error(f"文件 {doc_id} 的 AI 詳細查詢失敗: {ai_query_response.error_message}")
+                        else:
+                            logger.warning(f"選擇的文件 ID {doc_id} 在可訪問文件中未找到")
+                else:
+                    logger.info("AI 沒有選擇任何文件進行詳細查詢，將使用通用上下文")
             
-            # 步驟5: 生成最終答案（使用統一AI服務）
+            detailed_document_data = all_detailed_data if all_detailed_data else None
+            logger.info(f"總共獲得 {len(all_detailed_data) if all_detailed_data else 0} 個文件的詳細資料")
+            # --- End of Smart Context Generation ---
+
             answer, answer_tokens, confidence, actual_contexts_for_llm = await self._generate_answer_unified(
-                db, request.question, full_documents, query_rewrite_result, user_id, request_id, request.model_preference # Pass user_id, request_id and model_preference
+                db,
+                request.question,
+                full_documents,
+                query_rewrite_result,
+                detailed_document_data, # Pass the list of detailed data
+                ai_generated_query_reasoning,
+                user_id,
+                request_id,
+                request.model_preference,
+                ensure_chinese_output=getattr(request, 'ensure_chinese_output', None),
+                detailed_text_max_length=getattr(request, 'detailed_text_max_length', 8000),  # 傳遞用戶設定的文本長度限制
+                max_chars_per_doc=getattr(request, 'max_chars_per_doc', None)  # 傳遞用戶設定的單文檔限制
             )
             total_tokens += answer_tokens
             
@@ -194,500 +307,313 @@ class EnhancedAIQAService:
                 tokens_used=total_tokens,
                 processing_time=processing_time,
                 query_rewrite_result=query_rewrite_result,
-                semantic_search_contexts=semantic_contexts_for_response, # 傳遞
+                semantic_search_contexts=semantic_contexts_for_response,
                 session_id=request.session_id,
-                llm_context_documents=actual_contexts_for_llm
+                llm_context_documents=actual_contexts_for_llm,
+                ai_generated_query_reasoning=ai_generated_query_reasoning,
+                detailed_document_data_from_ai_query=detailed_document_data
             )
             
         except Exception as e:
             processing_time_on_error = time.time() - start_time
-            error_trace = traceback.format_exc() # Make sure traceback is imported
+            error_trace = traceback.format_exc()
             await log_event(db=db, level=LogLevel.ERROR, message=f"Enhanced AI QA failed: {str(e)}",
                             source="service.enhanced_ai_qa.process_request_error", user_id=str(user_id) if user_id else None, request_id=request_id,
                             details={"error": str(e), "error_type": type(e).__name__, "traceback": error_trace, **log_details_initial})
             
-            # Ensure total_tokens is an int, default to 0 if not (though it should be an int already)
             current_total_tokens = total_tokens if isinstance(total_tokens, int) else 0
-            
-            # Ensure query_rewrite_result is valid or provide a fallback
-            current_qrr: Optional[QueryRewriteResult] = query_rewrite_result
-            if not isinstance(current_qrr, QueryRewriteResult):
-                current_qrr = QueryRewriteResult(
-                    original_query=request.question, 
-                    rewritten_queries=[request.question], 
-                    extracted_parameters={},
-                    intent_analysis="Error occurred before query rewrite completed or result was invalid."
-                )
-
-            # Ensure semantic_contexts_for_response is a list
-            current_semantic_contexts = semantic_contexts_for_response
-            if not isinstance(current_semantic_contexts, list):
-                current_semantic_contexts = []
+            current_qrr = query_rewrite_result if isinstance(query_rewrite_result, QueryRewriteResult) else QueryRewriteResult(original_query=request.question, rewritten_queries=[request.question], extracted_parameters={}, intent_analysis="Error before QRR.")
+            current_semantic_contexts = semantic_contexts_for_response if isinstance(semantic_contexts_for_response, list) else []
 
             return AIQAResponse(
-                answer=f"An error occurred while processing your question: {str(e)}", 
-                source_documents=[], 
-                confidence_score=0.0, 
-                tokens_used=current_total_tokens,
-                processing_time=processing_time_on_error,
-                query_rewrite_result=current_qrr,
-                semantic_search_contexts=current_semantic_contexts, 
-                session_id=request.session_id,
-                llm_context_documents=[], 
-                error_message=str(e) 
+                answer=f"An error occurred: {str(e)}", source_documents=[], confidence_score=0.0, tokens_used=current_total_tokens,
+                processing_time=processing_time_on_error, query_rewrite_result=current_qrr,
+                semantic_search_contexts=current_semantic_contexts, session_id=request.session_id,
+                llm_context_documents=[], ai_generated_query_reasoning=ai_generated_query_reasoning,
+                detailed_document_data_from_ai_query=detailed_document_data, error_message=str(e) 
             )
 
-    async def _filter_accessible_documents(
-        self, 
-        db: AsyncIOMotorDatabase, # For logging
-        full_documents: List[Any], # Assuming Document model instances
-        user_id_str: Optional[str], 
-        request_id: Optional[str]
-    ) -> List[Any]:
-        """
-        Filters a list of documents based on user ownership.
-        Logs access attempts and errors.
-        """
-        if not user_id_str: # No user_id means public access or no filtering needed at this stage
-            return full_documents
-
-        accessible_documents = []
-        user_uuid: Optional[uuid.UUID] = None
-
+    async def _filter_accessible_documents(self, db: AsyncIOMotorDatabase, full_documents: List[Any], user_id_str: Optional[str], request_id: Optional[str]) -> List[Any]:
+        if not user_id_str: return full_documents
         try:
             user_uuid = uuid.UUID(user_id_str)
-        except ValueError as e_uuid:
-            await log_event(db=db, level=LogLevel.ERROR, 
-                            message=f"Invalid user_id format for access filtering: {user_id_str} (Error: {e_uuid}). No documents will be accessible.",
-                            source="service.enhanced_ai_qa._filter_accessible_documents", user_id=user_id_str, request_id=request_id)
-            return [] # No documents accessible if user_id is malformed
-
-        if not full_documents:
+            accessible_documents = [doc for doc in full_documents if hasattr(doc, 'owner_id') and doc.owner_id == user_uuid]
+            if not accessible_documents:
+                logger.warning("用戶無權限訪問相關文檔或獲取文檔內容失敗")
+                return []
+            return accessible_documents
+        except ValueError:
+            await log_event(db=db, level=LogLevel.ERROR, message=f"Invalid user_id format for access filtering: {user_id_str}", source="service.enhanced_ai_qa._filter_accessible_documents", user_id=user_id_str, request_id=request_id)
             return []
 
-        for doc in full_documents:
-            doc_id_for_log = getattr(doc, 'id', 'N/A')
-            owner_id_for_log = getattr(doc, 'owner_id', 'N/A')
-
-            if hasattr(doc, 'owner_id') and isinstance(doc.owner_id, uuid.UUID) and doc.owner_id == user_uuid:
-                accessible_documents.append(doc)
-            else:
-                if hasattr(doc, 'owner_id') and not isinstance(doc.owner_id, uuid.UUID):
-                    logger.warning(f"Document ID {doc_id_for_log} has owner_id of type {type(doc.owner_id)}, expected UUID.")
-                
-                log_details_permission = {
-                    "document_id": str(doc_id_for_log),
-                    "document_owner_id": str(owner_id_for_log),
-                    "target_user_uuid": str(user_uuid)
-                }
-                await log_event(db=db, level=LogLevel.DEBUG, # Changed to DEBUG as it's an expected operational log
-                                message=f"User {user_id_str} does not have permission for document {doc_id_for_log}.",
-                                source="service.enhanced_ai_qa._filter_accessible_documents", user_id=user_id_str, request_id=request_id,
-                                details=log_details_permission)
-        
-        return accessible_documents
-
-    async def _rewrite_query_unified(
-        self, 
-        db: AsyncIOMotorDatabase,
-        original_query: str,
-        user_id: Optional[str],
-        request_id: Optional[str]
-    ) -> Tuple[QueryRewriteResult, int]:
-        """步驟1: 查詢理解與重寫（使用統一AI服務）"""
-        log_details = {"original_query_length": len(original_query)}
-        await log_event(db=db, level=LogLevel.DEBUG, message="Starting query rewrite using unified AI service.",
-                        source="service.enhanced_ai_qa.rewrite_query_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details)
-
-        try:
-            ai_response: UnifiedAIResponse = await unified_ai_service_simplified.rewrite_query(
-                original_query=original_query, db=db
-            )
-            tokens = ai_response.token_usage.total_tokens if ai_response.token_usage else 0
-
-            if not ai_response.success or not ai_response.output_data:
-                error_msg = ai_response.error_message or "AI query rewrite returned no content or failed."
-                await log_event(db=db, level=LogLevel.WARNING, message=f"Query rewrite failed or no content: {error_msg}",
-                                source="service.enhanced_ai_qa.rewrite_query_internal", user_id=str(user_id) if user_id else None, request_id=request_id,
-                                details={**log_details, "error": error_msg, "ai_success": ai_response.success})
-                return QueryRewriteResult(original_query=original_query, rewritten_queries=[original_query], extracted_parameters={}, intent_analysis=f"Query rewrite failed: {error_msg}"), tokens
-
-            content_data = ai_response.output_data
-            parsed_output: Optional[AIQueryRewriteOutput] = None
-            query_rewrite_result: QueryRewriteResult
-
-            if isinstance(content_data, AIQueryRewriteOutput):
-                parsed_output = content_data
-                log_msg_parse = "Successfully used pre-parsed AIQueryRewriteOutput model."
-            elif isinstance(content_data, dict):
-                log_msg_parse = "Attempting to parse content_data dict using AIQueryRewriteOutput model."
-                try:
-                    parsed_output = AIQueryRewriteOutput(**content_data)
-                except ValidationError as ve:
-                    await log_event(db=db, level=LogLevel.WARNING, message=f"Validation error parsing AI query rewrite dict: {ve}. Content: {content_data}",
-                                    source="service.enhanced_ai_qa.rewrite_query_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
-                    parsed_output = None # Ensure fallback
-            else: # Fallback for unexpected content_data types
-                log_msg_parse = f"content_data is of unexpected type: {type(content_data)}. Using fallback values."
-                parsed_output = None
-
-            if parsed_output:
-                # Ensure rewritten_queries contains only strings
-                raw_queries = parsed_output.rewritten_queries
-                processed_queries = []
-                if isinstance(raw_queries, list):
-                    # Ensure elements are strings and filter out None before str conversion
-                    processed_queries = [str(q) for q in raw_queries if q is not None]
-                elif raw_queries is not None: # If it's a single item, not a list
-                    processed_queries = [str(raw_queries)]
-
-                if not processed_queries: # Fallback if list is empty or all items were None
-                    processed_queries = [str(original_query)]
-                    
-                query_rewrite_result = QueryRewriteResult(
-                    original_query=original_query,
-                    rewritten_queries=processed_queries, # Use processed list
-                    extracted_parameters=parsed_output.extracted_parameters if parsed_output.extracted_parameters else {},
-                    intent_analysis=parsed_output.intent_analysis or "Intent analysis not provided."
-                )
-                log_msg_parse += f" Intent: {query_rewrite_result.intent_analysis[:50]}"
-            else: # Fallback if parsing failed or type was unexpected
-                query_rewrite_result = QueryRewriteResult(
-                    original_query=original_query, rewritten_queries=[str(original_query)], extracted_parameters={},
-                    intent_analysis=log_msg_parse # Use the parsing status as intent analysis
-                )
-            
-            await log_event(db=db, level=LogLevel.DEBUG, message=f"Query rewrite processing complete. {log_msg_parse}",
-                            source="service.enhanced_ai_qa.rewrite_query_internal", user_id=str(user_id) if user_id else None, request_id=request_id,
-                            details={"rewritten_queries_count": len(query_rewrite_result.rewritten_queries), "params_extracted": bool(query_rewrite_result.extracted_parameters)})
-            return query_rewrite_result, tokens
-            
-        except Exception as e:
-            await log_event(db=db, level=LogLevel.ERROR, message=f"Error during unified AI service query rewrite call: {str(e)}",
-                            source="service.enhanced_ai_qa.rewrite_query_internal", user_id=str(user_id) if user_id else None, request_id=request_id,
-                            details={**log_details, "error": str(e), "error_type": type(e).__name__})
-            return QueryRewriteResult(original_query=original_query, rewritten_queries=[original_query], extracted_parameters={}, intent_analysis=f"Query rewrite error: {str(e)}"), 0
-    
-    async def _semantic_search(
+    async def _select_documents_for_detailed_query(
         self,
         db: AsyncIOMotorDatabase,
-        queries: List[str],
-        top_k: int = 10,
-        user_id: Optional[str] = None,
-        request_id: Optional[str] = None,
-        query_rewrite_result: Optional[QueryRewriteResult] = None # New parameter
-    ) -> List[SemanticSearchResult]:
-        """步驟2: 向量搜索 - Modified to handle multiple queries, combine results, and apply metadata filters."""
-        final_user_id_for_log: Optional[str] = str(user_id) if user_id is not None else None
+        user_question: str,
+        semantic_contexts: List[SemanticContextDocument],
+        user_id: Optional[str],
+        request_id: Optional[str],
+        ai_selection_limit: int,
+        similarity_threshold: float
+    ) -> List[str]:
+        """
+        使用 AI 從候選文件中智慧選擇最相關的文件進行詳細查詢，
+        包含去重邏輯和動態數量決策
+        """
+        if not semantic_contexts:
+            return []
 
-        logger.debug(f"In _semantic_search, entry: type(db) is {type(db)}, db is {str(db)[:200]}")
+        # 第一步：根據相似度分數進行初步篩選和去重
+        # 去除相似度過低的文件（<0.3），並按文件ID去重
+        filtered_contexts = {}
+        
+        for ctx in semantic_contexts:
+            # 相似度篩選
+            if ctx.similarity_score < similarity_threshold:
+                continue
+                
+            # 去重：如果同一個文件有多個片段，選擇相似度最高的
+            if ctx.document_id not in filtered_contexts or ctx.similarity_score > filtered_contexts[ctx.document_id].similarity_score:
+                filtered_contexts[ctx.document_id] = ctx
+        
+        # 按相似度排序
+        unique_contexts = sorted(filtered_contexts.values(), key=lambda x: x.similarity_score, reverse=True)
+        
+        # 第二步：動態決定要提供給AI的候選數量
+        max_candidates = min(ai_selection_limit * 2, len(unique_contexts))  # 提供給AI的候選數是選擇限制的2倍
+        candidates_for_ai = unique_contexts[:max_candidates]
+        
+        if len(candidates_for_ai) < 2:
+            logger.info(f"候選文件數量不足（{len(candidates_for_ai)}），跳過AI選擇，直接返回所有候選")
+            return [ctx.document_id for ctx in candidates_for_ai]
 
-        if not isinstance(queries, list) or not all(isinstance(q, str) for q in queries):
-            logger.error(f"_semantic_search: queries is not a list of strings. Received: {type(queries)}. Auto-wrapping original query if possible, or using empty list.")
-            # Attempt to recover if a single string was passed, else log error and use empty list
-            if isinstance(queries, str): # This case should ideally not happen if called correctly
-                 queries = [queries]
-            else:
-                 queries = [] # Cannot proceed with non-string queries
+        # 準備候選文件資料給AI分析
+        candidate_docs_for_ai = [
+            {
+                "document_id": ctx.document_id, 
+                "summary": ctx.summary_or_chunk_text,
+                "similarity_score": ctx.similarity_score
+            }
+            for ctx in candidates_for_ai
+        ]
 
-        log_details = {
-            "num_queries": len(queries),
-            "first_query_length": len(queries[0]) if queries else 0,
-            "top_k_per_query": top_k,
-            "user_id_filter_for_search": user_id
-        }
-        await log_event(db=db, level=LogLevel.DEBUG, message="Starting semantic search for multiple queries.",
-                        source="service.enhanced_ai_qa.semantic_search_internal", user_id=final_user_id_for_log, request_id=request_id, details=log_details)
+        await log_event(db=db, level=LogLevel.INFO,
+                        message=f"經過去重和篩選後，準備請AI從 {len(candidate_docs_for_ai)} 個候選文件中選擇最相關的進行詳細查詢（用戶限制：{ai_selection_limit}個）",
+                        source="service.enhanced_ai_qa._select_documents_for_detailed_query",
+                        user_id=user_id, request_id=request_id,
+                        details={"candidates": [{"id": doc["document_id"], "score": doc["similarity_score"]} for doc in candidate_docs_for_ai], "user_selection_limit": ai_selection_limit})
 
+        selection_response = await unified_ai_service_simplified.select_documents_for_detailed_query(
+            user_question=user_question,
+            candidate_documents=candidate_docs_for_ai,
+            db=db,
+            user_id=user_id,
+            session_id=request_id,
+            max_selections=ai_selection_limit  # 傳遞用戶的選擇限制
+        )
+
+        if selection_response.success and isinstance(selection_response.output_data, AIDocumentSelectionOutput):
+            selected_ids = selection_response.output_data.selected_document_ids
+            reasoning = selection_response.output_data.reasoning
+            
+            # 驗證選擇的文件ID是否有效
+            valid_candidate_ids = {doc["document_id"] for doc in candidate_docs_for_ai}
+            validated_selected_ids = [doc_id for doc_id in selected_ids if doc_id in valid_candidate_ids]
+            
+            if len(validated_selected_ids) != len(selected_ids):
+                dropped_ids = set(selected_ids) - set(validated_selected_ids)
+                logger.warning(f"AI選擇了一些無效的文件ID，已過濾掉: {dropped_ids}")
+            
+            await log_event(db=db, level=LogLevel.INFO,
+                            message=f"AI智慧選擇了 {len(validated_selected_ids)} 個文件進行詳細查詢",
+                            source="service.enhanced_ai_qa._select_documents_for_detailed_query",
+                            user_id=user_id, request_id=request_id,
+                            details={
+                                "selected_ids": validated_selected_ids, 
+                                "reasoning": reasoning,
+                                "original_candidates": len(semantic_contexts),
+                                "after_dedup_filter": len(candidates_for_ai),
+                                "final_selected": len(validated_selected_ids)
+                            })
+            
+            return validated_selected_ids
+        else:
+            await log_event(db=db, level=LogLevel.WARNING,
+                            message=f"AI文件選擇失敗，回退策略：選擇相似度最高的前{min(ai_selection_limit, len(candidates_for_ai))}個文件",
+                            source="service.enhanced_ai_qa._select_documents_for_detailed_query",
+                            user_id=user_id, request_id=request_id,
+                            details={"error": selection_response.error_message, "fallback_count": min(ai_selection_limit, len(candidates_for_ai))})
+            
+            # 回退策略：根據用戶設定選擇相似度最高的文件
+            fallback_count = min(ai_selection_limit, len(candidates_for_ai))
+            fallback_selection = [ctx.document_id for ctx in candidates_for_ai[:fallback_count]]
+            return fallback_selection
+
+    async def _rewrite_query_unified(self, db: AsyncIOMotorDatabase, original_query: str, user_id: Optional[str], request_id: Optional[str], query_rewrite_count: int) -> Tuple[QueryRewriteResult, int]:
+        ai_response = await unified_ai_service_simplified.rewrite_query(original_query=original_query, db=db)
+        tokens = ai_response.token_usage.total_tokens if ai_response.token_usage else 0
+        if ai_response.success and isinstance(ai_response.output_data, AIQueryRewriteOutput):
+            output = ai_response.output_data
+            return QueryRewriteResult(original_query=original_query, rewritten_queries=output.rewritten_queries, extracted_parameters=output.extracted_parameters, intent_analysis=output.intent_analysis), tokens
+        return QueryRewriteResult(original_query=original_query, rewritten_queries=[original_query], extracted_parameters={}, intent_analysis="Query rewrite failed."), tokens
+
+    async def _semantic_search(self, db: AsyncIOMotorDatabase, queries: List[str], top_k: int, user_id: Optional[str], request_id: Optional[str], query_rewrite_result: Optional[QueryRewriteResult], similarity_threshold: float, enable_query_expansion: bool) -> List[SemanticSearchResult]:
         all_results_map: Dict[str, SemanticSearchResult] = {}
-
         chroma_metadata_filter: Dict[str, Any] = {}
         if query_rewrite_result and query_rewrite_result.extracted_parameters:
-            file_type_param = query_rewrite_result.extracted_parameters.get("file_type")
-            document_types_param = query_rewrite_result.extracted_parameters.get("document_types")
+            file_type = query_rewrite_result.extracted_parameters.get("file_type") or (query_rewrite_result.extracted_parameters.get("document_types", [])[0] if query_rewrite_result.extracted_parameters.get("document_types") else None)
+            if file_type: chroma_metadata_filter["file_type"] = file_type
 
-            if isinstance(file_type_param, str) and file_type_param.strip():
-                chroma_metadata_filter["file_type"] = file_type_param.strip()
-                logger.debug(f"Applying metadata filter for file_type: {file_type_param.strip()}")
-            elif isinstance(document_types_param, list) and document_types_param and isinstance(document_types_param[0], str) and document_types_param[0].strip():
-                chroma_metadata_filter["file_type"] = document_types_param[0].strip()
-                logger.debug(f"Applying metadata filter for file_type from document_types: {document_types_param[0].strip()}")
-
-        log_details["metadata_filter_applied"] = list(chroma_metadata_filter.keys()) if chroma_metadata_filter else "None"
-
-        # --- Batch Embedding Attempt (Fallback Strategy) ---
-        unique_valid_queries_to_embed = []
-        if queries:
-            seen_queries = set()
-            for q_item_for_batch in queries:
-                if isinstance(q_item_for_batch, str) and q_item_for_batch.strip():
-                    stripped_q = q_item_for_batch.strip()
-                    if stripped_q not in self.query_embedding_cache and stripped_q not in seen_queries:
-                        unique_valid_queries_to_embed.append(stripped_q)
-                        seen_queries.add(stripped_q)
-
-        if unique_valid_queries_to_embed:
-            logger.info(f"Found {len(unique_valid_queries_to_embed)} unique queries not in cache. Attempting batch encoding.")
-            try:
-                if hasattr(embedding_service, 'encode_batch'):
-                    query_vectors_batch = embedding_service.encode_batch(unique_valid_queries_to_embed)
-                    for q_str, vec in zip(unique_valid_queries_to_embed, query_vectors_batch):
-                        self.query_embedding_cache[q_str] = vec
-                    logger.info(f"Successfully batch encoded and cached {len(unique_valid_queries_to_embed)} new query embeddings.")
-                else:
-                    logger.warning("embedding_service does not have 'encode_batch' method. Falling back to per-query encoding within the loop for uncached items.")
-                    # No explicit action needed here, per-query logic below will handle it.
-            except Exception as e_batch_embed:
-                logger.error(f"Error during batch embedding: {e_batch_embed}. Will attempt per-query encoding for these items.", exc_info=True)
-        # --- End of Batch Embedding Attempt ---
-
+        # 使用緩存管理器處理查詢向量緩存
+        uncached_queries = [q for q in queries if self.cache_manager.get_query_embedding(q) is None]
+        if uncached_queries:
+            query_vectors = embedding_service.encode_batch(uncached_queries)
+            self.cache_manager.batch_set_query_embeddings(uncached_queries, query_vectors)
+        
         try:
             owner_id_filter_for_vector_db = user_id
             if isinstance(owner_id_filter_for_vector_db, uuid.UUID):
                 owner_id_filter_for_vector_db = str(owner_id_filter_for_vector_db)
 
             for i, q_item in enumerate(queries):
-                query_log_details = {**log_details, "current_query_index": i, "current_query_length": len(q_item)}
-
-                if not isinstance(q_item, str) or not q_item.strip():
-                    await log_event(db=db, level=LogLevel.WARNING, message=f"Skipping empty or invalid query string at index {i}.",
-                                    source="service.enhanced_ai_qa.semantic_search_internal.skip_query", user_id=final_user_id_for_log, request_id=request_id, details=query_log_details)
-                    continue
-
-                stripped_q_item = q_item.strip()
-                query_vector: Optional[List[float]] = None
-
-                # Caching Logic
-                if stripped_q_item in self.query_embedding_cache:
-                    query_vector = self.query_embedding_cache[stripped_q_item]
-                    logger.debug(f"Query embedding cache HIT for: '{stripped_q_item[:50]}...'")
-                    query_log_details["embedding_source"] = "cache_hit"
-                else:
-                    logger.debug(f"Query embedding cache MISS for: '{stripped_q_item[:50]}...'. Encoding now.")
-                    query_log_details["embedding_source"] = "cache_miss_encoded_now"
-                    try:
-                        query_vector = embedding_service.encode_text(stripped_q_item)
-                        self.query_embedding_cache[stripped_q_item] = query_vector
-                    except Exception as e_single_encode:
-                        await log_event(db=db, level=LogLevel.ERROR, message=f"Failed to encode query '{stripped_q_item[:50]}...': {e_single_encode}",
-                                        source="service.enhanced_ai_qa.semantic_search_internal.encode_error", user_id=final_user_id_for_log, request_id=request_id, details=query_log_details)
-                        continue # Skip this query if encoding fails
-
-                if query_vector is None: # Should not happen if logic above is correct, but as a safeguard
-                    await log_event(db=db, level=LogLevel.ERROR, message=f"Query vector is None for '{stripped_q_item[:50]}...' after caching/encoding attempts.",
-                                    source="service.enhanced_ai_qa.semantic_search_internal.vector_none", user_id=final_user_id_for_log, request_id=request_id, details=query_log_details)
-                    continue
-
-                await log_event(db=db, level=LogLevel.DEBUG, message=f"Processing query {i+1}/{len(queries)}: '{stripped_q_item[:100]}...' (Embedding from: {query_log_details.get('embedding_source', 'unknown')})",
-                                source="service.enhanced_ai_qa.semantic_search_internal.query_item", user_id=final_user_id_for_log, request_id=request_id, details=query_log_details)
-
-                current_results = vector_db_service.search_similar_vectors(
-                    query_vector=query_vector, # type: ignore # query_vector is List[float] here
-                    top_k=top_k,
-                    similarity_threshold=0.3,
-                    owner_id_filter=owner_id_filter_for_vector_db,
-                    metadata_filter=chroma_metadata_filter # Pass the constructed filter
-                )
-
-                await log_event(db=db, level=LogLevel.DEBUG, message=f"Query '{q_item[:50]}...' (with metadata_filter: {chroma_metadata_filter if chroma_metadata_filter else 'None'}) yielded {len(current_results)} results.",
-                                source="service.enhanced_ai_qa.semantic_search_internal.query_results", user_id=final_user_id_for_log, request_id=request_id,
-                                details={**query_log_details, "results_for_this_query": len(current_results)})
-
-                for result in current_results:
-                    if not isinstance(result, SemanticSearchResult) or not result.document_id:
-                        await log_event(db=db, level=LogLevel.WARNING, message=f"Skipping invalid search result object: {type(result)}",
-                                        source="service.enhanced_ai_qa.semantic_search_internal.skip_invalid_result_obj", user_id=final_user_id_for_log, request_id=request_id)
-                        continue # Skip if result is not as expected
-
-                    if result.document_id in all_results_map:
-                        if result.similarity_score > all_results_map[result.document_id].similarity_score:
-                            all_results_map[result.document_id] = result
-                    else:
-                        all_results_map[result.document_id] = result
-            
-            combined_results = list(all_results_map.values())
-            combined_results.sort(key=lambda r: r.similarity_score, reverse=True)
-            
-            await log_event(db=db, level=LogLevel.DEBUG, message=f"Semantic search completed. Combined {len(combined_results)} unique results from {len(queries)} queries.",
-                            source="service.enhanced_ai_qa.semantic_search_internal.final_results", user_id=final_user_id_for_log, request_id=request_id,
-                            details={**log_details, "combined_results_count": len(combined_results)})
-            return combined_results
-            
+                query_vector = self.cache_manager.get_query_embedding(q_item)
+                if query_vector:
+                    # 嘗試帶過濾條件的搜索
+                    results = vector_db_service.search_similar_vectors(
+                        query_vector=query_vector, 
+                        top_k=top_k, 
+                        owner_id_filter=owner_id_filter_for_vector_db, 
+                        metadata_filter=chroma_metadata_filter
+                    )
+                    
+                    # 如果帶過濾條件的搜索沒有結果，且有 metadata_filter，則嘗試不帶 metadata_filter 的搜索
+                    if not results and chroma_metadata_filter:
+                        logger.warning(f"帶 metadata_filter 的搜索沒有結果，嘗試回退搜索。Filter: {chroma_metadata_filter}")
+                        results = vector_db_service.search_similar_vectors(
+                            query_vector=query_vector, 
+                            top_k=top_k, 
+                            owner_id_filter=owner_id_filter_for_vector_db, 
+                            metadata_filter=None  # 回退：移除 metadata_filter
+                        )
+                        if results:
+                            logger.info(f"回退搜索成功找到 {len(results)} 個結果")
+                    
+                    for res in results:
+                        if res.document_id not in all_results_map or res.similarity_score > all_results_map[res.document_id].similarity_score:
+                            all_results_map[res.document_id] = res
+        
         except Exception as e:
-            error_trace = traceback.format_exc()
-            await log_event(db=db, level=LogLevel.ERROR, message=f"Semantic search failed: {str(e)}",
-                            source="service.enhanced_ai_qa.semantic_search_internal.exception", # This is the failing one
-                            user_id=final_user_id_for_log, request_id=request_id,
-                            details={**log_details, "error": str(e), "error_type": type(e).__name__, "traceback": error_trace})
+            await log_event(
+                db=db,
+                level=LogLevel.ERROR,
+                message=f"Unexpected error in _semantic_search: {str(e)}",
+                source="service.enhanced_ai_qa._semantic_search",
+                user_id=str(user_id) if user_id else None,
+                request_id=request_id,
+                details={"error_type": type(e).__name__, "error": str(e)}
+            )
             return []
+        
+        combined = sorted(all_results_map.values(), key=lambda r: r.similarity_score, reverse=True)
+        return combined
 
-    async def _t2q_filter(
-        self, 
-        db: AsyncIOMotorDatabase,
-        document_ids: List[str], 
-        extracted_parameters: Dict[str, Any],
-        user_id: Optional[str],
-        request_id: Optional[str]
-    ) -> List[str]:
-        """步驟3: T2Q二次過濾，增強安全性"""
-        log_details = {
-            "initial_doc_ids_count": len(document_ids),
-            "extracted_params_keys": list(extracted_parameters.keys())
-        }
-        await log_event(db=db, level=LogLevel.DEBUG, message="T2Q filter process started.",
-                        source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details)
-        try:
-            if not extracted_parameters or not document_ids:
-                await log_event(db=db, level=LogLevel.DEBUG, message="T2Q filter: No parameters or document IDs to filter, returning original list.",
-                                source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details)
-                return document_ids
-            
-            allowed_filter_keys = {"document_types", "file_type", "date_range", "key_entities"}
-            
-            # Convert string IDs to UUIDs for MongoDB query
-            uuid_document_ids = []
-            for doc_id_str_val in document_ids:
-                try:
-                    uuid_document_ids.append(uuid.UUID(doc_id_str_val))
-                except ValueError:
-                     await log_event(db=db, level=LogLevel.WARNING, message=f"T2Q Filter: Invalid document ID format '{doc_id_str_val}', skipping.",
-                                    source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
-            if not uuid_document_ids:
-                return []
+    async def _t2q_filter(self, db: AsyncIOMotorDatabase, document_ids: List[str], extracted_parameters: Dict[str, Any], user_id: Optional[str], request_id: Optional[str]) -> List[str]:
+        # This function is no longer called in the main flow but is kept for potential future use.
+        return document_ids
 
-            filter_conditions: Dict[str, Any] = {"_id": {"$in": uuid_document_ids}}
-            
-            for key, value in extracted_parameters.items():
-                if key not in allowed_filter_keys:
-                    await log_event(db=db, level=LogLevel.DEBUG, message=f"T2Q Filter: Ignoring disallowed filter key '{key}'.",
-                                    source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
-                    continue
-
-                if isinstance(key, str) and key.startswith("$"): # Basic check for NoSQL injection
-                    await log_event(db=db, level=LogLevel.WARNING, message=f"T2Q Filter: Potential malicious filter key '{key}' detected and ignored.",
-                                    source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
-                    continue
-
-                if key == "document_types" or key == "file_type":
-                    if isinstance(value, str) and not value.startswith("$"):
-                        filter_conditions["file_type"] = value
-                    elif isinstance(value, list) and all(isinstance(v, str) and not v.startswith("$") for v in value) and value:
-                        generic_types_lower = ["文檔", "文件", "資料", "文獻", "文本"] # TODO: Internationalize/centralize
-                        is_generic_list = all(dt.lower() in generic_types_lower for dt in value)
-                        if not is_generic_list: filter_conditions["file_type"] = {"$in": value}
-                        else: await log_event(db=db, level=LogLevel.DEBUG, message=f"T2Q Filter: Generic document type list {value} ignored.", source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
-                    elif value:
-                         await log_event(db=db, level=LogLevel.WARNING, message=f"T2Q Filter: Invalid value '{value}' for key '{key}', ignored.", source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
-
-                elif key == "date_range":
-                    if isinstance(value, dict):
-                        date_conditions: Dict[str, datetime] = {}
-                        # Simplified date parsing, robust parsing needed for production
-                        try:
-                            if value.get("start") and isinstance(value["start"], str): date_conditions["$gte"] = datetime.fromisoformat(value["start"].replace('Z', '+00:00'))
-                            if value.get("end") and isinstance(value["end"], str): date_conditions["$lt"] = datetime.fromisoformat(value["end"].replace('Z', '+00:00'))
-                        except ValueError:
-                             await log_event(db=db, level=LogLevel.WARNING, message=f"T2Q Filter: Invalid date format in date_range '{value}'.", source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
-                        if date_conditions: filter_conditions["created_at"] = date_conditions
-                    elif value:
-                        await log_event(db=db, level=LogLevel.WARNING, message=f"T2Q Filter: Invalid value '{value}' for key 'date_range', ignored.", source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
-
-            if len(filter_conditions) == 1 and "_id" in filter_conditions:
-                 await log_event(db=db, level=LogLevel.DEBUG, message="T2Q Filter: No effective filter parameters applied, returning original document ID list.",
-                                 source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details)
-                 return document_ids # Return original string IDs
-
-            cursor = db.documents.find(filter_conditions, {"_id": 1})
-            filtered_docs = await cursor.to_list(length=None) # Set length to avoid default 101 limit if many docs
-            filtered_ids = [str(doc["_id"]) for doc in filtered_docs]
-            
-            await log_event(db=db, level=LogLevel.DEBUG, message=f"T2Q filter applied. Initial count: {len(document_ids)}, Filtered count: {len(filtered_ids)}.",
-                            source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id,
-                            details={"initial_count": len(document_ids), "filtered_count": len(filtered_ids), "applied_conditions": {k:v for k,v in filter_conditions.items() if k != "_id"}})
-            return filtered_ids
-            
-        except Exception as e:
-            await log_event(db=db, level=LogLevel.ERROR, message=f"T2Q filter failed: {str(e)}",
-                            source="service.enhanced_ai_qa.t2q_filter_internal", user_id=str(user_id) if user_id else None, request_id=request_id,
-                            details={**log_details, "error": str(e), "error_type": type(e).__name__})
-            return document_ids
-    
-    async def _generate_answer_unified(
-        self, 
-        db: AsyncIOMotorDatabase,
-        original_query: str,
-        documents_for_context: List[Any], # Assuming Document objects
-        query_rewrite_result: QueryRewriteResult,
-        user_id: Optional[str], # Added
-        request_id: Optional[str], # Added
-        model_preference: Optional[str] = None 
-    ) -> Tuple[str, int, float, List[LLMContextDocument]]:
-        """步驟4: 生成最終答案（使用統一AI服務）"""
+    async def _generate_answer_unified(self, db: AsyncIOMotorDatabase, original_query: str, documents_for_context: List[Any], query_rewrite_result: QueryRewriteResult, detailed_document_data: Optional[List[Dict[str, Any]]], ai_generated_query_reasoning: Optional[str], user_id: Optional[str], request_id: Optional[str], model_preference: Optional[str] = None, ensure_chinese_output: Optional[bool] = None, detailed_text_max_length: Optional[int] = None, max_chars_per_doc: Optional[int] = None) -> Tuple[str, int, float, List[LLMContextDocument]]:
+        """步驟4: 生成最終答案（使用統一AI服務）- Implements focused context logic."""
         actual_contexts_for_llm: List[LLMContextDocument] = []
-
+        context_parts = []
+        
         log_details_context = {
-            "num_docs_for_context": len(documents_for_context),
+            "num_docs_for_context_initial": len(documents_for_context),
             "original_query_length": len(original_query),
-            "intent": query_rewrite_result.intent_analysis[:100] if query_rewrite_result.intent_analysis else None # Log snippet
+            "intent": query_rewrite_result.intent_analysis[:100] if query_rewrite_result.intent_analysis else None,
+            "has_detailed_document_data": bool(detailed_document_data)
         }
         await log_event(db=db, level=LogLevel.DEBUG, message="Assembling context for AI answer generation.",
                         source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details_context)
 
         try:
-            context_parts = []
-            for i, doc in enumerate(documents_for_context[:5], 1):
-                doc_content_to_use = ""
-                content_source_type = "unknown"
-                doc_id_str = str(doc.id) if hasattr(doc, 'id') else f"unknown_doc_{i}"
-
-                raw_extracted_text: Optional[str] = getattr(doc, 'extracted_text', None)
-                ai_summary: Optional[str] = None
-                ai_dynamic_long_text: Optional[str] = None
-                current_summary: Optional[str] = None
-
-                if doc.analysis and doc.analysis.ai_analysis_output and isinstance(doc.analysis.ai_analysis_output, dict):
-                    try:
-                        analysis_output_data = AIDocumentAnalysisOutputDetail(**doc.analysis.ai_analysis_output)
-                        current_summary = analysis_output_data.initial_summary or analysis_output_data.initial_description
-                        if analysis_output_data.key_information:
-                            key_info_model = analysis_output_data.key_information
-                            if not current_summary or len(str(current_summary).strip()) < 50:
-                                content_summary_from_key = key_info_model.content_summary
-                                if content_summary_from_key and len(str(content_summary_from_key).strip()) > len(str(current_summary).strip() if current_summary else ""):
-                                    current_summary = content_summary_from_key
-                            if key_info_model.dynamic_fields:
-                                for field_value in key_info_model.dynamic_fields.values():
-                                    if isinstance(field_value, str) and len(field_value) > 200:
-                                        if not ai_dynamic_long_text or len(field_value) > len(ai_dynamic_long_text):
-                                            ai_dynamic_long_text = field_value
-                        if current_summary and isinstance(current_summary, str) and current_summary.strip():
-                            ai_summary = current_summary.strip()
-                    except ValidationError as ve:
-                        await log_event(db=db, level=LogLevel.WARNING, message=f"Validation error parsing doc analysis for doc_id {doc_id_str}: {ve}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id)
-                        if isinstance(doc.analysis.ai_analysis_output, dict):
-                            current_summary = doc.analysis.ai_analysis_output.get('initial_summary') or doc.analysis.ai_analysis_output.get('initial_description')
-                            if current_summary and isinstance(current_summary, str) and current_summary.strip():
-                                ai_summary = current_summary.strip()
-                    except Exception as e_parse:
-                        await log_event(db=db, level=LogLevel.ERROR, message=f"Unexpected error parsing doc analysis for doc_id {doc_id_str}: {e_parse}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details={"error": str(e_parse)})
+            # === 聚焦上下文邏輯：優先使用詳細資料，提升準確性並降低 Token 消耗 ===
+            if detailed_document_data and len(detailed_document_data) > 0:
+                logger.info(f"聚焦上下文路徑：使用來自 {len(detailed_document_data)} 個 AI 選中文件的詳細資料")
                 
-                if ai_dynamic_long_text: doc_content_to_use, content_source_type = ai_dynamic_long_text, "ai_analysis_dynamic_field"
-                elif raw_extracted_text and isinstance(raw_extracted_text, str) and len(raw_extracted_text.strip()) > 0: doc_content_to_use, content_source_type = raw_extracted_text, "extracted_text"
-                elif ai_summary: doc_content_to_use, content_source_type = ai_summary, "ai_analysis_summary"
-                else: doc_content_to_use, content_source_type = f"Document '{getattr(doc, 'filename', 'Unknown')}' ({getattr(doc, 'file_type', 'Unknown Type')}) has no usable content.", "placeholder_no_content"
+                for i, detail_item in enumerate(detailed_document_data):
+                    doc_id_for_detail = str(detail_item.get("_id", f"unknown_detailed_doc_{i}"))
+                    detailed_data_str = json.dumps(detail_item, ensure_ascii=False, indent=2)
+
+                    context_preamble = f"智慧查詢文件 {doc_id_for_detail} 的詳細資料：\n"
+                    if i == 0 and ai_generated_query_reasoning: # 在第一個文件顯示查詢推理
+                        context_preamble += f"AI 查詢推理：{ai_generated_query_reasoning}\n\n"
+                    
+                    context_preamble += f"查詢到的精準資料：\n{detailed_data_str}\n\n"
+                    context_parts.append(context_preamble)
+                    actual_contexts_for_llm.append(LLMContextDocument(
+                        document_id=doc_id_for_detail, 
+                        content_used=detailed_data_str[:300], 
+                        source_type="ai_detailed_query"
+                    ))
                 
-                actual_contexts_for_llm.append(LLMContextDocument(document_id=doc_id_str, content_used=doc_content_to_use[:200], source_type=content_source_type)) # Log snippet
-                context_parts.append(f"Document {i} (ID: {doc_id_str}, Source: {content_source_type}):\n{doc_content_to_use}")
+                logger.info(f"使用聚焦上下文：{len(context_parts)} 個詳細查詢結果，總長度約 {sum(len(part) for part in context_parts)} 字符")
             
-            full_document_context = "\n\n".join(context_parts)
-            query_for_answer_gen = query_rewrite_result.rewritten_queries[0] if query_rewrite_result.rewritten_queries and query_rewrite_result.rewritten_queries[0] else original_query
+            # === 備用通用上下文邏輯：當沒有詳細資料時使用 ===
+            else:
+                logger.info("通用上下文路徑：沒有詳細資料可用，使用來自向量搜索的通用文件摘要")
+                max_general_docs = 5
 
-            log_details_ai_call = {"query_for_answer_gen_length": len(query_for_answer_gen), "num_docs_in_context": len(documents_for_context), "total_context_length": len(full_document_context), "model_preference": model_preference}
+                for i, doc in enumerate(documents_for_context[:max_general_docs], 1):
+                    doc_content_to_use = ""
+                    content_source_type = "unknown_general"
+                    doc_id_str = str(doc.id) if hasattr(doc, 'id') else f"unknown_general_doc_{i}"
+                    
+                    # 嘗試獲取 AI 分析的摘要
+                    raw_extracted_text = getattr(doc, 'extracted_text', None)
+                    ai_summary = None
+                    if hasattr(doc, 'analysis') and doc.analysis and hasattr(doc.analysis, 'ai_analysis_output') and isinstance(doc.analysis.ai_analysis_output, dict):
+                        try:
+                            analysis_output = AIDocumentAnalysisOutputDetail(**doc.analysis.ai_analysis_output)
+                            if analysis_output.key_information and analysis_output.key_information.content_summary:
+                                ai_summary = analysis_output.key_information.content_summary
+                            elif analysis_output.initial_summary:
+                                ai_summary = analysis_output.initial_summary
+                        except (ValidationError, Exception):
+                            pass
+                    
+                    # 選擇最佳的內容來源
+                    if ai_summary:
+                        doc_content_to_use, content_source_type = ai_summary, "general_ai_summary"
+                    elif raw_extracted_text and isinstance(raw_extracted_text, str) and raw_extracted_text.strip():
+                        # 截斷過長的原始文本
+                        truncated_text = raw_extracted_text[:1000] + ("..." if len(raw_extracted_text) > 1000 else "")
+                        doc_content_to_use, content_source_type = truncated_text, "general_extracted_text"
+                    else:
+                        doc_content_to_use, content_source_type = f"文件 '{getattr(doc, 'filename', 'N/A')}' 沒有可用的文字內容。", "general_placeholder"
+                    
+                    actual_contexts_for_llm.append(LLMContextDocument(
+                        document_id=doc_id_str, 
+                        content_used=doc_content_to_use[:300], 
+                        source_type=content_source_type
+                    ))
+                    context_parts.append(f"通用上下文文件 {i} (ID: {doc_id_str}, 來源: {content_source_type}):\n{doc_content_to_use}")
+
+                logger.info(f"使用通用上下文：{len(context_parts)} 個文件摘要，總長度約 {sum(len(part) for part in context_parts)} 字符")
+
+            query_for_answer_gen = query_rewrite_result.rewritten_queries[0] if query_rewrite_result.rewritten_queries else original_query
+
+            log_details_ai_call = {"query_for_answer_gen_length": len(query_for_answer_gen), "num_docs_in_final_context": len(actual_contexts_for_llm), "total_context_length": len("\n\n".join(context_parts)), "model_preference": model_preference}
             await log_event(db=db, level=LogLevel.DEBUG, message="Calling AI for answer generation.", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details_ai_call)
             
             ai_response: UnifiedAIResponse = await unified_ai_service_simplified.generate_answer(
-                user_question=query_for_answer_gen, intent_analysis=query_rewrite_result.intent_analysis or "",
-                document_context=full_document_context, db=db, model_preference=model_preference
+                user_question=query_for_answer_gen,
+                intent_analysis=query_rewrite_result.intent_analysis or "",
+                document_context=context_parts,
+                db=db,
+                model_preference=model_preference,
+                ai_ensure_chinese_output=ensure_chinese_output,
+                detailed_text_max_length=detailed_text_max_length,
+                max_chars_per_doc=max_chars_per_doc
             )
             
             tokens_used = ai_response.token_usage.total_tokens if ai_response.token_usage else 0
@@ -695,25 +621,17 @@ class EnhancedAIQAService:
             confidence = 0.1
 
             if ai_response.success and ai_response.output_data:
-                output_data = ai_response.output_data
-                if isinstance(output_data, AIGeneratedAnswerOutput): 
-                    answer_text = output_data.answer_text
-                elif isinstance(output_data, dict): 
-                    answer_text = output_data.get("answer_text", "Error: Could not parse AI answer from dict.")
-                elif isinstance(output_data, str): 
-                    answer_text = output_data
-                else: 
-                    # Ensure answer_text is a string representation in case of unexpected type
-                    answer_text = f"Error: AI returned unexpected answer format: {type(output_data).__name__}. Raw: {str(output_data)[:100]}"
+                if isinstance(ai_response.output_data, AIGeneratedAnswerOutput):
+                    answer_text = ai_response.output_data.answer_text
+                else:
+                    answer_text = f"Error: AI returned unexpected answer format: {type(ai_response.output_data).__name__}."
                 
-                confidence = min(0.9, 0.3 + (len(documents_for_context) * 0.1) + (0.1 if answer_text and not str(answer_text).lower().startswith("error:") and not str(answer_text).lower().startswith("sorry") else -0.2))
-                # Ensure answer_text is string before len() for logging
-                current_answer_text_for_log = str(answer_text)
-                await log_event(db=db, level=LogLevel.INFO, message="AI answer generation successful.", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details={"model_used": ai_response.model_used, "response_length": len(current_answer_text_for_log), "tokens": tokens_used, "confidence": confidence})
+                confidence = min(0.9, 0.3 + (len(actual_contexts_for_llm) * 0.1) + (0.1 if not answer_text.lower().startswith("error") else -0.2))
+                await log_event(db=db, level=LogLevel.INFO, message="AI answer generation successful.", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details={"model_used": ai_response.model_used, "response_length": len(answer_text), "tokens": tokens_used, "confidence": confidence})
             else:
-                error_msg = ai_response.error_message or "AI failed to generate answer or content was empty."
+                error_msg = ai_response.error_message or "AI failed to generate answer."
                 await log_event(db=db, level=LogLevel.ERROR, message=f"AI answer generation failed: {error_msg}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details={**log_details_ai_call, "error": error_msg})
-                answer_text = f"Sorry, I couldn't generate an answer: {error_msg}" # User-friendly
+                answer_text = f"Sorry, I couldn't generate an answer: {error_msg}"
 
             return answer_text, tokens_used, confidence, actual_contexts_for_llm
             
@@ -721,5 +639,226 @@ class EnhancedAIQAService:
             await log_event(db=db, level=LogLevel.ERROR, message=f"Unexpected error in _generate_answer_unified: {str(e)}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details={"error_type": type(e).__name__})
             return f"An internal error occurred while generating the answer: {str(e)}", 0, 0.0, actual_contexts_for_llm
 
-# 全局增強AI問答服務實例
-enhanced_ai_qa_service = EnhancedAIQAService() 
+    async def _optimize_field_selection(
+        self,
+        db: AsyncIOMotorDatabase,
+        user_question: str,
+        document_analysis_summary: str,
+        user_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        基於用戶問題智慧選擇需要的文檔欄位，避免查詢過多不必要的資料
+        
+        Args:
+            user_question: 用戶問題
+            document_analysis_summary: 文檔分析摘要
+            
+        Returns:
+            優化後的 projection 配置
+        """
+        try:
+            # 基於問題類型的智慧欄位映射
+            field_mapping = {
+                "summary": ["analysis.ai_analysis_output.key_information.content_summary", "analysis.summary"],
+                "date": ["analysis.ai_analysis_output.key_information.dates_mentioned", "created_at", "updated_at"],
+                "topic": ["analysis.ai_analysis_output.key_information.main_topics", "analysis.ai_analysis_output.key_information.semantic_tags"],
+                "concept": ["analysis.ai_analysis_output.key_information.key_concepts", "analysis.key_terms"],
+                "action": ["analysis.ai_analysis_output.key_information.action_items"],
+                "content": ["extracted_text"],
+                "metadata": ["filename", "file_type", "content_type_human_readable", "metadata"],
+                "dynamic": ["analysis.ai_analysis_output.key_information.dynamic_fields"]
+            }
+            
+            # 分析問題意圖
+            question_lower = user_question.lower()
+            selected_fields = set(["_id", "filename"])  # 基本必要欄位
+            
+            # 基於關鍵詞智慧選擇欄位
+            if any(keyword in question_lower for keyword in ["總結", "摘要", "概要", "summary"]):
+                selected_fields.update(field_mapping["summary"])
+            
+            if any(keyword in question_lower for keyword in ["日期", "時間", "when", "date"]):
+                selected_fields.update(field_mapping["date"])
+                
+            if any(keyword in question_lower for keyword in ["主題", "話題", "topic", "about"]):
+                selected_fields.update(field_mapping["topic"])
+                
+            if any(keyword in question_lower for keyword in ["概念", "concept", "key"]):
+                selected_fields.update(field_mapping["concept"])
+                
+            if any(keyword in question_lower for keyword in ["待辦", "任務", "action", "todo"]):
+                selected_fields.update(field_mapping["action"])
+                
+            if any(keyword in question_lower for keyword in ["內容", "文字", "content", "text"]):
+                selected_fields.update(field_mapping["content"])
+                
+            if any(keyword in question_lower for keyword in ["檔名", "類型", "metadata", "file"]):
+                selected_fields.update(field_mapping["metadata"])
+            
+            # 如果問題包含特定實體（如人名、公司名等），包含動態欄位
+            if any(char.isupper() for char in user_question) or "誰" in question_lower or "who" in question_lower:
+                selected_fields.update(field_mapping["dynamic"])
+            
+            # 如果沒有明確匹配，使用保守策略（包含更多欄位）
+            if len(selected_fields) <= 2:
+                selected_fields.update(field_mapping["summary"])
+                selected_fields.update(field_mapping["topic"])
+                selected_fields.update(field_mapping["dynamic"])
+            
+            # 建構 MongoDB projection
+            projection = {field: 1 for field in selected_fields}
+            
+            await log_event(db=db, level=LogLevel.DEBUG,
+                            message=f"智慧欄位選擇完成，選擇了 {len(selected_fields)} 個欄位",
+                            source="service.enhanced_ai_qa.field_optimization",
+                            user_id=user_id,
+                            details={
+                                "selected_fields": list(selected_fields),
+                                "question_keywords": [kw for kw in ["總結", "日期", "主題", "概念", "待辦", "內容", "檔名"] if kw in question_lower],
+                                "estimated_data_reduction": f"{max(0, 100 - len(selected_fields) * 10)}%"
+                            })
+            
+            return projection
+            
+        except Exception as e:
+            await log_event(db=db, level=LogLevel.ERROR,
+                            message=f"智慧欄位選擇失敗，使用預設配置: {str(e)}",
+                            source="service.enhanced_ai_qa.field_optimization_error",
+                            user_id=user_id,
+                            details={"error": str(e)})
+            
+            # 回退到基本欄位選擇
+            return {
+                "_id": 1,
+                "filename": 1,
+                "analysis.ai_analysis_output.key_information": 1,
+                "analysis.summary": 1
+            }
+
+    async def _batch_detailed_query(
+        self,
+        db: AsyncIOMotorDatabase,
+        user_question: str,
+        selected_documents: List[Any],
+        user_id: Optional[str] = None,
+        request_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        批次處理多個文檔的詳細查詢，減少AI調用次數
+        
+        Args:
+            user_question: 用戶問題
+            selected_documents: 已選擇的文檔列表
+            
+        Returns:
+            批次查詢結果列表
+        """
+        try:
+            if not selected_documents:
+                return []
+            
+            # 獲取 Schema 緩存（現在通過緩存管理器處理）
+            # 這裡準備 schema 資訊以供後續使用
+            document_schema_info = {
+                "description": "MongoDB 文檔 Schema 資訊",
+                "fields": {
+                    "analysis.ai_analysis_output.key_information": "結構化資訊",
+                    "extracted_text": "文本內容",
+                    "filename": "檔案名稱"
+                }
+            }
+            schema_cache_name = await self.cache_manager.get_or_create_schema_cache(db, document_schema_info, user_id)
+            
+            all_detailed_data = []
+            batch_size = 3  # 每批次處理的文檔數量
+            
+            for i in range(0, len(selected_documents), batch_size):
+                batch_docs = selected_documents[i:i + batch_size]
+                
+                # 為當前批次構建上下文
+                batch_context = f"用戶問題：{user_question}\n\n"
+                batch_context += "需要查詢的文檔列表：\n"
+                
+                for j, doc in enumerate(batch_docs, 1):
+                    doc_summary = "無可用摘要"
+                    if hasattr(doc, 'analysis') and doc.analysis:
+                        if hasattr(doc.analysis, 'ai_analysis_output') and isinstance(doc.analysis.ai_analysis_output, dict):
+                            try:
+                                analysis_output = doc.analysis.ai_analysis_output
+                                if 'key_information' in analysis_output and 'content_summary' in analysis_output['key_information']:
+                                    doc_summary = analysis_output['key_information']['content_summary']
+                            except Exception:
+                                pass
+                    
+                    batch_context += f"{j}. 文檔ID: {doc.id}\n"
+                    batch_context += f"   檔名: {getattr(doc, 'filename', 'Unknown')}\n"
+                    batch_context += f"   摘要: {doc_summary}\n\n"
+                
+                # 使用智慧欄位選擇
+                optimized_projection = await self._optimize_field_selection(
+                    db, user_question, batch_context, user_id
+                )
+                
+                await log_event(db=db, level=LogLevel.INFO,
+                                message=f"開始批次處理 {len(batch_docs)} 個文檔（批次 {i//batch_size + 1}）",
+                                source="service.enhanced_ai_qa.batch_detailed_query",
+                                user_id=user_id, request_id=request_id,
+                                details={
+                                    "batch_size": len(batch_docs),
+                                    "batch_number": i//batch_size + 1,
+                                    "total_batches": (len(selected_documents) + batch_size - 1) // batch_size,
+                                    "optimized_fields_count": len(optimized_projection)
+                                })
+                
+                # 對批次中的每個文檔執行查詢
+                for doc in batch_docs:
+                    try:
+                        # 使用優化的 projection 查詢文檔
+                        mongo_filter = {"_id": doc.id}
+                        fetched_data = await db.documents.find_one(mongo_filter, projection=optimized_projection)
+                        
+                        if fetched_data:
+                            # 資料清理
+                            def sanitize(data: Any) -> Any:
+                                if isinstance(data, dict): 
+                                    return {k: sanitize(v) for k, v in data.items()}
+                                if isinstance(data, list): 
+                                    return [sanitize(i) for i in data]
+                                if isinstance(data, uuid.UUID): 
+                                    return str(data)
+                                return data
+                            
+                            all_detailed_data.append(sanitize(fetched_data))
+                            logger.info(f"批次查詢成功獲取文檔 {doc.id} 的資料")
+                        else:
+                            logger.warning(f"批次查詢中文檔 {doc.id} 沒有返回資料")
+                            
+                    except Exception as doc_error:
+                        logger.error(f"批次查詢文檔 {doc.id} 時發生錯誤: {str(doc_error)}")
+                        continue
+                
+                # 批次間的小延遲，避免過度負載
+                if i + batch_size < len(selected_documents):
+                    await asyncio.sleep(0.1)
+            
+            await log_event(db=db, level=LogLevel.INFO,
+                            message=f"批次詳細查詢完成，成功處理 {len(all_detailed_data)}/{len(selected_documents)} 個文檔",
+                            source="service.enhanced_ai_qa.batch_detailed_query_complete",
+                            user_id=user_id, request_id=request_id,
+                            details={
+                                "total_requested": len(selected_documents),
+                                "successful_queries": len(all_detailed_data),
+                                "success_rate": f"{len(all_detailed_data)/len(selected_documents)*100:.1f}%" if selected_documents else "0%"
+                            })
+            
+            return all_detailed_data
+            
+        except Exception as e:
+            await log_event(db=db, level=LogLevel.ERROR,
+                            message=f"批次詳細查詢失敗: {str(e)}",
+                            source="service.enhanced_ai_qa.batch_detailed_query_error",
+                            user_id=user_id, request_id=request_id,
+                            details={"error": str(e), "document_count": len(selected_documents) if selected_documents else 0})
+            return []
+
+enhanced_ai_qa_service = EnhancedAIQAService()

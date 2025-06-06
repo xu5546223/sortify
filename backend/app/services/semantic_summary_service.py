@@ -10,6 +10,7 @@ from app.models.ai_models_simplified import AIPromptRequest
 from app.models.document_models import Document, VectorStatus
 from app.services.prompt_manager_simplified import prompt_manager_simplified, PromptType
 from app.crud.crud_documents import update_document_vector_status
+from app.core.config import settings
 import logging
 import uuid
 from datetime import datetime
@@ -72,8 +73,12 @@ class SemanticSummaryService:
                 summary_text = await self._generate_fallback_summary(document, db=db) # Pass db
                 return SemanticSummary(document_id=doc_id_str, summary_text=summary_text, file_type=document.file_type, key_terms=[])
 
+            # 使用設定中的AI文本分析最大字符限制
+            max_text_length = settings.AI_MAX_INPUT_CHARS_TEXT_ANALYSIS
+            text_content = document.extracted_text[:max_text_length] if len(document.extracted_text) > max_text_length else document.extracted_text
+            
             system_prompt, user_prompt = prompt_manager_simplified.format_prompt(
-                prompt_template, text_content=document.extracted_text[:4000]
+                prompt_template, text_content=text_content
             )
             
             ai_response: UnifiedAIResponse = await unified_ai_service_simplified.analyze_with_prompts_and_parse_json(

@@ -3,6 +3,7 @@ from enum import Enum
 import time
 import json
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from PIL import Image
 import io
 import google.generativeai as genai
@@ -15,6 +16,12 @@ import re
 
 from app.core.config import settings
 from app.core.logging_utils import AppLogger
+from app.services.google_context_cache_service import (
+    google_context_cache_service, 
+    ContextCacheConfig, 
+    ContextCacheType,
+    ContextCacheInfo
+)
 from app.models.ai_models_simplified import (
     AIPromptRequest, 
     TokenUsage, 
@@ -24,7 +31,9 @@ from app.models.ai_models_simplified import (
     FlexibleKeyInformation,
     IntermediateAnalysisStep,
     AIGeneratedAnswerOutput,
-    AIQueryRewriteOutput
+    AIQueryRewriteOutput,
+    AIMongoDBQueryDetailOutput,
+    AIDocumentSelectionOutput
 )
 from app.services.prompt_manager_simplified import prompt_manager_simplified, PromptType, PromptTemplate
 from app.services.unified_ai_config import unified_ai_config, AIModelConfig, TaskType
@@ -59,7 +68,9 @@ class AIResponse:
 
 class UnifiedAIServiceSimplified:
     def __init__(self):
-        pass
+        self.context_cache_service = google_context_cache_service
+        self._schema_context_caches: Dict[str, ContextCacheInfo] = {}
+        self._system_instruction_caches: Dict[str, ContextCacheInfo] = {}
 
     @retry(wait=wait_exponential(multiplier=1, min=2, max=30), stop=stop_after_attempt(3), reraise=True)
     async def _execute_google_ai_request(
@@ -141,6 +152,16 @@ class UnifiedAIServiceSimplified:
         
         logger.info(f"[UnifiedAIService] 最終為任務 '{request.task_type.value if isinstance(request.task_type, Enum) else request.task_type}' 選定的模型: {model_id}")
 
+        # 嘗試使用 Context Caching 優化系統指令
+        context_cache_info = None
+        if db is not None and self.context_cache_service.is_available():
+            context_cache_info = await self._get_or_create_system_instruction_cache(
+                task_type=request.task_type, 
+                model_id=model_id,
+                db=db,
+                user_id=request.user_id
+            )
+
         prompt_type: PromptType
         if request.task_type == TaskType.TEXT_GENERATION:
             prompt_type = PromptType.TEXT_ANALYSIS
@@ -150,6 +171,10 @@ class UnifiedAIServiceSimplified:
             prompt_type = PromptType.ANSWER_GENERATION
         elif request.task_type == TaskType.QUERY_REWRITE: 
             prompt_type = PromptType.QUERY_REWRITE
+        elif request.task_type == TaskType.MONGODB_DETAIL_QUERY_GENERATION:
+            prompt_type = PromptType.MONGODB_DETAIL_QUERY_GENERATION
+        elif request.task_type == TaskType.DOCUMENT_SELECTION_FOR_QUERY:
+            prompt_type = PromptType.DOCUMENT_SELECTION_FOR_QUERY
         else:
             logger.error(f"未知的任務類型: {request.task_type}")
             return AIResponse(success=False, task_type=request.task_type, error_message=f"未知的任務類型: {request.task_type}", processing_time_seconds=time.time() - start_time)
@@ -257,6 +282,10 @@ class UnifiedAIServiceSimplified:
                         parsed_output.answer_text = direct_answer
                 elif request.task_type == TaskType.QUERY_REWRITE:
                     parsed_output = AIQueryRewriteOutput.model_validate_json(output_text)
+                elif request.task_type == TaskType.MONGODB_DETAIL_QUERY_GENERATION:
+                    parsed_output = AIMongoDBQueryDetailOutput.model_validate_json(output_text)
+                elif request.task_type == TaskType.DOCUMENT_SELECTION_FOR_QUERY:
+                    parsed_output = AIDocumentSelectionOutput.model_validate_json(output_text)
                 else: 
                     logger.warning(f"任務類型 {request.task_type} 沒有特定的解析邏輯。輸出將是原始文本。")
                     parsed_output = output_text
@@ -347,48 +376,56 @@ class UnifiedAIServiceSimplified:
         self,
         user_question: str,
         intent_analysis: str,
-        document_context: List[Dict[str, Any]],
+        document_context: List[str],
         model_preference: Optional[str] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         db: Optional[AsyncIOMotorDatabase] = None,
         ai_max_output_tokens: Optional[int] = None,
-        ai_ensure_chinese_output: Optional[bool] = None
+        ai_ensure_chinese_output: Optional[bool] = None,
+        detailed_text_max_length: Optional[int] = None,
+        max_chars_per_doc: Optional[int] = None
     ) -> AIResponse:
-        # Handle cases where doc might be a string instead of a dictionary
-        context_parts = []
-        for i, doc in enumerate(document_context):
-            if isinstance(doc, dict):
-                context_parts.append(f"文檔片段 {i+1}: {doc.get('text', str(doc))}")
-            elif isinstance(doc, str):
-                context_parts.append(f"文檔片段 {i+1}: {doc}")
-            else: # Fallback for other unexpected types
-                context_parts.append(f"文檔片段 {i+1}: {str(doc)}")
+        # The document_context is now expected to be a list of pre-formatted strings.
+        # The redundant re-formatting loop is removed.
+        context_parts = document_context
         
         # 智能文檔摘要 - 處理潛在的超長內容
-        MAX_CHARS_PER_DOC = 1000  # 每個文檔的最大字符數，可以根據需要調整
-        TOTAL_MAX_CHARS = 4000  # 所有文檔的總最大字符數
+        # 使用用戶設定的長度限制，如果沒有則使用預設值
+        user_detailed_length = detailed_text_max_length or 8000  # 預設8000字符
+        # 使用用戶設定的單文檔限制，如果沒有則使用計算值
+        if max_chars_per_doc is not None:
+            MAX_CHARS_PER_DOC = max_chars_per_doc
+        else:
+            MAX_CHARS_PER_DOC = min(user_detailed_length // 4, 5000)  # 每個文檔不超過用戶設定的1/4，但不超過5000
+        TOTAL_MAX_CHARS = user_detailed_length  # 使用用戶設定的總限制
+        
+        logger.info(f"使用文檔處理參數 - 用戶設定長度: {user_detailed_length}, 單文檔限制: {MAX_CHARS_PER_DOC}, 總字符限制: {TOTAL_MAX_CHARS}")
         
         # 1. 先檢查每個文檔是否太長，如果是則截斷
         for i in range(len(context_parts)):
             if len(context_parts[i]) > MAX_CHARS_PER_DOC:
+                original_length = len(context_parts[i])
                 # 取前半部分和後半部分，保留文檔結構
                 doc_prefix = context_parts[i][:MAX_CHARS_PER_DOC//2]
                 doc_suffix = context_parts[i][-MAX_CHARS_PER_DOC//2:]
                 context_parts[i] = f"{doc_prefix}... [文檔中間部分已省略以節省空間] ...{doc_suffix}"
-                logger.debug(f"已截斷文檔 {i+1}，原長度: {len(context_parts[i])}，截斷後: {len(context_parts[i])}")
+                logger.debug(f"已截斷文檔 {i+1}，原長度: {original_length}，截斷後: {len(context_parts[i])}")
         
         # 2. 檢查總長度是否超過限制，如果是則減少文檔數量
         context_str = "\n".join(context_parts)
         if len(context_str) > TOTAL_MAX_CHARS and len(context_parts) > 1:
             # 計算需要保留的文檔數量
-            avg_doc_len = len(context_str) / len(context_parts)
-            keep_docs = min(len(context_parts), max(1, int(TOTAL_MAX_CHARS / avg_doc_len)))
+            avg_doc_len = len(context_str) / len(context_parts) if len(context_parts) > 0 else 0
+            keep_docs = min(len(context_parts), max(1, int(TOTAL_MAX_CHARS / avg_doc_len))) if avg_doc_len > 0 else 0
             
             logger.warning(f"文檔上下文總長度 ({len(context_str)}) 超過限制 ({TOTAL_MAX_CHARS})。將只使用前 {keep_docs} 個文檔。")
-            context_parts = context_parts[:keep_docs]
-            context_str = "\n".join(context_parts)
-            
+            if keep_docs > 0:
+                context_parts = context_parts[:keep_docs]
+                context_str = "\n".join(context_parts)
+            else: # handle case where keep_docs becomes 0
+                context_str = ""
+
             # 如果仍然超過限制，進行額外截斷
             if len(context_str) > TOTAL_MAX_CHARS:
                 context_str = context_str[:TOTAL_MAX_CHARS] + "\n... [部分內容已省略以適應模型限制] ..."
@@ -489,5 +526,275 @@ class UnifiedAIServiceSimplified:
             ai_max_output_tokens=ai_max_output_tokens
         )
         return await self.process_request(request, db)
+
+    async def select_documents_for_detailed_query(
+        self,
+        user_question: str,
+        candidate_documents: List[Dict[str, Any]],
+        db: Optional[AsyncIOMotorDatabase] = None,
+        model_preference: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        max_selections: Optional[int] = None,
+    ) -> AIResponse:
+        """
+        Asks the AI to select the most relevant documents for a detailed query.
+        """
+        # candidate_documents is expected to be a list of dicts with 'document_id' and 'summary'
+        formatted_candidates = json.dumps(candidate_documents, ensure_ascii=False, indent=2)
+
+        prompt_params = {
+            "user_question": user_question,
+            "candidate_documents_json": formatted_candidates,
+            "max_selections": max_selections or 3  # 預設選擇3個文檔
+        }
+
+        request = AIRequest(
+            task_type=TaskType.DOCUMENT_SELECTION_FOR_QUERY,
+            content=user_question, # Main content for the request
+            prompt_params=prompt_params,
+            model_preference=model_preference,
+            user_id=user_id,
+            session_id=session_id
+        )
+        return await self.process_request(request, db)
+
+    async def generate_mongodb_detail_query(
+        self,
+        user_question: str,
+        document_id: str,
+        document_schema_info: Dict[str, Any],
+        db: Optional[AsyncIOMotorDatabase] = None,
+        model_preference: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        ai_max_output_tokens: Optional[int] = None
+    ) -> AIResponse:
+        """
+        Generates MongoDB query components (projection and/or sub-filter)
+        for detailed data retrieval from a specific document.
+        """
+        prompt_params = {
+            "user_question": user_question,
+            "document_id": document_id,
+            "document_schema_info": json.dumps(document_schema_info) # Ensure schema is passed as a JSON string if expected by prompt
+        }
+
+        request = AIRequest(
+            task_type=TaskType.MONGODB_DETAIL_QUERY_GENERATION,
+            content=user_question,  # Main content for the request, though specifics are in prompt_params
+            prompt_params=prompt_params,
+            model_preference=model_preference,
+            user_id=user_id,
+            session_id=session_id,
+            ai_max_output_tokens=ai_max_output_tokens,
+            # require_language_consistency can be true by default or configurable if needed
+        )
+        return await self.process_request(request, db)
+
+    # === Context Caching 相關方法 ===
+    
+    async def _get_or_create_system_instruction_cache(
+        self,
+        task_type: TaskType,
+        model_id: str,
+        db: AsyncIOMotorDatabase,
+        user_id: Optional[str] = None
+    ) -> Optional[ContextCacheInfo]:
+        """獲取或創建系統指令的 Context Cache"""
+        try:
+            # 基於任務類型和模型創建緩存鍵
+            cache_key = f"{task_type.value}_{model_id}"
+            
+            # 檢查本地緩存
+            if cache_key in self._system_instruction_caches:
+                cache_info = self._system_instruction_caches[cache_key]
+                # 檢查是否過期
+                if cache_info.expires_at > datetime.utcnow():
+                    logger.info(f"使用現有系統指令 Context Cache: {cache_info.cache_id}")
+                    return cache_info
+                else:
+                    # 過期則移除
+                    del self._system_instruction_caches[cache_key]
+            
+            # 獲取對應的系統指令內容
+            from app.services.prompt_manager_simplified import prompt_manager_simplified, PromptType
+            
+            prompt_type_mapping = {
+                TaskType.TEXT_GENERATION: PromptType.TEXT_ANALYSIS,
+                TaskType.IMAGE_ANALYSIS: PromptType.IMAGE_ANALYSIS,
+                TaskType.ANSWER_GENERATION: PromptType.ANSWER_GENERATION,
+                TaskType.QUERY_REWRITE: PromptType.QUERY_REWRITE,
+                TaskType.MONGODB_DETAIL_QUERY_GENERATION: PromptType.MONGODB_DETAIL_QUERY_GENERATION,
+                TaskType.DOCUMENT_SELECTION_FOR_QUERY: PromptType.DOCUMENT_SELECTION_FOR_QUERY
+            }
+            
+            prompt_type = prompt_type_mapping.get(task_type)
+            if not prompt_type:
+                logger.warning(f"未知的任務類型，無法創建系統指令緩存: {task_type}")
+                return None
+            
+            prompt_template = await prompt_manager_simplified.get_prompt(prompt_type, db)
+            if not prompt_template or not prompt_template.system_prompt:
+                logger.warning(f"無法獲取系統指令模板: {prompt_type}")
+                return None
+            
+            # 檢查 token 要求
+            token_check = self.context_cache_service.check_token_requirements(
+                prompt_template.system_prompt, 
+                model_id
+            )
+            
+            if not token_check["meets_requirement"]:
+                logger.debug(f"系統指令不符合 Context Caching token 要求: {token_check}")
+                return None
+            
+            # 創建 Context Cache 配置
+            cache_config = ContextCacheConfig(
+                cache_type=ContextCacheType.SYSTEM_INSTRUCTION,
+                content=prompt_template.system_prompt,
+                ttl_hours=1,  # 1小時過期
+                model=model_id,
+                display_name=f"system_instruction_{task_type.value}",
+                metadata={
+                    "task_type": task_type.value,
+                    "prompt_type": prompt_type.value,
+                    "user_id": user_id
+                }
+            )
+            
+            # 創建 Context Cache
+            cache_info = await self.context_cache_service.create_context_cache(cache_config, db)
+            if cache_info:
+                self._system_instruction_caches[cache_key] = cache_info
+                logger.info(f"成功創建系統指令 Context Cache: {cache_info.cache_id}")
+                return cache_info
+            
+        except Exception as e:
+            logger.error(f"創建系統指令 Context Cache 失敗: {e}")
+        
+        return None
+    
+    async def _get_or_create_schema_cache(
+        self,
+        schema_content: Dict[str, Any],
+        model_id: str,
+        db: AsyncIOMotorDatabase,
+        user_id: Optional[str] = None
+    ) -> Optional[ContextCacheInfo]:
+        """獲取或創建 Schema 的 Context Cache"""
+        try:
+            # 基於 schema 內容創建緩存鍵
+            import hashlib
+            schema_str = str(schema_content)
+            content_hash = hashlib.sha256(schema_str.encode('utf-8')).hexdigest()[:16]
+            cache_key = f"schema_{content_hash}_{model_id}"
+            
+            # 檢查本地緩存
+            if cache_key in self._schema_context_caches:
+                cache_info = self._schema_context_caches[cache_key]
+                if cache_info.expires_at > datetime.utcnow():
+                    logger.info(f"使用現有 Schema Context Cache: {cache_info.cache_id}")
+                    return cache_info
+                else:
+                    del self._schema_context_caches[cache_key]
+            
+            # 檢查 token 要求
+            token_check = self.context_cache_service.check_token_requirements(schema_str, model_id)
+            if not token_check["meets_requirement"]:
+                logger.debug(f"Schema 不符合 Context Caching token 要求: {token_check}")
+                return None
+            
+            # 創建 Context Cache 配置
+            cache_config = ContextCacheConfig(
+                cache_type=ContextCacheType.DOCUMENT_CONTENT,
+                content=schema_str,
+                ttl_hours=2,  # 2小時過期
+                model=model_id,
+                display_name=f"schema_{content_hash}",
+                metadata={
+                    "content_hash": content_hash,
+                    "schema_size": len(schema_str),
+                    "user_id": user_id
+                }
+            )
+            
+            # 創建 Context Cache
+            cache_info = await self.context_cache_service.create_context_cache(cache_config, db)
+            if cache_info:
+                self._schema_context_caches[cache_key] = cache_info
+                logger.info(f"成功創建 Schema Context Cache: {cache_info.cache_id}")
+                return cache_info
+            
+        except Exception as e:
+            logger.error(f"創建 Schema Context Cache 失敗: {e}")
+        
+        return None
+    
+    async def get_context_cache_statistics(self, db: AsyncIOMotorDatabase) -> Dict[str, Any]:
+        """獲取 Context Cache 統計信息"""
+        try:
+            # 獲取 Google Context Caching 統計
+            google_stats = await self.context_cache_service.get_cache_statistics(db)
+            
+            # 添加本地緩存統計
+            local_stats = {
+                "local_system_instruction_caches": len(self._system_instruction_caches),
+                "local_schema_caches": len(self._schema_context_caches),
+                "active_local_caches": sum([
+                    1 for cache in list(self._system_instruction_caches.values()) + list(self._schema_context_caches.values())
+                    if cache.expires_at > datetime.utcnow()
+                ])
+            }
+            
+            return {
+                "google_context_caching": google_stats,
+                "local_context_caches": local_stats,
+                "integration_status": {
+                    "is_available": self.context_cache_service.is_available(),
+                    "total_context_caches": google_stats.get("total_caches", 0) + local_stats["active_local_caches"]
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"獲取 Context Cache 統計失敗: {e}")
+            return {"error": str(e)}
+    
+    async def cleanup_expired_context_caches(self, db: AsyncIOMotorDatabase) -> Dict[str, int]:
+        """清理過期的 Context Caches"""
+        try:
+            cleanup_stats = {"local": 0, "google": 0}
+            
+            # 清理本地過期緩存
+            now = datetime.utcnow()
+            
+            # 清理系統指令緩存
+            expired_keys = [
+                key for key, cache in self._system_instruction_caches.items()
+                if cache.expires_at <= now
+            ]
+            for key in expired_keys:
+                del self._system_instruction_caches[key]
+                cleanup_stats["local"] += 1
+            
+            # 清理 Schema 緩存
+            expired_keys = [
+                key for key, cache in self._schema_context_caches.items()
+                if cache.expires_at <= now
+            ]
+            for key in expired_keys:
+                del self._schema_context_caches[key]
+                cleanup_stats["local"] += 1
+            
+            # 清理 Google Context Caches
+            google_cleanup_count = await self.context_cache_service.cleanup_expired_caches(db)
+            cleanup_stats["google"] = google_cleanup_count
+            
+            logger.info(f"Context Cache 清理完成: 本地 {cleanup_stats['local']} 個，Google {cleanup_stats['google']} 個")
+            return cleanup_stats
+            
+        except Exception as e:
+            logger.error(f"清理 Context Caches 失敗: {e}")
+            return {"error": str(e)}
 
 unified_ai_service_simplified = UnifiedAIServiceSimplified() 

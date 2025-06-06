@@ -159,21 +159,26 @@ class VectorDatabaseService:
                 "include": ["documents", "metadatas", "distances"]
             }
 
-            where_clause: Dict[str, Any] = {}
+            # 構建 where 子句，正確處理多個條件
+            where_conditions = []
+            
             if owner_id_filter:
-                where_clause["owner_id"] = owner_id_filter
+                where_conditions.append({"owner_id": owner_id_filter})
 
             if metadata_filter:
                 for key, value in metadata_filter.items():
-                    # Ensure keys don't conflict and are valid for ChromaDB metadata query
-                    if key in where_clause:
-                        logger.warning(f"Metadata filter key '{key}' conflicts with existing where clause key (e.g., owner_id). Overwriting is not standard. Check logic.")
-                        # For now, let it overwrite, but this might need specific handling for $and if owner_id and metadata_filter key are the same.
-                        # However, standard ChromaDB where clause implies AND for top-level keys.
-                    where_clause[key] = value
-
-            if where_clause:
-                query_params["where"] = where_clause
+                    where_conditions.append({key: value})
+            
+            # 根據條件數量構建適當的 where 子句
+            if len(where_conditions) > 1:
+                # 多個條件時使用 $and 操作符
+                query_params["where"] = {"$and": where_conditions}
+                logger.debug(f"使用 $and 操作符組合 {len(where_conditions)} 個條件")
+            elif len(where_conditions) == 1:
+                # 單個條件直接使用
+                query_params["where"] = where_conditions[0]
+                logger.debug(f"使用單個條件: {where_conditions[0]}")
+            # 沒有條件時不添加 where 參數
             
             # 執行搜索
             results = target_collection.query(**query_params)

@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from enum import Enum
 from dataclasses import dataclass
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -13,6 +13,8 @@ class PromptType(Enum):
     TEXT_ANALYSIS = "text_analysis"
     QUERY_REWRITE = "query_rewrite"
     ANSWER_GENERATION = "answer_generation"
+    MONGODB_DETAIL_QUERY_GENERATION = "mongodb_detail_query_generation"
+    DOCUMENT_SELECTION_FOR_QUERY = "document_selection_for_query"
 
 @dataclass
 class PromptTemplate:
@@ -202,10 +204,11 @@ MIME類型: {{image_mime_type}}
 
 3.  **提取結構化參數：**
     *   在 `extracted_parameters` JSON 對象中準確提取以下參數。
+    *   **重要**：只有當用戶**明確**提及文檔格式或類型時，才提取 `document_types`。不要將內容描述（如「契約書」、「報告」）當作文檔類型。
     *   如果某參數未在用戶查詢中明確提及或無法可靠推斷，請在JSON中省略該參數的字段，或者將其值設為 `null` 或空列表/對象。不要猜測不存在的信息。
     *   參數列表：
         *   `"time_range"`: (例如 "去年", "2023年上半年", "最近一個月")
-        *   `"document_types"`: (例如 ["報告", "演示文稿", "郵件"])
+        *   `"document_types"`: **僅當用戶明確提及格式時** (例如 ["PDF", "Word文檔", "Excel表格", "PowerPoint"])，**不要**將內容類型（如「契約書」、「報告」、「筆記」）當作文檔類型
         *   `"key_entities"`: (例如 ["特定公司名", "產品名", "人名"])
         *   `"amounts"`: (例如 `{{"min": 100, "max": 500, "currency": "美元"}}`)
         *   `"other_filters"`: (用於捕獲其他任何可結構化的過濾條件)
@@ -233,6 +236,70 @@ MIME類型: {{image_mime_type}}
             user_prompt_template='分析並重寫查詢：<user_query>{original_query}</user_query>',
             variables=["original_query"],
             description="查詢理解和重寫"
+        )
+        
+        self._prompts[PromptType.DOCUMENT_SELECTION_FOR_QUERY] = PromptTemplate(
+            prompt_type=PromptType.DOCUMENT_SELECTION_FOR_QUERY,
+            system_prompt='''你是智慧文檔篩選專家，任務是從候選文檔中根據用戶問題，挑選出最有可能包含詳細答案的文檔。
+
+**核心決策原則：**
+
+1. **問題關聯性分析**：
+   - 文檔摘要是否直接回應用戶問題的核心？
+   - 是否包含問題中的關鍵詞或相關概念？
+   - 文檔主題與問題主題的匹配程度如何？
+
+2. **資訊價值評估**：
+   - 摘要是否暗示文檔包含具體的、深入的資訊？
+   - 避免選擇僅包含泛泛概念而缺乏具體細節的文檔
+   - 優先選擇包含具體數據、實例或詳細說明的文檔
+
+3. **智慧數量決策**：
+   - **單一焦點問題**：如果問題很具體且候選文檔中有1-2個明顯最相關的，選擇1-2個即可
+   - **複雜問題**：如果問題涉及多個面向，可以選擇2-4個互補的文檔
+   - **廣泛問題**：如果問題很廣泛，選擇3-5個不同角度的文檔
+   - **避免冗餘**：不要選擇內容重複或高度相似的文檔
+
+4. **相似度分數考量**：
+   - 優先考慮相似度分數較高的文檔（通常 >0.4 更有價值）
+   - 但不要純粹依賴分數，要結合摘要內容判斷
+
+5. **質量勝過數量**：
+   - 寧可選擇2個高相關性的文檔，也不要選擇5個低相關性的
+   - 如果所有候選文檔相關性都很低，可以只選擇最好的1個，或者返回空列表
+
+**輸出格式要求：**
+嚴格遵循以下JSON結構。
+
+```json
+{{
+  "selected_document_ids": [
+    "文檔ID1",
+    "文檔ID2"
+  ],
+  "reasoning": "詳細說明：1) 為什麼選擇這些特定文檔 2) 它們如何互補回答用戶問題 3) 為什麼選擇這個數量 4) 是否考慮了相似度分數"
+}}
+```
+
+**特殊情況處理：**
+- 如果沒有任何文檔真正相關，返回空列表 `[]`
+- 如果只有1個文檔明顯相關，就選擇1個
+- 如果有多個文檔都非常相關但內容互補，可以適當多選（最多5個）''',
+            user_prompt_template='''請分析以下用戶問題和候選文檔，並智慧選擇最相關的文檔進行詳細查詢。
+
+**用戶問題：**
+<user_question>
+{user_question}
+</user_question>
+
+**候選文檔列表：**
+<candidate_documents_json>
+{candidate_documents_json}
+</candidate_documents_json>
+
+請根據上述決策原則，選擇最適合的文檔數量和組合。''',
+            variables=["user_question", "candidate_documents_json"],
+            description="智慧選擇最佳文檔組合，支援動態數量決策"
         )
         
         self._prompts[PromptType.ANSWER_GENERATION] = PromptTemplate(
@@ -269,7 +336,65 @@ MIME類型: {{image_mime_type}}
             variables=["user_question", "intent_analysis", "document_context"],
             description="基於文檔生成JSON格式的回答"
         )
-    
+
+        self._prompts[PromptType.MONGODB_DETAIL_QUERY_GENERATION] = PromptTemplate(
+            prompt_type=PromptType.MONGODB_DETAIL_QUERY_GENERATION,
+            system_prompt='''你是 MongoDB 查詢專家，專門根據用戶問題和文件 Schema 生成穩健的查詢組件。
+
+**核心任務：**
+根據用戶問題和提供的文件結構信息，生成穩健且有效的 MongoDB 查詢組件來提取相關資料。
+
+**安全查詢策略：**
+1. **保守選擇原則**：優先選擇常見且穩定的欄位
+2. **漸進式過濾**：避免過於嚴格的條件，確保能返回數據
+3. **回退機制**：如果特定欄位可能不存在，請包含基本欄位作為備份
+
+**智慧選擇策略：**
+- 如果問題要求摘要性資訊 → 優先選擇 `analysis.ai_analysis_output.key_information.content_summary`，備用 `extracted_text`
+- 如果問題要求關鍵概念 → 選擇 `analysis.ai_analysis_output.key_information.key_concepts`，備用 `analysis.ai_analysis_output.key_information.semantic_tags`
+- 如果問題要求特定實體 → 檢查 `analysis.ai_analysis_output.key_information.dynamic_fields`，備用完整 `analysis.ai_analysis_output.key_information`
+- 如果問題要求完整內容 → 選擇 `extracted_text`，備用 `analysis.ai_analysis_output.key_information.content_summary`
+- 如果問題要求特定主題 → 使用寬鬆的 `semantic_tags` 匹配，避免 `$elemMatch` 的嚴格條件
+
+**輸出 JSON 格式：**
+```json
+{{
+  "projection": {{"欄位名1": 1, "巢狀.欄位名2": 1, "_id": 1, "filename": 1}},
+  "sub_filter": {{}},
+  "reasoning": "詳細說明為什麼選擇這些欄位，以及為什麼避免使用sub_filter來確保查詢成功"
+}}
+```
+
+**重要安全原則：**
+- **優先空的 sub_filter**：除非絕對必要，否則設為空對象 `{{}}`
+- **必要欄位保證**：始終包含 `_id` 和 `filename` 作為基本保證
+- **寬泛選擇**：寧可多選一些相關欄位，也不要冒險遺漏
+- **避免嚴格匹配**：避免使用 `$elemMatch`、`$regex` 等可能失敗的操作
+- **文檔存在性保證**：選擇的欄位組合必須能確保返回有效數據
+
+**調試建議：**
+如果問題很模糊或涉及多個方面，請選擇寬泛的欄位集合：
+```json
+{{
+  "projection": {{
+    "_id": 1,
+    "filename": 1,
+    "extracted_text": 1,
+    "analysis.ai_analysis_output.key_information": 1
+  }},
+  "sub_filter": {{}},
+  "reasoning": "使用寬泛選擇確保數據返回"
+}}
+```''' ,
+            user_prompt_template='''用戶問題：{user_question}
+目標文件 ID：{document_id}
+文件結構資訊：{document_schema_info}
+
+請根據用戶問題和文件結構，生成最適合的 MongoDB 查詢組件，以精確提取回答問題所需的資料。''',
+            variables=["user_question", "document_id", "document_schema_info"],
+            description="生成精確的 MongoDB 查詢組件，根據問題智慧選擇相關欄位"
+        )
+
     async def get_prompt(
         self, 
         prompt_type: PromptType,
@@ -318,7 +443,7 @@ MIME類型: {{image_mime_type}}
             logger.error(f"從資料庫獲取自定義提示詞失敗: {e}")
             return None
     
-    def _sanitize_input_value(self, value: Any, max_length: int = 4000) -> str:
+    def _sanitize_input_value(self, value: Any, max_length: int = 4000, context_type: str = "default") -> str:
         """清理並截斷輸入值以用於提示詞。"""
         if not isinstance(value, str):
             s_value = str(value)
@@ -328,8 +453,17 @@ MIME類型: {{image_mime_type}}
         # 移除空字節
         s_value = s_value.replace('\x00', '')
 
-        # 簡單地將多個空格/換行符壓縮 (可選, 根據需要調整)
-        # s_value = ' '.join(s_value.split())
+        # 根據上下文類型調整最大長度
+        if context_type == "mongodb_schema":
+            # MongoDB Schema 需要更大的容量以保證完整性
+            max_length = 8000
+        elif context_type == "document_context":
+            # 文件上下文也需要較大容量
+            max_length = 6000
+        elif context_type == "text_content":
+            # 文本內容分析需要更大的容量，使用設定中的限制
+            from app.core.config import settings
+            max_length = settings.AI_MAX_INPUT_CHARS_TEXT_ANALYSIS
         
         # 截斷到最大長度
         if len(s_value) > max_length:
@@ -352,8 +486,18 @@ MIME類型: {{image_mime_type}}
             for var in prompt_template.variables:
                 if var in kwargs:
                     placeholder = "{" + var + "}"
+                    
+                    # 根據變數類型決定上下文類型
+                    context_type = "default"
+                    if var == "document_schema_info":
+                        context_type = "mongodb_schema"
+                    elif var == "document_context":
+                        context_type = "document_context"
+                    elif var == "text_content":
+                        context_type = "text_content"
+                    
                     # 清理和截斷輸入值
-                    sanitized_value = self._sanitize_input_value(kwargs[var])
+                    sanitized_value = self._sanitize_input_value(kwargs[var], context_type=context_type)
                     
                     system_prompt = system_prompt.replace(placeholder, sanitized_value)
                     user_prompt = user_prompt.replace(placeholder, sanitized_value)
@@ -363,7 +507,7 @@ MIME類型: {{image_mime_type}}
             # Add main system prompt first
             final_system_prompt_parts.append(system_prompt)
 
-            if prompt_template.prompt_type in [PromptType.IMAGE_ANALYSIS, PromptType.TEXT_ANALYSIS, PromptType.QUERY_REWRITE, PromptType.ANSWER_GENERATION]:
+            if prompt_template.prompt_type in [PromptType.IMAGE_ANALYSIS, PromptType.TEXT_ANALYSIS, PromptType.QUERY_REWRITE, PromptType.ANSWER_GENERATION, PromptType.MONGODB_DETAIL_QUERY_GENERATION]:
                 if apply_chinese_instruction:
                     # Insert language instruction before safety, but after main content for clarity
                     final_system_prompt_parts.append(self.CHINESE_OUTPUT_INSTRUCTION)
@@ -376,6 +520,116 @@ MIME類型: {{image_mime_type}}
         except Exception as e:
             logger.error(f"格式化提示詞失敗: {e}")
             return prompt_template.system_prompt, prompt_template.user_prompt_template
+    
+    async def format_prompt_with_caching(
+        self,
+        prompt_template: PromptTemplate,
+        db: Optional[AsyncIOMotorDatabase] = None,
+        apply_chinese_instruction: bool = True,
+        user_id: Optional[str] = None,
+        **kwargs
+    ) -> Tuple[str, str, Optional[str]]:
+        """
+        格式化提示詞模板並啟用 Context Caching
+        
+        Returns:
+            Tuple[system_prompt, user_prompt, cache_id]
+            - system_prompt: 完整的系統提示詞或緩存ID
+            - user_prompt: 格式化的用戶提示詞
+            - cache_id: Google Context Cache ID（如果使用緩存）
+        """
+        try:
+            # 首先格式化提示詞
+            system_prompt, user_prompt = self.format_prompt(
+                prompt_template, 
+                apply_chinese_instruction=apply_chinese_instruction,
+                **kwargs
+            )
+            
+            cache_id = None
+            
+            # 如果有資料庫連接，嘗試使用緩存
+            if db is not None:
+                try:
+                    # 導入 AI Cache Manager
+                    from app.services.ai_cache_manager import ai_cache_manager
+                    
+                    # 為系統提示詞創建緩存
+                    cache_id = await ai_cache_manager.get_or_create_prompt_cache(
+                        db=db,
+                        prompt_type=f"{prompt_template.prompt_type.value}_system",
+                        prompt_content=system_prompt,
+                        prompt_version=prompt_template.version,
+                        ttl_hours=24,  # 提示詞相對穩定，可以設置較長的 TTL
+                        user_id=user_id
+                    )
+                    
+                    if cache_id:
+                        logger.info(f"使用緩存的系統提示詞: {prompt_template.prompt_type.value} -> {cache_id}")
+                        
+                        # 檢查是否是 Google Context Cache
+                        cached_info = ai_cache_manager.get_cached_prompt_info(cache_id)
+                        if cached_info and cached_info.get("cache_type") == "google_context":
+                            # 如果是 Google Context Cache，返回 cache_id 作為系統提示詞
+                            return cache_id, user_prompt, cache_id
+                        
+                except Exception as cache_error:
+                    logger.warning(f"緩存系統提示詞失敗，降級到直接使用: {cache_error}")
+                    # 降級到直接使用提示詞
+                    pass
+            
+            return system_prompt, user_prompt, cache_id
+            
+        except Exception as e:
+            logger.error(f"格式化帶緩存的提示詞失敗: {e}")
+            # 降級到基本格式化
+            system_prompt, user_prompt = self.format_prompt(prompt_template, apply_chinese_instruction, **kwargs)
+            return system_prompt, user_prompt, None
+    
+    async def get_prompt_cache_statistics(
+        self, 
+        db: Optional[AsyncIOMotorDatabase] = None
+    ) -> Dict[str, Any]:
+        """獲取提示詞緩存統計"""
+        try:
+            if db is None:
+                return {"error": "需要資料庫連接"}
+                
+            from app.services.ai_cache_manager import ai_cache_manager
+            
+            # 獲取增強的緩存統計
+            enhanced_stats = await ai_cache_manager.get_enhanced_cache_statistics(db)
+            
+            # 計算提示詞相關的節省估算
+            prompt_stats = enhanced_stats.get("local_caching", {}).get("cache_statistics", {}).get("prompt_template", {})
+            
+            # 根據我們的提示詞長度估算潛在節省
+            estimated_prompt_tokens = {
+                PromptType.IMAGE_ANALYSIS.value: 2500,  # 圖片分析提示詞很長
+                PromptType.TEXT_ANALYSIS.value: 2200,   # 文本分析提示詞也很長
+                PromptType.QUERY_REWRITE.value: 1800,   # 查詢重寫中等長度
+                PromptType.ANSWER_GENERATION.value: 1200, # 回答生成相對短
+                PromptType.MONGODB_DETAIL_QUERY_GENERATION.value: 1500,
+                PromptType.DOCUMENT_SELECTION_FOR_QUERY.value: 1600
+            }
+            
+            total_estimated_tokens = sum(estimated_prompt_tokens.values())
+            
+            return {
+                "prompt_cache_statistics": prompt_stats,
+                "estimated_token_savings": {
+                    "total_prompt_tokens_per_request": total_estimated_tokens,
+                    "estimated_daily_requests": 100,  # 假設的日常請求量
+                    "potential_daily_savings_tokens": total_estimated_tokens * 100 * 0.75,  # 75% 節省
+                    "potential_monthly_cost_savings_usd": (total_estimated_tokens * 100 * 30 * 0.75) * 0.00001875,  # Gemini Flash 價格
+                },
+                "prompt_types_breakdown": estimated_prompt_tokens,
+                "enhanced_cache_stats": enhanced_stats
+            }
+            
+        except Exception as e:
+            logger.error(f"獲取提示詞緩存統計失敗: {e}")
+            return {"error": str(e)}
 
 # 創建簡化實例
 prompt_manager_simplified = PromptManagerSimplified() 

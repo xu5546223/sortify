@@ -27,7 +27,7 @@ dependencies = [
     "python-docx>=1.0.0",
     "Pillow>=10.0.0",
     # AI 和工具相關
-    "google-generativeai>=0.3.0",
+    "google-genai>=0.5.0",  # 升級到新的統一SDK，支援Context Caching
     "tenacity>=8.2.0",
     # 其他工具
     "aiofiles>=23.0.0",

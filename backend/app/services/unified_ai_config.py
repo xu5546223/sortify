@@ -191,6 +191,8 @@ class TaskType(Enum):
     CLASSIFICATION = "classification"
     QUERY_REWRITE = "query_rewrite"
     ANSWER_GENERATION = "answer_generation"
+    MONGODB_DETAIL_QUERY_GENERATION = "mongodb_detail_query_generation"
+    DOCUMENT_SELECTION_FOR_QUERY = "document_selection_for_query"
 
 @dataclass
 class AIModelConfig:
@@ -315,6 +317,38 @@ class UnifiedAIConfig:
             generation_params=GenerationParams(temperature=settings.AI_TEMPERATURE, top_p=settings.AI_TOP_P, top_k=settings.AI_TOP_K,
                                            max_output_tokens=settings.AI_MAX_OUTPUT_TOKENS_IMAGE, response_mime_type="application/json",
                                            safety_settings=common_safety_settings), timeout_seconds=45, retry_attempts=2)
+
+        # New Task Configuration for Document Selection
+        self._task_configs[TaskType.DOCUMENT_SELECTION_FOR_QUERY] = TaskConfig(
+            task_type=TaskType.DOCUMENT_SELECTION_FOR_QUERY,
+            preferred_models=get_preferred_models_for_task_init(False), # Does not require image support
+            generation_params=GenerationParams(
+                temperature=0.2, # Low temperature for deterministic selection
+                top_p=settings.AI_TOP_P,
+                top_k=settings.AI_TOP_K,
+                max_output_tokens=512, # Max tokens for a list of IDs
+                response_mime_type="application/json",
+                safety_settings=common_safety_settings
+            ),
+            timeout_seconds=20,
+            retry_attempts=2
+        )
+        
+        # Configuration for MongoDB Detail Query Generation
+        self._task_configs[TaskType.MONGODB_DETAIL_QUERY_GENERATION] = TaskConfig(
+            task_type=TaskType.MONGODB_DETAIL_QUERY_GENERATION,
+            preferred_models=get_preferred_models_for_task_init(False), # Does not require image support
+            generation_params=GenerationParams(
+                temperature=0.3, # Lower temperature for more deterministic query generation
+                top_p=settings.AI_TOP_P,
+                top_k=settings.AI_TOP_K,
+                max_output_tokens=1024, # Max tokens for query components
+                response_mime_type="application/json",
+                safety_settings=common_safety_settings
+            ),
+            timeout_seconds=25,
+            retry_attempts=2
+        )
     
     def _is_model_suitable_for_task(self, model_config: AIModelConfig, task_type: TaskType) -> bool:
         """檢查模型是否適合指定任務"""
@@ -510,6 +544,10 @@ class UnifiedAIConfig:
             
             if TaskType.TEXT_GENERATION in self._task_configs: self._task_configs[TaskType.TEXT_GENERATION].preferred_models = get_preferred_models_for_task_reload(False)
             if TaskType.IMAGE_ANALYSIS in self._task_configs: self._task_configs[TaskType.IMAGE_ANALYSIS].preferred_models = get_preferred_models_for_task_reload(True)
+            # Add MONGODB_DETAIL_QUERY_GENERATION to the reload logic
+            if TaskType.MONGODB_DETAIL_QUERY_GENERATION in self._task_configs: self._task_configs[TaskType.MONGODB_DETAIL_QUERY_GENERATION].preferred_models = get_preferred_models_for_task_reload(False)
+            # Add DOCUMENT_SELECTION_FOR_QUERY to the reload logic
+            if TaskType.DOCUMENT_SELECTION_FOR_QUERY in self._task_configs: self._task_configs[TaskType.DOCUMENT_SELECTION_FOR_QUERY].preferred_models = get_preferred_models_for_task_reload(False)
             
             logger.info("任務配置重新載入完成 (無穩定模式影響)")
             return True
