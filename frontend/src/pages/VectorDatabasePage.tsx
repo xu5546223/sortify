@@ -25,7 +25,8 @@ import {
   Input,
   Button,
   Badge,
-  Typography
+  Typography,
+  Pagination,
 } from 'antd';
 import {
   DatabaseOutlined,
@@ -86,23 +87,30 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
   
   // 文檔向量化相關狀態
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [totalDocuments, setTotalDocuments] = useState(0);
+  const [allDocumentIds, setAllDocumentIds] = useState<string[]>([]);
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
+  
+  const [pagination, setPagination] = useState({
+    current: 1,
+    pageSize: 10,
+  });
   
   // 模態框狀態 (除了搜索模態框)
   const [showVectorizeModal, setShowVectorizeModal] = useState(false);
   const [isDeletingFromVectorDB, setIsDeletingFromVectorDB] = useState<string | null>(null);
 
   // 加載數據的函數
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (page = pagination.current, pageSize = pagination.pageSize) => {
     try {
       setIsLoading(true);
       const [stats, connStatus, docsResponse] = await Promise.allSettled([
         getVectorDatabaseStats(),
         getDatabaseConnectionStatus(),
-        getDocuments('', 'all', undefined, 'created_at', 'desc', 0, 50)
+        getDocuments('', 'all', undefined, 'created_at', 'desc', (page - 1) * pageSize, pageSize)
       ]);
 
       if (stats.status === 'fulfilled') {
@@ -122,6 +130,7 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
 
       if (docsResponse.status === 'fulfilled') {
         setDocuments(docsResponse.value.documents);
+        setTotalDocuments(docsResponse.value.totalCount);
       } else {
         console.error('獲取文檔列表失敗:', docsResponse.reason);
         showPCMessage('獲取文檔列表失敗', 'error');
@@ -133,15 +142,15 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
     } finally {
       setIsLoading(false);
     }
-  }, [showPCMessage]);
+  }, [showPCMessage, pagination]);
 
   // 刷新數據
   const refreshData = useCallback(async () => {
     setIsRefreshing(true);
-    await loadData();
+    await loadData(1, pagination.pageSize);
     setIsRefreshing(false);
     showPCMessage('數據已刷新', 'success');
-  }, [loadData, showPCMessage]);
+  }, [loadData, showPCMessage, pagination.pageSize]);
 
   // 初始化向量數據庫
   const handleInitializeVectorDB = async () => {
@@ -259,6 +268,80 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
     });
   };
 
+  const handleTableChange = (newPagination: any) => {
+    setPagination({
+      current: newPagination.current ?? 1,
+      pageSize: newPagination.pageSize ?? 10,
+    });
+    loadData(newPagination.current, newPagination.pageSize);
+  };
+
+  // 獲取所有文檔ID（用於全選功能）
+  const fetchAllDocumentIds = useCallback(async () => {
+    try {
+      const allIds: string[] = [];
+      const batchSize = 100; // 後端 API 限制最大 100
+      let currentSkip = 0;
+      let hasMore = true;
+
+      while (hasMore) {
+        const response = await getDocuments('', 'all', undefined, 'created_at', 'desc', currentSkip, batchSize);
+        
+        if (response.documents.length === 0) {
+          hasMore = false;
+        } else {
+          allIds.push(...response.documents.map(doc => doc.id));
+          currentSkip += batchSize;
+          
+          // 如果這批數量少於 batchSize，說明已經是最後一批
+          if (response.documents.length < batchSize) {
+            hasMore = false;
+          }
+        }
+      }
+
+      setAllDocumentIds(allIds);
+      console.log(`成功獲取 ${allIds.length} 個文檔ID`);
+    } catch (error) {
+      console.error('獲取所有文檔ID失敗:', error);
+      showPCMessage('獲取所有文檔ID失敗', 'error');
+    }
+  }, [showPCMessage]);
+
+  // 選中當前頁面所有文檔
+  const selectCurrentPage = () => {
+    const currentPageIds = documents.map(doc => doc.id);
+    const combinedIds = [...selectedDocIds, ...currentPageIds];
+    const newSelected = Array.from(new Set(combinedIds));
+    setSelectedDocIds(newSelected);
+  };
+
+  // 取消選中當前頁面所有文檔
+  const deselectCurrentPage = () => {
+    const currentPageIds = documents.map(doc => doc.id);
+    setSelectedDocIds(selectedDocIds.filter(id => !currentPageIds.includes(id)));
+  };
+
+  // 選中所有文檔
+  const selectAllDocuments = async () => {
+    if (allDocumentIds.length === 0) {
+      await fetchAllDocumentIds();
+    }
+    if (allDocumentIds.length > 0) {
+      setSelectedDocIds(allDocumentIds);
+    } else {
+      showPCMessage('無法獲取所有文檔ID', 'error');
+    }
+  };
+
+  // 取消選中所有文檔
+  const deselectAllDocuments = () => {
+    setSelectedDocIds([]);
+  };
+
+  // 檢查當前頁面是否全選
+  const isCurrentPageSelected = documents.length > 0 && documents.every(doc => selectedDocIds.includes(doc.id));
+
   // 組件掛載時加載數據
   useEffect(() => {
     loadData();
@@ -358,7 +441,7 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
       <Col xs={12} sm={6}>
         <Statistic
           title="文檔總數"
-          value={documents.length}
+          value={totalDocuments}
           prefix={<FileTextOutlined />}
         />
       </Col>
@@ -416,7 +499,7 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
               {vectorStats ? (
                 <Descriptions column={1} size="small">
                   <Descriptions.Item label="文檔總數">
-                    <Text strong>{documents.length}</Text>
+                    <Text strong>{totalDocuments}</Text>
                   </Descriptions.Item>
                   <Descriptions.Item label="向量總數">
                     <Text strong>{vectorStats.total_vectors || 0}</Text>
@@ -609,6 +692,28 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
               className="ai-qa-alert"
             />
 
+            <div className="mb-4">
+              <Space>
+                <Button
+                  size="small"
+                  onClick={isCurrentPageSelected ? deselectCurrentPage : selectCurrentPage}
+                  disabled={documents.length === 0}
+                >
+                  {isCurrentPageSelected ? '取消選中當前頁面' : '選中當前頁面'}
+                </Button>
+                <Button
+                  size="small"
+                  onClick={selectedDocIds.length === totalDocuments ? deselectAllDocuments : selectAllDocuments}
+                  disabled={totalDocuments === 0}
+                >
+                  {selectedDocIds.length === totalDocuments ? '取消全選' : `全選 (${totalDocuments} 個文檔)`}
+                </Button>
+                <Text type="secondary">
+                  已選中 {selectedDocIds.length} 個文檔
+                </Text>
+              </Space>
+            </div>
+
             <Table
               headers={[
                 { key: 'selector', label: '選擇', className: 'w-12' },
@@ -616,16 +721,16 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
                 { key: 'vector_status', label: '向量狀態' },
                 { key: 'actions', label: '操作', className: 'w-auto' }
               ]}
-              isSelectAllChecked={selectedDocIds.length === documents.length && documents.length > 0}
+              isSelectAllChecked={isCurrentPageSelected}
               onSelectAllChange={(e) => {
                 if (e.target.checked) {
-                  setSelectedDocIds(documents.map(doc => doc.id));
+                  selectCurrentPage();
                 } else {
-                  setSelectedDocIds([]);
+                  deselectCurrentPage();
                 }
               }}
             >
-              {documents.slice(0, 20).map((doc) => {
+              {documents.map((doc) => {
                 const isCurrentDocDeleting = isDeletingFromVectorDB === doc.id;
 
                 return (
@@ -698,14 +803,27 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
               })}
             </Table>
 
-            {documents.length > 20 && (
-              <Alert
-                message={`顯示前 20 個文檔，總共 ${documents.length} 個文檔`}
-                type="info"
-                showIcon
-                className="ai-qa-alert"
+            <div className="flex justify-between items-center mt-4">
+              <Text type="secondary">
+                顯示 {((pagination.current - 1) * pagination.pageSize) + 1}-{Math.min(pagination.current * pagination.pageSize, totalDocuments)} 項，共 {totalDocuments} 項
+              </Text>
+              <Pagination
+                current={pagination.current}
+                pageSize={pagination.pageSize}
+                total={totalDocuments}
+                showSizeChanger={true}
+                pageSizeOptions={['10', '20', '50', '100']}
+                onChange={(page, size) => {
+                  const newPagination = {
+                    current: page,
+                    pageSize: size ?? pagination.pageSize,
+                  };
+                  setPagination(newPagination);
+                  loadData(page, size ?? pagination.pageSize);
+                }}
+                showTotal={(total, range) => `${range[0]}-${range[1]} 共 ${total} 項`}
               />
-            )}
+            </div>
           </div>
         </Modal>
 
