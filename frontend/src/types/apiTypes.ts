@@ -361,6 +361,14 @@ export interface SemanticSearchRequest {
   top_k?: number;
   similarity_threshold?: number;
   filter_conditions?: Record<string, any>;
+  collection_name?: string;
+  
+  // 新增：兩階段混合檢索配置
+  enable_hybrid_search?: boolean;
+  enable_diversity_optimization?: boolean;
+  search_type?: 'hybrid' | 'summary_only' | 'chunks_only' | 'legacy' | 'rrf_fusion';
+  query_expansion_factor?: number;
+  rerank_top_k?: number;
 }
 
 export interface SemanticSearchResult {
@@ -368,6 +376,29 @@ export interface SemanticSearchResult {
   similarity_score: number;
   summary_text: string;
   metadata?: Record<string, any>;
+  
+  // 新增：混合搜索相關字段
+  vector_type?: 'summary' | 'chunk'; // 向量類型：摘要向量或文本塊向量
+  chunk_index?: number; // 如果是文本塊，顯示是第幾個塊
+  search_stage?: 'stage1' | 'stage2' | 'single'; // 搜索階段標識
+  
+  // 文檔基本信息
+  document_filename?: string;
+  document_status?: string;
+  content_type?: string; // 文檔內容類型
+  
+  // 關鍵信息
+  key_terms?: string[]; // 關鍵詞
+  knowledge_domains?: string[]; // 知識領域
+  searchable_keywords?: string[]; // 可搜索關鍵詞
+  
+  // 文本內容
+  chunk_text?: string; // 如果是文本塊搜索，顯示具體的塊內容
+  context_text?: string; // 上下文文本（用於預覽）
+  
+  // 搜索策略相關
+  ranking_score?: number; // 重排序後的分數
+  diversity_score?: number; // 多樣性分數
 }
 
 // AI QA Related (Legacy or specific QA parts)

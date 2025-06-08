@@ -100,12 +100,49 @@ class VectorDatabaseService:
                 vector_id = str(uuid.uuid4())
                 ids.append(vector_id)
                 embeddings.append(record.embedding_vector)
-                metadatas.append({
+                
+                # 構建更豐富的元數據，包含分塊策略的信息
+                metadata_dict = {
                     "document_id": record.document_id,
                     "owner_id": record.owner_id,
                     "file_type": record.metadata.get("file_type", "") if record.metadata else "", 
                     "created_at": record.created_at.isoformat()
-                })
+                }
+                
+                # 自動判斷向量類型：如果有 chunk_id 或 chunk_index，則為內容塊；否則為摘要
+                is_chunk = False
+                if record.metadata:
+                    # 分塊相關信息
+                    if "chunk_id" in record.metadata:
+                        metadata_dict["chunk_id"] = record.metadata["chunk_id"]
+                        is_chunk = True
+                    if "chunk_index" in record.metadata:
+                        metadata_dict["chunk_index"] = record.metadata["chunk_index"]
+                        is_chunk = True
+                    if "total_chunks" in record.metadata:
+                        metadata_dict["total_chunks"] = record.metadata["total_chunks"]
+                
+                # 設置向量類型
+                metadata_dict["type"] = "chunk" if is_chunk else "summary"
+                
+                # 如果有額外的元數據，添加重要的欄位用於搜索和過濾
+                if record.metadata:
+                    # 搜索相關信息
+                    if "searchable_keywords" in record.metadata:
+                        keywords = record.metadata["searchable_keywords"]
+                        if isinstance(keywords, list) and keywords:
+                            metadata_dict["searchable_keywords"] = " ".join(keywords[:10])  # 限制長度
+                    
+                    if "knowledge_domains" in record.metadata:
+                        domains = record.metadata["knowledge_domains"]
+                        if isinstance(domains, list) and domains:
+                            metadata_dict["knowledge_domains"] = " ".join(domains[:5])  # 限制長度
+                    
+                    if "content_type" in record.metadata:
+                        metadata_dict["content_type"] = str(record.metadata["content_type"])[:100]  # 限制長度
+                
+                metadatas.append(metadata_dict)
+                
                 # 使用 record.chunk_text (如果存在)，否則使用一個有意義的備用值
                 document_content = record.chunk_text if record.chunk_text else f"內容片段 {record.document_id[:8]}..."
                 documents.append(document_content)
@@ -162,8 +199,11 @@ class VectorDatabaseService:
             # 構建 where 子句，正確處理多個條件
             where_conditions = []
             
-            if owner_id_filter:
+            if owner_id_filter is not None and owner_id_filter != "":
                 where_conditions.append({"owner_id": owner_id_filter})
+                logger.debug(f"Owner filter 已應用: owner_id='{owner_id_filter}'")
+            else:
+                logger.debug(f"Owner filter 未應用: owner_id_filter={owner_id_filter!r}")
 
             if metadata_filter:
                 for key, value in metadata_filter.items():
@@ -282,6 +322,61 @@ class VectorDatabaseService:
                         source="service.vector_db.delete_by_doc_ids_batch", details=summary_details, request_id=request_id, user_id=user_id)
         return {"deleted_count": deleted_count, "failed_ids": failed_ids, "errors": errors} # Note: deleted_count here is more like "processed_without_error_count"
     
+    def get_user_document_sample(
+        self,
+        user_id: str,
+        limit: int = 50,
+        include_metadata: bool = True,
+        vector_type_filter: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """獲取用戶文檔的樣本向量記錄，用於分析文檔庫特徵"""
+        try:
+            if not self.collection:
+                logger.warning("集合未初始化，無法獲取文檔樣本")
+                return []
+            
+            # 構建查詢條件
+            where_condition = {"owner_id": user_id}
+            if vector_type_filter:
+                where_condition["type"] = vector_type_filter
+            
+            # 查詢條件
+            query_params = {
+                "where": where_condition,
+                "limit": limit
+            }
+            
+            # 根據是否需要元數據決定包含的欄位
+            if include_metadata:
+                query_params["include"] = ["documents", "metadatas"]
+            else:
+                query_params["include"] = ["documents"]
+            
+            # 執行查詢
+            results = self.collection.get(**query_params)
+            
+            # 處理結果
+            sample_docs = []
+            if results["ids"]:
+                for i, doc_id in enumerate(results["ids"]):
+                    doc_record = {
+                        "vector_id": doc_id,
+                        "document_id": results["metadatas"][i].get("document_id", "") if results.get("metadatas") else "",
+                        "chunk_text": results["documents"][i] if results.get("documents") else "",
+                    }
+                    
+                    if include_metadata and results.get("metadatas"):
+                        doc_record["metadata"] = results["metadatas"][i]
+                    
+                    sample_docs.append(doc_record)
+            
+            logger.info(f"成功獲取用戶 {user_id} 的 {len(sample_docs)} 個文檔樣本記錄")
+            return sample_docs
+            
+        except Exception as e:
+            logger.error(f"獲取用戶文檔樣本失敗: {e}")
+            return []
+
     async def get_collection_stats(self, request_id: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, Any]: # Added request_id, user_id
         """獲取向量數據庫集合的統計信息。"""
         await log_event(db=None, level=LogLevel.DEBUG, message="Attempting to get collection stats.",

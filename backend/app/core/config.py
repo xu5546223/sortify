@@ -24,6 +24,18 @@ class Settings(BaseSettings):
     EMBEDDING_MAX_LENGTH: int = 512  # Embedding最大輸入長度
     VECTOR_SEARCH_TOP_K: int = 10  # 預設向量搜索返回結果數量
     VECTOR_SIMILARITY_THRESHOLD: float = 0.5  # 預設相似度閾值
+    
+    # 文本分塊策略設定
+    VECTOR_CHUNK_SIZE: int = 512  # 每個文本塊的字符數
+    VECTOR_CHUNK_OVERLAP: int = 50  # 文本塊之間的重疊字符數
+    
+    # 兩階段混合檢索設定
+    VECTOR_SEARCH_STAGE1_TOP_K: int = 10  # 第一階段（粗篩選）返回的候選文檔數
+    VECTOR_SEARCH_STAGE2_TOP_K: int = 5   # 第二階段（精排序）最終返回的結果數
+    
+    # RRF 融合檢索設定
+    RRF_K_CONSTANT: int = 45  # RRF 常數 k，降低高排名影響力（標準值為60）
+    RRF_WEIGHTS: dict = {"summary": 1.0, "chunks": 1.3}  # 摘要和內容塊搜索的權重配置
 
     # Cloudflare Tunnel (如果在此處管理)
     CLOUDFLARE_TUNNEL_URL: str | None = None

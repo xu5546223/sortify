@@ -1,6 +1,7 @@
 /* 導入我們的主題配置 - 包含正確的 Tailwind CSS v3 導入 */
 @import "./theme.css";
 @import "./utilities.css";
+@import "./semanticSearch.css";
 
 /* 確保主題配置被正確應用 */
 :root {
