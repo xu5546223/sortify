@@ -42,6 +42,27 @@ class SemanticSearchRequest(BaseModel):
     similarity_threshold: float = Field(default=0.5, ge=0.0, le=1.0, description="相似度閾值")
     filter_conditions: Optional[Dict[str, Any]] = Field(None, description="過濾條件")
     collection_name: Optional[str] = Field(None, description="要搜索的集合名稱")
+    
+    # 新增：混合檢索配置
+    enable_hybrid_search: bool = Field(default=True, description="啟用混合檢索策略")
+    enable_diversity_optimization: bool = Field(default=True, description="啟用結果多樣性優化")
+    query_expansion_factor: float = Field(default=1.5, ge=1.0, le=3.0, description="查詢擴展因子")
+    rerank_top_k: int = Field(default=20, ge=10, le=50, description="重排序候選數量")
+    
+    # 新增：搜索類型指定（前端兼容性）
+    search_type: Optional[str] = Field(default="hybrid", description="搜索類型：hybrid, summary_only, chunks_only, legacy, rrf_fusion")
+    
+    # 新增：RRF 融合檢索權重配置
+    rrf_weights: Optional[Dict[str, float]] = Field(
+        default=None, 
+        description="RRF 融合檢索權重配置，格式: {'summary': 0.4, 'chunks': 0.6}"
+    )
+    rrf_k_constant: Optional[int] = Field(
+        default=None, 
+        ge=1, 
+        le=200, 
+        description="RRF 常數 k，用於降低高排名的影響力（預設：60）"
+    )
 
 class SemanticSearchResult(BaseModel):
     """語義搜索結果"""

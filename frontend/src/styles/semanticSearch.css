@@ -1,0 +1,177 @@
+/* 語義搜索界面樣式 */
+
+.semantic-search-modal .ant-modal-header {
+  background: linear-gradient(90deg, #f0f9ff 0%, #e0f2fe 100%);
+  border-bottom: 2px solid #0ea5e9;
+}
+
+.semantic-search-modal .ant-modal-title {
+  color: #0c4a6e;
+}
+
+/* 搜索結果項目樣式 */
+.semantic-search-result-item {
+  transition: all 0.3s ease;
+  border-left: 4px solid transparent;
+}
+
+.semantic-search-result-item:hover {
+  background-color: #f8fafc;
+  border-left-color: #3b82f6;
+  transform: translateX(2px);
+}
+
+/* 向量類型標籤樣式 */
+.vector-type-summary {
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  color: white;
+  border: none;
+}
+
+.vector-type-chunk {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+  border: none;
+}
+
+/* 搜索階段標籤樣式 */
+.search-stage-tag {
+  background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+  color: white;
+  border: none;
+}
+
+/* 匹配內容高亮框 */
+.search-match-content {
+  background: linear-gradient(135deg, #fef3c7, #fde68a);
+  border-left: 4px solid #f59e0b;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* 關鍵詞標籤組樣式 */
+.keyword-tags-container {
+  background: #f1f5f9;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+}
+
+/* 搜索配置面板樣式 */
+.search-config-panel {
+  background: linear-gradient(135deg, #f8fafc, #f1f5f9);
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.search-config-panel .ant-collapse-header {
+  background: transparent !important;
+  color: #475569;
+  font-weight: 500;
+}
+
+.search-config-panel .ant-form-item-label > label {
+  color: #374151;
+  font-weight: 500;
+}
+
+/* 搜索策略選擇器樣式 */
+.search-strategy-selector .ant-select-selection-item {
+  font-weight: 500;
+}
+
+/* 混合搜索指示器 */
+.hybrid-search-indicator {
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/* 搜索歷史項目樣式 */
+.search-history-item {
+  transition: all 0.2s ease;
+  border-radius: 6px;
+  padding: 4px;
+}
+
+.search-history-item:hover {
+  background-color: #f0f9ff;
+  cursor: pointer;
+}
+
+/* 搜索結果統計樣式 */
+.search-results-stats {
+  background: linear-gradient(90deg, #e0f2fe, #f0f9ff);
+  border: 1px solid #0ea5e9;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+}
+
+/* 文檔詳情模態框樣式 */
+.document-detail-modal .ant-modal-header {
+  background: linear-gradient(90deg, #fef7ff 0%, #f3e8ff 100%);
+  border-bottom: 2px solid #a855f7;
+}
+
+.document-detail-modal .ant-tabs-tab {
+  font-weight: 500;
+}
+
+.document-detail-modal .ant-tabs-tab.ant-tabs-tab-active {
+  color: #7c3aed;
+}
+
+/* 搜索匹配卡片樣式 */
+.search-match-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.search-match-card:hover {
+  border-color: #3b82f6;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+}
+
+/* 相似度分數指示器 */
+.similarity-score-high {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+  font-weight: bold;
+}
+
+.similarity-score-medium {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: white;
+  font-weight: bold;
+}
+
+.similarity-score-low {
+  background: linear-gradient(135deg, #6b7280, #4b5563);
+  color: white;
+  font-weight: bold;
+}
+
+/* 響應式設計 */
+@media (max-width: 768px) {
+  .semantic-search-modal {
+    margin: 0;
+    max-width: 100vw;
+  }
+  
+  .search-config-panel .grid-cols-2 {
+    grid-template-columns: 1fr;
+  }
+  
+  .search-results-stats {
+    font-size: 12px;
+  }
+} 

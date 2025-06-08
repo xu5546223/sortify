@@ -4,7 +4,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from typing import List, Optional, Dict
 import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from app.db.mongodb_utils import get_db
 from app.core.security import get_current_active_user, get_current_admin_user
 from app.models.user_models import User
@@ -344,9 +344,17 @@ async def semantic_search(
     db: AsyncIOMotorDatabase = Depends(get_db) 
 ):
     """
-    語義搜索端點 - 需要用戶認證
+    語義搜索端點 - 支援兩階段混合檢索策略
     
-    直接進行向量搜索，不包含LLM處理
+    兩階段混合檢索：
+    1. 第一階段：在摘要向量中快速找出候選文檔
+    2. 第二階段：在候選文檔的內容塊中精確匹配
+    
+    搜索模式：
+    - hybrid: 完整的兩階段混合檢索(預設)
+    - summary_only: 僅搜索摘要向量(快速文檔級別搜索)
+    - chunks_only: 僅搜索內容塊向量(精確內容級別搜索)
+    - legacy: 傳統單階段搜索(向後兼容)
     """
     request_id_val = fastapi_request.state.request_id if hasattr(fastapi_request.state, 'request_id') else None
     await log_event(
@@ -357,43 +365,150 @@ async def semantic_search(
             "query_text_length": len(request.query) if request.query else 0, 
             "top_k": request.top_k,
             "similarity_threshold": request.similarity_threshold,
-            "collection_name": request.collection_name
+            "collection_name": request.collection_name,
+            "enable_hybrid_search": request.enable_hybrid_search,
+            "enable_diversity_optimization": request.enable_diversity_optimization
         }
     )
 
     try:
+        # 決定使用哪種搜索策略
+        if request.enable_hybrid_search:
+            # 使用兩階段混合檢索
+            from app.services.enhanced_search_service import enhanced_search_service
+            
+            # 根據前端指定的搜索類型決定策略
+            search_type = request.search_type or "hybrid"
+            
+            # 驗證搜索類型
+            valid_search_types = ["hybrid", "summary_only", "chunks_only", "rrf_fusion"]
+            if search_type not in valid_search_types:
+                search_type = "hybrid"  # 預設使用完整的兩階段檢索
+            
+            # 如果有特定的過濾條件，可能需要調整策略
+            if request.filter_conditions:
+                # 可以根據過濾條件智能選擇搜索策略
+                pass
+            
+            # 確保 user_id 是字符串類型
+            user_id_str = str(current_user.id) if current_user.id else None
+            if not user_id_str:
+                raise ValueError("用戶ID無效")
+            
+            results = await enhanced_search_service.two_stage_hybrid_search(
+                db=db,
+                query=request.query,
+                user_id=user_id_str,
+                search_type=search_type,
+                stage1_top_k=min(request.top_k * 2, 20),  # 第一階段候選數
+                stage2_top_k=request.top_k,  # 最終結果數
+                similarity_threshold=request.similarity_threshold,
+                # 傳遞動態 RRF 權重配置
+                rrf_weights=request.rrf_weights,
+                rrf_k_constant=request.rrf_k_constant
+            )
+            
+            await log_event(
+                db=db, level=LogLevel.INFO,
+                message=f"Two-stage hybrid search completed for user {current_user.username}, found {len(results)} results.",
+                source="api.vector_db.search", user_id=str(current_user.id), request_id=request_id_val,
+                details={
+                    "num_results": len(results), 
+                    "search_strategy": "two_stage_hybrid",
+                    "top_k": request.top_k
+                }
+            )
+            
+        else:
+            # 使用傳統單階段搜索(向後兼容)
+            query_vector = embedding_service.encode_text(request.query) 
+            
+            vector_db_service_instance = get_vector_db_service()
+            results = vector_db_service_instance.search_similar_vectors(
+                query_vector=query_vector,
+                top_k=request.top_k,
+                similarity_threshold=request.similarity_threshold,
+                owner_id_filter=str(current_user.id), 
+                metadata_filter=request.filter_conditions,  # 使用請求中的過濾條件
+                collection_name=request.collection_name
+            )
+            
+            await log_event(
+                db=db, 
+                level=LogLevel.INFO,
+                message=f"Legacy semantic search completed for user {current_user.username}, found {len(results)} results.",
+                source="api.vector_db.search", 
+                user_id=str(current_user.id), 
+                request_id=request_id_val,
+                details={
+                    "num_results": len(results), 
+                    "search_strategy": "legacy",
+                    "top_k": request.top_k
+                }
+            )
         
-        query_vector = embedding_service.encode_text(request.query) 
-        
-        vector_db_service_instance = get_vector_db_service()
-        results = vector_db_service_instance.search_similar_vectors(
-            query_vector=query_vector,
-            top_k=request.top_k,
-            similarity_threshold=request.similarity_threshold,
-            owner_id_filter=str(current_user.id), 
-            collection_name=request.collection_name
-        )
-        
-        await log_event(
-            db=db, level=LogLevel.DEBUG,
-            message=f"Semantic search completed for user {current_user.username}, found {len(results)} results.",
-            source="api.vector_db.search", user_id=str(current_user.id), request_id=request_id_val,
-            details={"num_results": len(results), "top_k": request.top_k}
-        )
         return results
-    except ValueError as ve: # Specific error for embedding issues
+        
+    except ValidationError as ve: # Pydantic validation error
+        error_details = {
+            "error": str(ve), 
+            "error_type": type(ve).__name__, 
+            "validation_errors": ve.errors(),
+            "request_payload": {
+                "query": request.query[:100] + "..." if len(request.query) > 100 else request.query,
+                "top_k": request.top_k,
+                "similarity_threshold": request.similarity_threshold,
+                "enable_hybrid_search": request.enable_hybrid_search,
+                "search_type": request.search_type,
+                "current_user_id": str(current_user.id),
+                "current_user_id_type": type(current_user.id).__name__
+            }
+        }
+        
         await log_event(
-            db=db, level=LogLevel.WARNING, # ValueError might be due to bad input, not necessarily server error
+            db=db, 
+            level=LogLevel.WARNING,
+            message=f"Semantic search failed for user {current_user.username} due to ValidationError: {str(ve)}",
+            source="api.vector_db.search", 
+            user_id=str(current_user.id), 
+            request_id=request_id_val,
+            details=error_details
+        )
+        raise HTTPException(status_code=400, detail=f"Semantic search input error: {str(ve)}")
+    except ValueError as ve: # Specific error for embedding issues
+        error_details = {
+            "error": str(ve), 
+            "error_type": type(ve).__name__, 
+            "query_text_length": len(request.query) if request.query else 0,
+            "request_payload": {
+                "query": request.query[:100] + "..." if len(request.query) > 100 else request.query,
+                "top_k": request.top_k,
+                "similarity_threshold": request.similarity_threshold,
+                "enable_hybrid_search": request.enable_hybrid_search,
+                "search_type": request.search_type,
+                "current_user_id": str(current_user.id),
+                "current_user_id_type": type(current_user.id).__name__
+            }
+        }
+        
+        await log_event(
+            db=db, 
+            level=LogLevel.WARNING, # ValueError might be due to bad input, not necessarily server error
             message=f"Semantic search failed for user {current_user.username} due to ValueError: {str(ve)}",
-            source="api.vector_db.search", user_id=str(current_user.id), request_id=request_id_val,
-            details={"error": str(ve), "error_type": type(ve).__name__, "query_text_length": len(request.query) if request.query else 0}
+            source="api.vector_db.search", 
+            user_id=str(current_user.id), 
+            request_id=request_id_val,
+            details=error_details
         )
         raise HTTPException(status_code=400, detail=f"Semantic search input error: {str(ve)}") # User-friendly
     except Exception as e: # General errors
         await log_event(
-            db=db, level=LogLevel.ERROR,
+            db=db, 
+            level=LogLevel.ERROR,
             message=f"Semantic search failed unexpectedly for user {current_user.username}: {str(e)}",
-            source="api.vector_db.search", user_id=str(current_user.id), request_id=request_id_val,
+            source="api.vector_db.search", 
+            user_id=str(current_user.id), 
+            request_id=request_id_val,
             details={"error": str(e), "error_type": type(e).__name__}
         )
         raise HTTPException(status_code=500, detail="An unexpected error occurred during semantic search.")
@@ -412,9 +527,12 @@ async def batch_delete_documents_from_vector_db(
     """根據文檔 ID 列表，批量從向量資料庫中刪除文檔的向量，並更新其在MongoDB中的vector_status。"""
     request_id_val = request.state.request_id if hasattr(request.state, 'request_id') else None
     await log_event(
-        db=db, level=LogLevel.INFO,
+        db=db, 
+        level=LogLevel.INFO,
         message=f"User {current_user.username} requested batch deletion of document vectors.",
-        source="api.vector_db.batch_delete_vectors", user_id=str(current_user.id), request_id=request_id_val,
+        source="api.vector_db.batch_delete_vectors", 
+        user_id=str(current_user.id), 
+        request_id=request_id_val,
         details={"requested_doc_id_count": len(request_data.document_ids)}
     )
     

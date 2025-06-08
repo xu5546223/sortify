@@ -1,82 +1,135 @@
 import json
+import logging
 import uuid
 import re
+from typing import List, Dict, Any, Optional
 import asyncio
-import motor.motor_asyncio
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic_settings import BaseSettings
 import os
-import logging
-from typing import Optional, Dict, Any, List
+from dotenv import load_dotenv
+from bson import ObjectId
+from bson.binary import Binary  # 添加Binary導入
 
-import sys
-# Add the parent directory of 'backend' and 'evaluation' to sys.path
-# This assumes the script is in 'evaluation' and 'backend' is a sibling directory.
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# 載入 .env 文件
+load_dotenv()
 
-# --- MongoDB Connection Details ---
-try:
-    from backend.app.core.config import settings
-    # The actual config.py uses MONGODB_URL and DB_NAME, ensure settings object exposes them as MONGO_URI and MONGO_DB_NAME
-    # or adapt to use settings.MONGODB_URL and settings.DB_NAME directly.
-    # For now, assuming the Settings class in config.py might map them or they are accessible.
-    # We will use the names as per the original problem description for prepare_data.py's variables.
-    MONGO_URI = settings.MONGODB_URL # Adapted to actual Pydantic model field
-    MONGO_DB_NAME = settings.DB_NAME   # Adapted to actual Pydantic model field
-    logging.info(f"Successfully imported MongoDB settings from backend.app.core.config. Using MONGODB_URL: {MONGO_URI}, DB_NAME: {MONGO_DB_NAME}")
-except ImportError as e:
-    logging.warning(f"ImportError for backend.app.core.config: {e}. Falling back to default MongoDB settings.")
-    MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-    MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "rag_db")
-except AttributeError as e:
-    logging.warning(f"AttributeError accessing settings (e.g. MONGODB_URL or DB_NAME not found): {e}. Falling back to default MongoDB settings.")
-    MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-    MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "rag_db")
-except Exception as e: # Catch any other Pydantic validation or other errors during settings load
-    logging.error(f"Failed to load settings from backend.app.core.config due to: {e}. Using default MongoDB settings.")
-    MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-    MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "rag_db")
+# 設定日誌
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-COLLECTION_NAME = "documents"
+class Settings(BaseSettings):
+    mongodb_url: str = os.getenv("MONGODB_URL", "mongodb://admin:password@localhost:27017")
+    db_name: str = os.getenv("DB_NAME", "sortify_db")
 
-# --- Logging Setup ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    class Config:
+        env_file = ".env"
+        extra = "allow"  # 允許額外的字段
 
-# --- Function to Extract Filename ---
-def extract_filename(output_text: str) -> Optional[str]:
-    """
-    Extracts the filename from HTML comments like <!-- 檔案名稱: FILENAME_HERE -->.
-    """
-    match = re.search(r"<!--\s*檔案名稱:\s*(.*?)\s*-->", output_text)
+settings = Settings()
+
+async def get_document_filenames_with_ids() -> Dict[str, str]:
+    """從資料庫獲取所有文件的檔案名稱和對應的文檔ID"""
+    try:
+        client = AsyncIOMotorClient(settings.mongodb_url)
+        db = client[settings.db_name]
+        documents = await db.documents.find({}, {"filename": 1, "_id": 1}).to_list(length=None)
+        
+        # 建立檔案名稱到文檔ID的映射
+        filename_to_id = {}
+        for doc in documents:
+            if "filename" in doc and "_id" in doc:
+                # 詳細處理不同類型的ID
+                doc_id = doc["_id"]
+                logging.debug(f"Processing document ID - Type: {type(doc_id)}, Value: {repr(doc_id)}")
+                
+                if isinstance(doc_id, Binary):
+                    # 處理 bson.binary.Binary 類型 (您的系統使用的格式)
+                    try:
+                        uuid_obj = uuid.UUID(bytes=doc_id)
+                        doc_id_str = str(uuid_obj)
+                        logging.debug(f"Binary converted to UUID: {doc_id_str}")
+                    except ValueError:
+                        # 如果不是有效的UUID bytes，使用十六進制
+                        doc_id_str = doc_id.hex()
+                        logging.warning(f"Binary converted to hex: {doc_id_str}")
+                elif isinstance(doc_id, ObjectId):
+                    doc_id_str = str(doc_id)  # ObjectId 的正確字符串表示
+                    logging.debug(f"ObjectId converted to: {doc_id_str}")
+                elif isinstance(doc_id, uuid.UUID):
+                    doc_id_str = str(doc_id)  # UUID轉字符串
+                    logging.debug(f"UUID converted to: {doc_id_str}")
+                elif isinstance(doc_id, (str, bytes)):
+                    if isinstance(doc_id, bytes):
+                        # 處理二進制格式 - 嘗試多種轉換方式
+                        try:
+                            # 嘗試作為UUID bytes
+                            doc_id_uuid = uuid.UUID(bytes=doc_id) 
+                            doc_id_str = str(doc_id_uuid)
+                            logging.debug(f"Bytes converted to UUID: {doc_id_str}")
+                        except ValueError:
+                            # 如果不是UUID格式的bytes，使用十六進制表示
+                            doc_id_str = doc_id.hex()
+                            logging.debug(f"Bytes converted to hex: {doc_id_str}")
+                    else:
+                        # 已經是字符串
+                        doc_id_str = doc_id
+                        logging.debug(f"String ID: {doc_id_str}")
+                else:
+                    # 其他格式，直接轉換
+                    doc_id_str = str(doc_id)
+                    logging.warning(f"Unrecognized ID type {type(doc_id)}, converted to: {doc_id_str}")
+                
+                filename_to_id[doc["filename"]] = doc_id_str
+                logging.debug(f"Mapped filename '{doc['filename']}' to ID '{doc_id_str}'")
+        
+        logging.info(f"Retrieved {len(filename_to_id)} filename-to-ID mappings from database")
+        if filename_to_id:
+            # 顯示前3個映射作為示例
+            sample_items = list(filename_to_id.items())[:3]
+            logging.info(f"Sample filename-to-ID mappings: {dict(sample_items)}")
+        
+        return filename_to_id
+    except Exception as e:
+        logging.error(f"Error connecting to MongoDB: {e}")
+        return {}
+    finally:
+        client.close()
+
+def extract_filename(output: str) -> Optional[str]:
+    """從輸出中提取檔案名稱"""
+    # 更強健的正則表達式，處理可能的換行和額外空格
+    pattern = r'<!--\s*檔案名稱:\s*([^>]+?)\s*-->'
+    match = re.search(pattern, output, re.MULTILINE | re.DOTALL)
     if match:
-        return match.group(1)
+        filename = match.group(1).strip()
+        logging.debug(f"Extracted filename: '{filename}'")
+        return filename
+    logging.debug(f"No filename found in output: {output[-100:]}")  # 只顯示最後100個字符
     return None
 
-# --- Function to Get Document ID from MongoDB ---
-async def get_document_id(db: motor.motor_asyncio.AsyncIOMotorDatabase, filename: str) -> Optional[str]:
-    """
-    Queries the 'documents' collection for a document where the 'filename' field matches.
-    Returns the _id as a string if found, otherwise None.
-    """
-    document = await db[COLLECTION_NAME].find_one({"filename": filename})
-    if document and "_id" in document:
-        return str(document["_id"])
-    else:
-        logging.warning(f"Document not found in MongoDB for filename: {filename}")
-        return None
-
-# --- Main Asynchronous Function process_data() ---
 async def process_data():
     """
-    Loads data from QAdataset.json, processes it to include document IDs from MongoDB,
-    and saves the processed data to processed_qadataset.json.
+    Loads data from datasets2.json and processes it into two datasets:
+    1. RAG evaluation dataset (with filename that exists in database) - ragas格式
+    2. QA evaluation dataset (ALL data, regardless of filename) - 標準格式
     """
-    input_filepath = "evaluation/QAdataset.json"
-    output_filepath = "evaluation/processed_qadataset.json"
-    processed_data: List[Dict[str, Any]] = []
+    input_filepath = "datasets2.json"
+    rag_output_filepath = "evaluation/processed_rag_dataset.json"
+    qa_output_filepath = "evaluation/processed_qa_dataset.json"
+    
+    rag_data: List[Dict[str, Any]] = []
+    qa_data: List[Dict[str, Any]] = []
 
     records_processed = 0
-    records_successfully_mapped = 0
-    records_missing_filename = 0
-    records_missing_document_id = 0
+    records_with_valid_filename = 0
+    records_without_valid_filename = 0
+
+    # 獲取資料庫中所有檔案的檔案名稱和ID映射
+    filename_to_id = await get_document_filenames_with_ids()
+    valid_filenames = list(filename_to_id.keys())
+    logging.info(f"Found {len(valid_filenames)} valid filenames in database")
+    logging.info(f"Sample filename-to-ID mappings: {dict(list(filename_to_id.items())[:3]) if filename_to_id else 'None'}")
 
     try:
         with open(input_filepath, 'r', encoding='utf-8') as f:
@@ -86,20 +139,6 @@ async def process_data():
         return
     except json.JSONDecodeError:
         logging.error(f"Error decoding JSON from file: {input_filepath}")
-        return
-
-    mongo_client = None
-    try:
-        logging.info(f"Connecting to MongoDB at {MONGO_URI} / Database: {MONGO_DB_NAME}")
-        mongo_client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
-        db = mongo_client[MONGO_DB_NAME]
-        # Verify connection
-        await db.command('ping')
-        logging.info("Successfully connected to MongoDB.")
-    except Exception as e:
-        logging.error(f"Could not connect to MongoDB: {e}")
-        if mongo_client:
-            mongo_client.close()
         return
 
     for item in dataset:
@@ -113,45 +152,66 @@ async def process_data():
             continue
 
         filename = extract_filename(original_answer)
+        
+        # 清理答案，移除檔案名稱註釋
+        clean_answer = re.sub(r'<!--\s*檔案名稱:.*?-->', '', original_answer).strip()
 
-        if filename:
-            document_id = await get_document_id(db, filename)
-            if document_id:
-                processed_item = {
-                    "query_id": query_id,
-                    "user_query": user_query,
-                    "expected_relevant_doc_ids": [document_id],
-                    "relevance_scores": {document_id: 1.0},
-                    "original_answer": original_answer,
-                    "original_filename": filename
-                }
-                processed_data.append(processed_item)
-                records_successfully_mapped += 1
-            else:
-                records_missing_document_id += 1
-                logging.warning(f"Could not find document_id for filename: {filename} in query: {user_query[:50]}...")
+        # 所有資料都加入 QA 評估資料集
+        qa_item = {
+            "query_id": query_id,
+            "question": user_query,
+            "ground_truth": clean_answer,
+            "original_answer": original_answer,
+            "dataset_type": "qa_evaluation"
+        }
+        qa_data.append(qa_item)
+
+        # 只有有效檔案名稱的資料加入 RAG 評估
+        if filename and filename in valid_filenames:
+            # 使用檔案名稱獲取對應的MongoDB文檔ID
+            document_id = filename_to_id[filename]
+            
+            rag_item = {
+                "query_id": query_id,
+                "question": user_query,  # ragas 使用 question 而不是 user_query
+                "ground_truth": clean_answer,  # ragas 使用 ground_truth
+                "expected_relevant_doc_ids": [document_id],  # 使用MongoDB UUID而非檔案名稱
+                "relevance_scores": {document_id: 1.0},
+                "original_answer": original_answer,
+                "original_filename": filename,
+                "dataset_type": "rag_evaluation"  # 標記資料集類型
+            }
+            rag_data.append(rag_item)
+            records_with_valid_filename += 1
+            logging.info(f"Added to both RAG and QA datasets: {filename} -> {document_id}")
         else:
-            records_missing_filename += 1
-            logging.warning(f"Could not extract filename from output for query: {user_query[:50]}...")
+            records_without_valid_filename += 1
+            if filename:
+                logging.warning(f"Filename '{filename}' not found in database, added to QA only: {user_query[:50]}...")
+            else:
+                logging.debug(f"No filename extracted, added to QA only: {user_query[:50]}...")
 
+    # 儲存 RAG 評估資料集
     try:
-        with open(output_filepath, 'w', encoding='utf-8') as f:
-            json.dump(processed_data, f, ensure_ascii=False, indent=4)
-        logging.info(f"Successfully wrote processed data to {output_filepath}")
+        with open(rag_output_filepath, 'w', encoding='utf-8') as f:
+            json.dump(rag_data, f, ensure_ascii=False, indent=4)
+        logging.info(f"Successfully wrote RAG evaluation data to {rag_output_filepath}")
     except IOError as e:
-        logging.error(f"Could not write processed data to file {output_filepath}: {e}")
+        logging.error(f"Could not write RAG evaluation data to file {rag_output_filepath}: {e}")
 
+    # 儲存 QA 評估資料集
+    try:
+        with open(qa_output_filepath, 'w', encoding='utf-8') as f:
+            json.dump(qa_data, f, ensure_ascii=False, indent=4)
+        logging.info(f"Successfully wrote QA evaluation data to {qa_output_filepath}")
+    except IOError as e:
+        logging.error(f"Could not write QA evaluation data to file {qa_output_filepath}: {e}")
 
     logging.info("--- Processing Summary ---")
     logging.info(f"Total records processed: {records_processed}")
-    logging.info(f"Records successfully mapped with document_id: {records_successfully_mapped}")
-    logging.info(f"Records where filename could not be extracted: {records_missing_filename}")
-    logging.info(f"Records where document_id could not be found in DB (for extracted filenames): {records_missing_document_id}")
+    logging.info(f"Records added to QA evaluation: {len(qa_data)} (ALL records)")
+    logging.info(f"Records added to RAG evaluation: {records_with_valid_filename} (only with valid filenames)")
+    logging.info(f"Records without valid filename: {records_without_valid_filename}")
 
-    if mongo_client:
-        mongo_client.close()
-        logging.info("MongoDB connection closed.")
-
-# --- Execution Block ---
 if __name__ == "__main__":
     asyncio.run(process_data())

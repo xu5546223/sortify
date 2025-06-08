@@ -30,6 +30,11 @@ class AIResponse(BaseModel):
     model_used: str
     processing_time: Optional[float] = None
 
+class QueryRewriteRequest(BaseModel):
+    """查詢重寫請求模型"""
+    query: str
+    model: Optional[str] = None
+
 # === 文本分析端點（已切換到簡化版） ===
 @router.post("/analyze-text", response_model=AIResponse)
 async def analyze_text(
@@ -59,7 +64,7 @@ async def analyze_text(
     
     try:
         ai_response = await unified_ai_service_simplified.analyze_text(
-            text_content=request_data.user_prompt,
+            text=request_data.user_prompt,
             db=db,
             model_preference=request_data.model
         )
@@ -77,7 +82,7 @@ async def analyze_text(
             )
             raise HTTPException(status_code=500, detail=ai_response.error_message or "Text analysis failed.") # Keep detail somewhat generic
         
-        content_json = ai_response.content.model_dump_json() if hasattr(ai_response.content, 'model_dump_json') else str(ai_response.content)
+        content_json = ai_response.output_data.model_dump_json() if hasattr(ai_response.output_data, 'model_dump_json') else str(ai_response.output_data)
         
         await log_event(
             db=db, level=LogLevel.INFO,
@@ -86,14 +91,14 @@ async def analyze_text(
             details={
                 "model_used": ai_response.model_used,
                 "token_usage": ai_response.token_usage.model_dump() if ai_response.token_usage else None,
-                "processing_time_ms": int(ai_response.processing_time * 1000) if ai_response.processing_time else None
+                "processing_time_ms": int(ai_response.processing_time_seconds * 1000) if ai_response.processing_time_seconds else None
             }
         )
         return AIResponse(
             answer=content_json, # This is a JSON string representation of complex Pydantic model
             token_usage=ai_response.token_usage,
             model_used=ai_response.model_used,
-            processing_time=ai_response.processing_time
+            processing_time=ai_response.processing_time_seconds
         )
         
     except HTTPException:
@@ -139,8 +144,13 @@ async def analyze_image(
         image_data = await image.read()
         image_mime_type = image.content_type or "image/jpeg" # Default to jpeg if not provided
         
+        # Convert bytes to PIL Image
+        from PIL import Image as PILImage
+        import io
+        pil_image = PILImage.open(io.BytesIO(image_data))
+        
         ai_response = await unified_ai_service_simplified.analyze_image(
-            image_data=image_data, # Pass bytes, service handles PIL conversion
+            image=pil_image,
             image_mime_type=image_mime_type,
             db=db,
             model_preference=model
@@ -158,7 +168,7 @@ async def analyze_image(
             )
             raise HTTPException(status_code=500, detail=ai_response.error_message or "Image analysis failed.")
         
-        content_json = ai_response.content.model_dump_json() if hasattr(ai_response.content, 'model_dump_json') else str(ai_response.content)
+        content_json = ai_response.output_data.model_dump_json() if hasattr(ai_response.output_data, 'model_dump_json') else str(ai_response.output_data)
         
         await log_event(
             db=db, level=LogLevel.INFO,
@@ -167,14 +177,14 @@ async def analyze_image(
             details={
                 "filename": image.filename, "model_used": ai_response.model_used,
                 "token_usage": ai_response.token_usage.model_dump() if ai_response.token_usage else None,
-                "processing_time_ms": int(ai_response.processing_time * 1000) if ai_response.processing_time else None
+                "processing_time_ms": int(ai_response.processing_time_seconds * 1000) if ai_response.processing_time_seconds else None
             }
         )
         return AIResponse(
             answer=content_json,
             token_usage=ai_response.token_usage,
             model_used=ai_response.model_used,
-            processing_time=ai_response.processing_time
+            processing_time=ai_response.processing_time_seconds
         )
         
     except HTTPException:
@@ -258,30 +268,26 @@ async def ai_question_answer(
 @router.post("/rewrite-query")
 async def rewrite_query(
     fastapi_request: Request, # Added
-    query: str, # This comes from request body, should be a Pydantic model for robustness
-    model: Optional[str] = None, # Also from request body or query param? Assuming query for now.
+    request_data: QueryRewriteRequest,
     current_user: User = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_db)
 ):
     """
-    查詢重寫端點 - 現在使用簡化版本
-    Note: For production, 'query' and 'model' should be part of a Pydantic model in request body.
+    查詢重寫端點 - 現在使用簡化版本，使用正確的 Pydantic 模型
     """
     request_id_val = fastapi_request.state.request_id if hasattr(fastapi_request.state, 'request_id') else None
     await log_event(
         db=db, level=LogLevel.INFO,
         message=f"Unified AI Query Rewrite request from user {current_user.username}.",
         source="api.unified_ai.rewrite_query", user_id=str(current_user.id), request_id=request_id_val,
-        details={"query_length": len(query) if query else 0, "model_preference": model}
+        details={"query_length": len(request_data.query) if request_data.query else 0, "model_preference": request_data.model}
     )
 
     try:
-        # logger.info(f"用戶 {current_user.username} 請求查詢重寫（簡化版）: {query[:50]}") # Replaced
-        
         ai_response = await unified_ai_service_simplified.rewrite_query(
-            original_query=query,
+            original_query=request_data.query,
             db=db,
-            model_preference=model
+            model_preference=request_data.model
         )
         
         if not ai_response.success:
@@ -289,7 +295,7 @@ async def rewrite_query(
                 db=db, level=LogLevel.ERROR,
                 message=f"Unified AI Query Rewrite failed for user {current_user.username}. Error: {ai_response.error_message}",
                 source="api.unified_ai.rewrite_query", user_id=str(current_user.id), request_id=request_id_val,
-                details={"query_length": len(query) if query else 0, "model_preference": model, "error": ai_response.error_message}
+                details={"query_length": len(request_data.query) if request_data.query else 0, "model_preference": request_data.model, "error": ai_response.error_message}
             )
             raise HTTPException(status_code=500, detail=ai_response.error_message or "Query rewrite failed.")
         
@@ -298,30 +304,29 @@ async def rewrite_query(
             message=f"Unified AI Query Rewrite successful for user {current_user.username}.",
             source="api.unified_ai.rewrite_query", user_id=str(current_user.id), request_id=request_id_val,
             details={
-                "original_query_length": len(query) if query else 0,
+                "original_query_length": len(request_data.query) if request_data.query else 0,
                 "model_used": ai_response.model_used,
                 "token_usage": ai_response.token_usage.model_dump() if ai_response.token_usage else None,
-                "processing_time_ms": int(ai_response.processing_time * 1000) if ai_response.processing_time else None
+                "processing_time_ms": int(ai_response.processing_time_seconds * 1000) if ai_response.processing_time_seconds else None
             }
         )
         return {
-            "original_query": query, # Consider not returning original query if very long
-            "rewritten_result": ai_response.content.model_dump_json() if hasattr(ai_response.content, 'model_dump_json') else str(ai_response.content),
-            "token_usage": ai_response.token_usage.model_dump(),
+            "original_query": request_data.query,
+            "rewritten_result": ai_response.output_data.model_dump_json() if hasattr(ai_response.output_data, 'model_dump_json') else str(ai_response.output_data),
+            "token_usage": ai_response.token_usage.model_dump() if ai_response.token_usage else None,
             "model_used": ai_response.model_used,
-            "processing_time": ai_response.processing_time,
+            "processing_time": ai_response.processing_time_seconds,
             "simplified_version": True
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        # logger.error(f"簡化版查詢重寫失敗: {e}", exc_info=True) # Replaced
         await log_event(
             db=db, level=LogLevel.ERROR,
             message=f"Unified AI Query Rewrite failed unexpectedly for user {current_user.username}. Error: {str(e)}",
             source="api.unified_ai.rewrite_query", user_id=str(current_user.id), request_id=request_id_val,
-            details={"error": str(e), "error_type": type(e).__name__, "query_length": len(query) if query else 0, "model_preference": model}
+            details={"error": str(e), "error_type": type(e).__name__, "query_length": len(request_data.query) if request_data.query else 0, "model_preference": request_data.model}
         )
         raise HTTPException(status_code=500, detail="An unexpected error occurred during query rewrite.") # User-friendly
 

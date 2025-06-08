@@ -1,3 +1,9 @@
 requests
 python-dotenv
 tqdm 
+ragas==0.1.22
+datasets==2.21.0
+langchain-google-genai
+langchain-openai
+pandas
+numpy

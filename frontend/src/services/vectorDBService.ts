@@ -23,15 +23,77 @@ export const getVectorDatabaseStats = async (): Promise<VectorDatabaseStats> => 
   }
 };
 
-// 語義搜索
-export const performSemanticSearch = async (query: string, topK = 10, threshold = 0.7, collectionName?: string): Promise<SemanticSearchResult[]> => {
-  const response = await apiClient.post<SemanticSearchResult[]>('/vector-db/semantic-search', {
+// 語義搜索 - 更新以支援兩階段混合檢索
+export const performSemanticSearch = async (
+  query: string, 
+  topK = 10, 
+  threshold = 0.7, 
+  collectionName?: string,
+  options?: {
+    enableHybridSearch?: boolean;
+    enableDiversityOptimization?: boolean;
+    searchType?: 'hybrid' | 'summary_only' | 'chunks_only' | 'legacy' | 'rrf_fusion';
+    filterConditions?: Record<string, any>;
+  }
+): Promise<SemanticSearchResult[]> => {
+  const requestPayload = {
     query,
     top_k: topK,
     similarity_threshold: threshold,
-    collection_name: collectionName
+    collection_name: collectionName,
+    // 新增：兩階段混合檢索配置
+    enable_hybrid_search: options?.enableHybridSearch ?? true, // 預設啟用
+    enable_diversity_optimization: options?.enableDiversityOptimization ?? true,
+    search_type: options?.searchType || 'hybrid', // 新增：搜索類型
+    filter_conditions: options?.filterConditions
+  };
+
+  try {
+    const response = await apiClient.post<SemanticSearchResult[]>('/vector-db/semantic-search', requestPayload);
+    return response.data;
+  } catch (error) {
+    console.error('語義搜索失敗:', error);
+    throw error;
+  }
+};
+
+// 新增：簡化的兩階段混合檢索接口
+export const performHybridSearch = async (
+  query: string, 
+  topK = 10, 
+  threshold = 0.4,
+  searchType: 'hybrid' | 'summary_only' | 'chunks_only' | 'rrf_fusion' = 'hybrid'
+): Promise<SemanticSearchResult[]> => {
+  return performSemanticSearch(query, topK, threshold, undefined, {
+    enableHybridSearch: true,
+    enableDiversityOptimization: true,
+    searchType
   });
-  return response.data;
+};
+
+// 🚀 新增：RRF 融合檢索接口（終極策略）
+export const performRRFSearch = async (
+  query: string, 
+  topK = 10, 
+  threshold = 0.4
+): Promise<SemanticSearchResult[]> => {
+  return performSemanticSearch(query, topK, threshold, undefined, {
+    enableHybridSearch: true,
+    enableDiversityOptimization: true,
+    searchType: 'rrf_fusion'
+  });
+};
+
+// 新增：傳統搜索接口（向後兼容）
+export const performLegacySearch = async (
+  query: string, 
+  topK = 10, 
+  threshold = 0.7
+): Promise<SemanticSearchResult[]> => {
+  return performSemanticSearch(query, topK, threshold, undefined, {
+    enableHybridSearch: false,
+    enableDiversityOptimization: false
+  });
 };
 
 // 處理單個文檔到向量數據庫

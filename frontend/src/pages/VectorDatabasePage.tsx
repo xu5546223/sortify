@@ -639,16 +639,34 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
           />
         )}
 
-        {/* 語義搜索模態框 - 現在包裹 SemanticSearchInterface */}
+        {/* 語義搜索模態框 - 支持混合搜索 */}
         <Modal
-          title="語義搜索"
+          title={
+            <div className="flex items-center space-x-2">
+              <SearchOutlined />
+              <span>智能語義搜索</span>
+              <Tag color="blue">Two-Stage Hybrid Retrieval</Tag>
+            </div>
+          }
           open={showSearchModal}
           onCancel={() => setShowSearchModal(false)}
           footer={null}
-          width={800}
+          width={1000}
+          className="semantic-search-modal"
         >
           <SemanticSearchInterface 
-            showPCMessage={showPCMessage} 
+            showPCMessage={showPCMessage}
+            cardTitle="智能文檔搜索"
+            extraActions={
+              <Button
+                size="small"
+                icon={<InfoCircleOutlined />}
+                type="text"
+                onClick={() => showPCMessage('支持摘要向量和文本塊的兩階段混合檢索，提供更精確的搜索結果', 'info')}
+              >
+                搜索說明
+              </Button>
+            }
           />
         </Modal>
 

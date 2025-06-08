@@ -100,7 +100,7 @@ def get_documents_to_process(documents: List[Dict[str, Any]]) -> List[Dict[str, 
     # States that are considered valid to start processing from.
     triggerable_states = [
         "PENDING", 
-        "UPLOADED", 
+        "uploaded", 
         "EXTRACTION_FAILED", 
         "ANALYSIS_FAILED"
     ]

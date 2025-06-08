@@ -8,6 +8,7 @@ from pydantic import ValidationError
 import logging
 import asyncio
 
+
 from app.core.logging_utils import AppLogger, log_event, LogLevel
 from app.services.ai_cache_manager import ai_cache_manager
 from app.services.unified_ai_service_simplified import unified_ai_service_simplified, AIResponse as UnifiedAIResponse
@@ -26,8 +27,32 @@ from app.models.ai_models_simplified import (
 )
 from app.models.document_models import Document
 from app.crud.crud_documents import get_documents_by_ids
+from app.services.vector_db_service import vector_db_service
+from app.services.enhanced_search_service import enhanced_search_service
 
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
+
+def remove_projection_path_collisions(projection: dict) -> dict:
+    """
+    移除 MongoDB projection 中的父子欄位衝突，只保留最底層欄位。
+    """
+    if not projection or not isinstance(projection, dict):
+        return projection
+    keys = list(projection.keys())
+    keys_to_remove = set()
+    for k in keys:
+        for other in keys:
+            if k == other:
+                continue
+            # k 是 other 的子欄位，則移除父欄位 other
+            if k.startswith(other + "."):
+                keys_to_remove.add(other)
+            # other 是 k 的子欄位，則移除父欄位 k
+            elif other.startswith(k + "."):
+                keys_to_remove.add(k)
+    for k in keys_to_remove:
+        projection.pop(k, None)
+    return projection
 
 class EnhancedAIQAService:
     """增強的AI問答服務 - 使用統一AI管理架構和專門的緩存管理器"""
@@ -35,6 +60,11 @@ class EnhancedAIQAService:
     def __init__(self):
         # 使用專門的緩存管理器
         self.cache_manager = ai_cache_manager
+        
+        # 配置選項：是否為AIQA啟用兩階段混合檢索
+        # 設為 True 以獲得更高準確度，設為 False 保持向後兼容
+        self.enable_hybrid_search_for_aiqa = True
+        
         logger.info("EnhancedAIQAService 初始化完成，使用專門的 AI 緩存管理器")
     
 # 注意：_get_or_create_schema_cache 和 _get_or_create_system_instruction_cache 方法
@@ -50,6 +80,7 @@ class EnhancedAIQAService:
         """
         處理AI問答請求的主要流程 - 支持用戶認證
         """
+        user_id_str = str(user_id) if user_id else None
         start_time = time.time()
         total_tokens = 0
         detailed_document_data: Optional[List[Dict[str, Any]]] = None
@@ -65,29 +96,87 @@ class EnhancedAIQAService:
         }
         await log_event(db=db, level=LogLevel.INFO,
                         message="Enhanced AI QA request received.",
-                        source="service.enhanced_ai_qa.request", user_id=str(user_id) if user_id else None, request_id=request_id,
+                        source="service.enhanced_ai_qa.request", user_id=user_id_str, request_id=request_id,
                         details=log_details_initial)
 
         query_rewrite_result: Optional[QueryRewriteResult] = None
         semantic_contexts_for_response: List[SemanticContextDocument] = []
 
         try:
-            query_rewrite_result, rewrite_tokens = await self._rewrite_query_unified(
-                db, request.question, user_id, request_id, 
-                query_rewrite_count=getattr(request, 'query_rewrite_count', 3)
+            # === 新的智能觸發流程：基於探針搜索的真實相似度分數 ===
+            confidence_threshold = 0.75  # 可調超參數 (從 0.85 降低)
+
+            # 第一步：探針搜索 (Probe Search) - 僅對文檔摘要進行快速向量搜索
+            logger.info(f"🔬 智能觸發 - 步驟1: 執行探針搜索 (門檻: {confidence_threshold})")
+            probe_results = await self._perform_probe_search(
+                db, 
+                original_query=request.question, 
+                top_k=getattr(request, 'max_documents_for_selection', request.context_limit),
+                user_id=user_id_str, 
+                request_id=request_id,
+                similarity_threshold=0.3, # 降低探針搜索閾值以獲得更多結果
+                document_ids=request.document_ids
             )
-            total_tokens += rewrite_tokens
+
+            # 第二步：智能觸發決策
+            use_full_rewrite_flow = True
+            top_probe_score = 0.0
             
-            semantic_results_raw = await self._semantic_search(
-                db,
-                query_rewrite_result.rewritten_queries if query_rewrite_result.rewritten_queries else [request.question],
-                getattr(request, 'max_documents_for_selection', request.context_limit),  # 使用候選文件數量
-                user_id,
-                request_id,
-                query_rewrite_result=query_rewrite_result,
-                similarity_threshold=getattr(request, 'similarity_threshold', 0.3),  # 使用相似度閾值
-                enable_query_expansion=getattr(request, 'enable_query_expansion', True)  # 使用查詢擴展設定
-            )
+            if probe_results:
+                top_probe_score = probe_results[0].similarity_score
+                logger.info(f"探針搜索最高分 (raw similarity): {top_probe_score:.4f}")
+                
+                # IF probe_similarity_score > 0.85
+                if top_probe_score > confidence_threshold:
+                    use_full_rewrite_flow = False
+                    logger.info(f"✅ 置信度足夠 ({top_probe_score:.4f} > {confidence_threshold})，跳過AI重寫和RRF，直接使用探針結果。")
+                else:
+                    logger.info(f"🔄 置信度不足 ({top_probe_score:.4f} <= {confidence_threshold})，觸發完整AI查詢重寫和RRF融合流程。")
+            else:
+                logger.info("探針搜索無結果，觸發完整AI查詢重寫和RRF融合流程。")
+            
+            # 第三步：根據決策執行相應流程
+            if use_full_rewrite_flow:
+                # ELSE (probe_similarity_score <= 0.85) -> Trigger full flow
+                logger.info("智能觸發 - 步驟2: 執行完整優化流程 (AI重寫 + RRF檢索)")
+                await log_event(db=db, level=LogLevel.INFO,
+                                message=f"智能觸發：執行AI重寫和RRF (探針分數: {top_probe_score:.4f})",
+                                source="service.enhanced_ai_qa.smart_trigger_full_flow",
+                                user_id=user_id_str, request_id=request_id,
+                                details={"probe_score": top_probe_score, "confidence_threshold": confidence_threshold, "decision": "TRIGGER_FULL_FLOW"})
+                
+                query_rewrite_result, rewrite_tokens = await self._rewrite_query_unified(
+                    db, request.question, user_id_str, request_id, 
+                    query_rewrite_count=getattr(request, 'query_rewrite_count', 3)
+                )
+                total_tokens += rewrite_tokens
+                
+                # 使用重寫查詢進行優化檢索 (RRF)
+                semantic_results_raw = await self._perform_optimized_search_direct(
+                    db, query_rewrite_result.rewritten_queries if query_rewrite_result.rewritten_queries else [request.question],
+                    getattr(request, 'max_documents_for_selection', request.context_limit),
+                    user_id_str, request_id, query_rewrite_result,
+                    getattr(request, 'similarity_threshold', 0.3),
+                    getattr(request, 'enable_query_expansion', True)
+                )
+            else:
+                # IF probe_similarity_score > 0.85 -> Skip full flow, use probe results
+                logger.info("智能觸發 - 步驟2: 跳過完整優化流程，直接使用探針結果")
+                await log_event(db=db, level=LogLevel.INFO,
+                                message=f"智能觸發：跳過AI重寫和RRF (探針分數: {top_probe_score:.4f})",
+                                source="service.enhanced_ai_qa.smart_trigger_probe_skip",
+                                user_id=user_id_str, request_id=request_id,
+                                details={"probe_score": top_probe_score, "confidence_threshold": confidence_threshold, "decision": "SKIP_FULL_FLOW", "cost_saving": "YES"})
+                
+                # 創建一個簡單的查詢重寫結果以保持兼容性
+                query_rewrite_result = QueryRewriteResult(
+                    original_query=request.question,
+                    rewritten_queries=[request.question],
+                    extracted_parameters={},
+                    intent_analysis="智能觸發跳過重寫，使用探針搜索結果"
+                )
+                semantic_results_raw = probe_results
+                document_ids = []
 
             if semantic_results_raw:
                 for res in semantic_results_raw:
@@ -122,7 +211,7 @@ class EnhancedAIQAService:
             full_documents = await get_documents_by_ids(db, document_ids)
             
             if user_id:
-                full_documents = await self._filter_accessible_documents(db, full_documents, str(user_id), request_id)
+                full_documents = await self._filter_accessible_documents(db, full_documents, user_id_str, request_id)
             
             if not full_documents:
                 logger.warning("用戶無權限訪問相關文檔或獲取文檔內容失敗")
@@ -145,7 +234,7 @@ class EnhancedAIQAService:
                 # Stage 1: AI 智慧篩選最佳文件（使用用戶設定的參數）
                 selected_doc_ids_for_detail = await self._select_documents_for_detailed_query(
                     db, request.question, semantic_contexts_for_response, 
-                    str(user_id) if user_id else None, request_id,
+                    user_id_str, request_id,
                     ai_selection_limit=getattr(request, 'ai_selection_limit', 3),
                     similarity_threshold=getattr(request, 'similarity_threshold', 0.3)
                 )
@@ -215,7 +304,7 @@ class EnhancedAIQAService:
                                 document_schema_info=document_schema_info,
                                 db=db,
                                 model_preference=request.model_preference,
-                                user_id=str(user_id) if user_id else None,
+                                user_id=user_id_str,
                                 session_id=request.session_id
                             )
 
@@ -233,7 +322,8 @@ class EnhancedAIQAService:
                                 if mongo_projection or query_components.sub_filter:
                                     # 嘗試 AI 生成的詳細查詢
                                     logger.debug(f"執行AI查詢 - Filter: {mongo_filter}, Projection: {mongo_projection}")
-                                    fetched_data = await db.documents.find_one(mongo_filter, projection=mongo_projection or None)
+                                    safe_projection = remove_projection_path_collisions(mongo_projection) if mongo_projection else None
+                                    fetched_data = await db.documents.find_one(mongo_filter, projection=safe_projection)
                                     
                                     if fetched_data:
                                         def sanitize(data: Any) -> Any:
@@ -255,8 +345,8 @@ class EnhancedAIQAService:
                                             "analysis.ai_analysis_output.key_information.semantic_tags": 1,
                                             "analysis.ai_analysis_output.key_information.key_concepts": 1
                                         }
-                                        
-                                        fallback_data = await db.documents.find_one(fallback_filter, projection=fallback_projection)
+                                        safe_fallback_projection = remove_projection_path_collisions(fallback_projection)
+                                        fallback_data = await db.documents.find_one(fallback_filter, projection=safe_fallback_projection)
                                         if fallback_data:
                                             def sanitize(data: Any) -> Any:
                                                 if isinstance(data, dict): return {k: sanitize(v) for k, v in data.items()}
@@ -287,7 +377,7 @@ class EnhancedAIQAService:
                 query_rewrite_result,
                 detailed_document_data, # Pass the list of detailed data
                 ai_generated_query_reasoning,
-                user_id,
+                user_id_str,
                 request_id,
                 request.model_preference,
                 ensure_chinese_output=getattr(request, 'ensure_chinese_output', None),
@@ -318,7 +408,7 @@ class EnhancedAIQAService:
             processing_time_on_error = time.time() - start_time
             error_trace = traceback.format_exc()
             await log_event(db=db, level=LogLevel.ERROR, message=f"Enhanced AI QA failed: {str(e)}",
-                            source="service.enhanced_ai_qa.process_request_error", user_id=str(user_id) if user_id else None, request_id=request_id,
+                            source="service.enhanced_ai_qa.process_request_error", user_id=user_id_str, request_id=request_id,
                             details={"error": str(e), "error_type": type(e).__name__, "traceback": error_trace, **log_details_initial})
             
             current_total_tokens = total_tokens if isinstance(total_tokens, int) else 0
@@ -363,20 +453,20 @@ class EnhancedAIQAService:
         if not semantic_contexts:
             return []
 
-        # 第一步：根據相似度分數進行初步篩選和去重
-        # 去除相似度過低的文件（<0.3），並按文件ID去重
+        # 第一步：根據分數進行去重
+        # RRF融合搜索的結果已經過排序和初步篩選，此處主要進行去重
         filtered_contexts = {}
         
         for ctx in semantic_contexts:
-            # 相似度篩選
-            if ctx.similarity_score < similarity_threshold:
-                continue
+            # 相似度篩選 - 由於RRF分數與相似度閾值不可比，移除此過濾
+            # if ctx.similarity_score < similarity_threshold:
+            #     continue
                 
-            # 去重：如果同一個文件有多個片段，選擇相似度最高的
+            # 去重：如果同一個文件有多個片段，選擇相似度（或RRF分數）最高的
             if ctx.document_id not in filtered_contexts or ctx.similarity_score > filtered_contexts[ctx.document_id].similarity_score:
                 filtered_contexts[ctx.document_id] = ctx
         
-        # 按相似度排序
+        # 按分數排序（RRF分數越高越好）
         unique_contexts = sorted(filtered_contexts.values(), key=lambda x: x.similarity_score, reverse=True)
         
         # 第二步：動態決定要提供給AI的候選數量
@@ -457,12 +547,209 @@ class EnhancedAIQAService:
             return QueryRewriteResult(original_query=original_query, rewritten_queries=output.rewritten_queries, extracted_parameters=output.extracted_parameters, intent_analysis=output.intent_analysis), tokens
         return QueryRewriteResult(original_query=original_query, rewritten_queries=[original_query], extracted_parameters={}, intent_analysis="Query rewrite failed."), tokens
 
-    async def _semantic_search(self, db: AsyncIOMotorDatabase, queries: List[str], top_k: int, user_id: Optional[str], request_id: Optional[str], query_rewrite_result: Optional[QueryRewriteResult], similarity_threshold: float, enable_query_expansion: bool) -> List[SemanticSearchResult]:
+    async def _perform_probe_search(
+        self,
+        db: AsyncIOMotorDatabase,
+        original_query: str,
+        top_k: int,
+        user_id: Optional[str],
+        request_id: Optional[str],
+        similarity_threshold: float,
+        document_ids: Optional[List[str]] = None,
+        force_semantic: bool = False
+    ) -> List[SemanticSearchResult]:
+        """執行探針搜索 - 直接複用 enhanced_search_service 的 summary_only 查詢邏輯，確保與前端/評估一致"""
+        logger.info(f"🔬 探針查詢參數 user_id={user_id}, top_k={top_k}, similarity_threshold={similarity_threshold}, search_type=summary_only")
+        try:
+            results = await enhanced_search_service.two_stage_hybrid_search(
+                db=db,
+                query=original_query,
+                user_id=user_id,  # 修正：傳遞正確的 user_id
+                search_type="summary_only",
+                stage2_top_k=top_k,
+                similarity_threshold=similarity_threshold
+            )
+            logger.info(f"🔬 探針查詢回傳 {len(results)} 筆摘要結果")
+            if results and len(results) > 0:
+                logger.debug(f"🔬 第一筆摘要: doc_id={results[0].document_id}, score={results[0].similarity_score}, summary={results[0].summary_text[:50]}")
+            return results
+        except Exception as e:
+            logger.error(f"探針摘要查詢 (enhanced_search_service) 失敗: {str(e)}", exc_info=True)
+            await log_event(db=db, level=LogLevel.ERROR, message=f"Probe summary search (enhanced_search_service) failed: {e}",
+                            source="service.enhanced_ai_qa.probe_search_enhanced", user_id=user_id, request_id=request_id)
+            return []
+
+    async def _perform_optimized_search_direct(
+        self,
+        db: AsyncIOMotorDatabase,
+        queries: List[str],
+        top_k: int,
+        user_id: Optional[str],
+        request_id: Optional[str],
+        query_rewrite_result: Optional[QueryRewriteResult],
+        similarity_threshold: float,
+        enable_query_expansion: bool
+    ) -> List[SemanticSearchResult]:
+        """直接執行優化檢索 - 使用重寫查詢進行檢索"""
+        
+        if self.enable_hybrid_search_for_aiqa:
+            logger.info(f"執行兩階段混合檢索優化，查詢數量: {len(queries)}")
+            return await self._semantic_search_with_hybrid_retrieval(
+                db, queries, top_k, user_id, request_id, query_rewrite_result, 
+                similarity_threshold, enable_query_expansion
+            )
+        else:
+            logger.info(f"執行傳統檢索優化，查詢數量: {len(queries)}")
+            return await self._semantic_search_legacy(
+                db, queries, top_k, user_id, request_id, query_rewrite_result, 
+                similarity_threshold, enable_query_expansion
+            )
+    
+    async def _semantic_search_with_hybrid_retrieval(
+        self, 
+        db: AsyncIOMotorDatabase, 
+        queries: List[str], 
+        top_k: int, 
+        user_id: Optional[Any], 
+        request_id: Optional[str], 
+        query_rewrite_result: Optional[QueryRewriteResult], 
+        similarity_threshold: float, 
+        enable_query_expansion: bool
+    ) -> List[SemanticSearchResult]:
+        """使用兩階段混合檢索進行語義搜索 - 為AIQA優化"""
+        
+        # 為了日誌和服務調用，確保 user_id 是字串
+        user_id_str = str(user_id) if user_id else None
+
+        try:
+            # 導入兩階段搜索服務
+            from app.services.enhanced_search_service import enhanced_search_service
+            
+            all_results_map: Dict[str, SemanticSearchResult] = {}
+            
+            # 應用查詢類型權重 (保持AIQA原有的優化邏輯)
+            query_type_weights = {
+                0: 1.3,  # 類型A：自然語言摘要風格 - 最高權重
+                1: 1.1,  # 類型B：關鍵詞密集查詢 - 中等權重
+                2: 1.0   # 類型C：領域專業查詢 - 標準權重
+            }
+            
+            # 為每個重寫查詢執行兩階段搜索
+            for i, query in enumerate(queries):
+                logger.debug(f"執行第 {i+1}/{len(queries)} 個查詢的 RRF 融合搜索: {query[:50]}...")
+                
+                # 執行 RRF 融合搜索
+                stage_results = await enhanced_search_service.two_stage_hybrid_search(
+                    db=db,
+                    query=query,
+                    user_id=user_id_str,  # 強制使用字串
+                    search_type="rrf_fusion",  # 強制使用 RRF 融合搜索
+                    stage1_top_k=min(top_k * 2, 15),  # RRF內部會使用此參數作為候選數
+                    stage2_top_k=top_k,
+                    similarity_threshold=similarity_threshold * 0.8  # 保持AIQA原有的閾值策略
+                )
+                
+                # 應用查詢權重和結果融合 (保持AIQA原有邏輯)
+                query_weight = query_type_weights.get(i, 1.0)
+                
+                for result in stage_results:
+                    # 計算加權相似度分數
+                    weighted_score = result.similarity_score * query_weight
+                    
+                    # 融合多查詢結果
+                    if result.document_id not in all_results_map:
+                        # 創建新結果
+                        all_results_map[result.document_id] = SemanticSearchResult(
+                            document_id=result.document_id,
+                            similarity_score=weighted_score,
+                            summary_text=result.summary_text,
+                            metadata=result.metadata
+                        )
+                    else:
+                        # 已存在的文檔，取最高分數
+                        if weighted_score > all_results_map[result.document_id].similarity_score:
+                            all_results_map[result.document_id].similarity_score = weighted_score
+                            # 可能需要更新摘要文本為更相關的版本
+                            all_results_map[result.document_id].summary_text = result.summary_text
+                
+                logger.debug(f"查詢 {i+1} 完成，本次找到 {len(stage_results)} 個結果")
+            
+            # 最終結果排序和多樣性優化 (保持AIQA原有邏輯)
+            final_results = list(all_results_map.values())
+            final_results.sort(key=lambda x: x.similarity_score, reverse=True)
+            
+            # 多樣性優化
+            if len(final_results) > top_k:
+                diversified_results = []
+                seen_summary_keywords = set()
+                
+                for result in final_results:
+                    summary_words = set(result.summary_text.lower().split()[:10])
+                    overlap = len(summary_words.intersection(seen_summary_keywords))
+                    
+                    if overlap < 5 or len(diversified_results) < max(3, top_k // 2):
+                        diversified_results.append(result)
+                        seen_summary_keywords.update(summary_words)
+                        
+                        if len(diversified_results) >= top_k:
+                            break
+                
+                final_results = diversified_results
+            
+            # 最終閾值過濾 - RRF分數與相似度閾值不可比，故移除此過濾
+            # final_results = [r for r in final_results if r.similarity_score >= similarity_threshold]
+            result_list = final_results[:top_k]
+            
+            logger.info(f"AIQA兩階段混合檢索完成: {len(queries)} 個查詢 → {len(result_list)} 個最終結果 (已移除不適用的RRF分數閾值過濾)")
+            
+            await log_event(db=db, level=LogLevel.INFO,
+                            message=f"AIQA兩階段混合檢索完成: {len(result_list)} 個結果",
+                            source="service.enhanced_ai_qa.semantic_search_hybrid",
+                            user_id=user_id_str, request_id=request_id,
+                            details={
+                                "query_count": len(queries),
+                                "final_results": len(result_list),
+                                "search_strategy": "two_stage_hybrid",
+                                "diversity_optimization": len(final_results) != len(list(all_results_map.values()))
+                            })
+            
+            return result_list
+            
+        except Exception as e:
+            logger.error(f"AIQA兩階段混合檢索失敗，回退到傳統搜索: {str(e)}", exc_info=True)
+            await log_event(db=db, level=LogLevel.WARNING,
+                            message=f"AIQA兩階段混合檢索失敗，回退到傳統搜索: {str(e)}",
+                            source="service.enhanced_ai_qa.semantic_search_hybrid_fallback",
+                            user_id=user_id_str, request_id=request_id,
+                            details={"error": str(e)})
+            
+            # 回退到傳統搜索
+            return await self._semantic_search_legacy(
+                db, queries, top_k, user_id_str, request_id, query_rewrite_result, 
+                similarity_threshold, enable_query_expansion
+            )
+    
+    async def _semantic_search_legacy(
+        self, 
+        db: AsyncIOMotorDatabase, 
+        queries: List[str], 
+        top_k: int, 
+        user_id: Optional[str], 
+        request_id: Optional[str], 
+        query_rewrite_result: Optional[QueryRewriteResult], 
+        similarity_threshold: float, 
+        enable_query_expansion: bool
+    ) -> List[SemanticSearchResult]:
+        """傳統單階段語義搜索 - 保持原有AIQA邏輯"""
+        
         all_results_map: Dict[str, SemanticSearchResult] = {}
+        
+        # 改進的元數據過濾
         chroma_metadata_filter: Dict[str, Any] = {}
         if query_rewrite_result and query_rewrite_result.extracted_parameters:
             file_type = query_rewrite_result.extracted_parameters.get("file_type") or (query_rewrite_result.extracted_parameters.get("document_types", [])[0] if query_rewrite_result.extracted_parameters.get("document_types") else None)
-            if file_type: chroma_metadata_filter["file_type"] = file_type
+            if file_type: 
+                chroma_metadata_filter["file_type"] = file_type
 
         # 使用緩存管理器處理查詢向量緩存
         uncached_queries = [q for q in queries if self.cache_manager.get_query_embedding(q) is None]
@@ -471,19 +758,28 @@ class EnhancedAIQAService:
             self.cache_manager.batch_set_query_embeddings(uncached_queries, query_vectors)
         
         try:
-            owner_id_filter_for_vector_db = user_id
-            if isinstance(owner_id_filter_for_vector_db, uuid.UUID):
-                owner_id_filter_for_vector_db = str(owner_id_filter_for_vector_db)
+            owner_id_filter_for_vector_db = user_id if user_id else None
+
+            # 新增：多策略檢索與融合 - 調整權重以匹配新的查詢重寫策略
+            query_type_weights = {
+                0: 1.3,  # 類型A：自然語言摘要風格 - 最高權重，因為最匹配向量化文本的第一行
+                1: 1.1,  # 類型B：關鍵詞密集查詢 - 中等權重，匹配關鍵詞行
+                2: 1.0   # 類型C：領域專業查詢 - 標準權重，匹配專業領域行
+            }
 
             for i, q_item in enumerate(queries):
                 query_vector = self.cache_manager.get_query_embedding(q_item)
                 if query_vector:
+                    # 根據查詢類型調整 top_k，確保多樣性
+                    adjusted_top_k = min(top_k * 2, 20) if len(queries) > 1 else top_k
+                    
                     # 嘗試帶過濾條件的搜索
                     results = vector_db_service.search_similar_vectors(
                         query_vector=query_vector, 
-                        top_k=top_k, 
+                        top_k=adjusted_top_k, 
                         owner_id_filter=owner_id_filter_for_vector_db, 
-                        metadata_filter=chroma_metadata_filter
+                        metadata_filter=chroma_metadata_filter,
+                        similarity_threshold=similarity_threshold * 0.8  # 略微降低閾值以獲得更多候選
                     )
                     
                     # 如果帶過濾條件的搜索沒有結果，且有 metadata_filter，則嘗試不帶 metadata_filter 的搜索
@@ -491,31 +787,71 @@ class EnhancedAIQAService:
                         logger.warning(f"帶 metadata_filter 的搜索沒有結果，嘗試回退搜索。Filter: {chroma_metadata_filter}")
                         results = vector_db_service.search_similar_vectors(
                             query_vector=query_vector, 
-                            top_k=top_k, 
+                            top_k=adjusted_top_k, 
                             owner_id_filter=owner_id_filter_for_vector_db, 
-                            metadata_filter=None  # 回退：移除 metadata_filter
+                            metadata_filter=None,  # 回退：移除 metadata_filter
+                            similarity_threshold=similarity_threshold * 0.8
                         )
                         if results:
                             logger.info(f"回退搜索成功找到 {len(results)} 個結果")
                     
+                    # 應用查詢類型權重和重排序
+                    query_weight = query_type_weights.get(i, 1.0)
                     for res in results:
-                        if res.document_id not in all_results_map or res.similarity_score > all_results_map[res.document_id].similarity_score:
-                            all_results_map[res.document_id] = res
-        
+                        # 計算加權相似度分數
+                        weighted_score = res.similarity_score * query_weight
+                        
+                        # 如果是新文檔或分數更高，則更新
+                        if res.document_id not in all_results_map:
+                            # 創建新結果，調整分數
+                            new_result = SemanticSearchResult(
+                                document_id=res.document_id,
+                                similarity_score=weighted_score,
+                                summary_text=res.summary_text,
+                                metadata=res.metadata
+                            )
+                            all_results_map[res.document_id] = new_result
+                        else:
+                            # 已存在的文檔，取最高分數
+                            if weighted_score > all_results_map[res.document_id].similarity_score:
+                                all_results_map[res.document_id].similarity_score = weighted_score
+
+            # 重排序和多樣性優化
+            final_results = list(all_results_map.values())
+            
+            # 首先按分數排序
+            final_results.sort(key=lambda x: x.similarity_score, reverse=True)
+            
+            # 多樣性優化：確保不同類型的文檔都有機會被選中
+            if len(final_results) > top_k:
+                # 簡單的多樣性算法：確保前 top_k 個結果在內容上有差異
+                diversified_results = []
+                seen_summary_keywords = set()
+                
+                for result in final_results:
+                    # 提取摘要的關鍵詞進行去重判斷
+                    summary_words = set(result.summary_text.lower().split()[:10])  # 取前10個詞
+                    overlap = len(summary_words.intersection(seen_summary_keywords))
+                    
+                    # 如果重疊度不高，或者還沒有足夠的結果，則加入
+                    if overlap < 5 or len(diversified_results) < max(3, top_k // 2):
+                        diversified_results.append(result)
+                        seen_summary_keywords.update(summary_words)
+                        
+                        if len(diversified_results) >= top_k:
+                            break
+                
+                final_results = diversified_results
+            
+            # 最終過濾：確保分數不低於調整後的閾值
+            final_threshold = similarity_threshold
+            final_results = [r for r in final_results if r.similarity_score >= final_threshold]
+            
+            return final_results[:top_k]
+            
         except Exception as e:
-            await log_event(
-                db=db,
-                level=LogLevel.ERROR,
-                message=f"Unexpected error in _semantic_search: {str(e)}",
-                source="service.enhanced_ai_qa._semantic_search",
-                user_id=str(user_id) if user_id else None,
-                request_id=request_id,
-                details={"error_type": type(e).__name__, "error": str(e)}
-            )
+            logger.error(f"語義搜索過程中發生異常: {e}", exc_info=True)
             return []
-        
-        combined = sorted(all_results_map.values(), key=lambda r: r.similarity_score, reverse=True)
-        return combined
 
     async def _t2q_filter(self, db: AsyncIOMotorDatabase, document_ids: List[str], extracted_parameters: Dict[str, Any], user_id: Optional[str], request_id: Optional[str]) -> List[str]:
         # This function is no longer called in the main flow but is kept for potential future use.
@@ -533,7 +869,7 @@ class EnhancedAIQAService:
             "has_detailed_document_data": bool(detailed_document_data)
         }
         await log_event(db=db, level=LogLevel.DEBUG, message="Assembling context for AI answer generation.",
-                        source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details_context)
+                        source="service.enhanced_ai_qa.generate_answer_internal", user_id=user_id, request_id=request_id, details=log_details_context)
 
         try:
             # === 聚焦上下文邏輯：優先使用詳細資料，提升準確性並降低 Token 消耗 ===
@@ -603,7 +939,7 @@ class EnhancedAIQAService:
             query_for_answer_gen = query_rewrite_result.rewritten_queries[0] if query_rewrite_result.rewritten_queries else original_query
 
             log_details_ai_call = {"query_for_answer_gen_length": len(query_for_answer_gen), "num_docs_in_final_context": len(actual_contexts_for_llm), "total_context_length": len("\n\n".join(context_parts)), "model_preference": model_preference}
-            await log_event(db=db, level=LogLevel.DEBUG, message="Calling AI for answer generation.", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details=log_details_ai_call)
+            await log_event(db=db, level=LogLevel.DEBUG, message="Calling AI for answer generation.", source="service.enhanced_ai_qa.generate_answer_internal", user_id=user_id, request_id=request_id, details=log_details_ai_call)
             
             ai_response: UnifiedAIResponse = await unified_ai_service_simplified.generate_answer(
                 user_question=query_for_answer_gen,
@@ -627,16 +963,16 @@ class EnhancedAIQAService:
                     answer_text = f"Error: AI returned unexpected answer format: {type(ai_response.output_data).__name__}."
                 
                 confidence = min(0.9, 0.3 + (len(actual_contexts_for_llm) * 0.1) + (0.1 if not answer_text.lower().startswith("error") else -0.2))
-                await log_event(db=db, level=LogLevel.INFO, message="AI answer generation successful.", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details={"model_used": ai_response.model_used, "response_length": len(answer_text), "tokens": tokens_used, "confidence": confidence})
+                await log_event(db=db, level=LogLevel.INFO, message="AI answer generation successful.", source="service.enhanced_ai_qa.generate_answer_internal", user_id=user_id, request_id=request_id, details={"model_used": ai_response.model_used, "response_length": len(answer_text), "tokens": tokens_used, "confidence": confidence})
             else:
                 error_msg = ai_response.error_message or "AI failed to generate answer."
-                await log_event(db=db, level=LogLevel.ERROR, message=f"AI answer generation failed: {error_msg}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details={**log_details_ai_call, "error": error_msg})
+                await log_event(db=db, level=LogLevel.ERROR, message=f"AI answer generation failed: {error_msg}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=user_id, request_id=request_id, details={**log_details_ai_call, "error": error_msg})
                 answer_text = f"Sorry, I couldn't generate an answer: {error_msg}"
 
             return answer_text, tokens_used, confidence, actual_contexts_for_llm
             
         except Exception as e:
-            await log_event(db=db, level=LogLevel.ERROR, message=f"Unexpected error in _generate_answer_unified: {str(e)}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=str(user_id) if user_id else None, request_id=request_id, details={"error_type": type(e).__name__})
+            await log_event(db=db, level=LogLevel.ERROR, message=f"Unexpected error in _generate_answer_unified: {str(e)}", source="service.enhanced_ai_qa.generate_answer_internal", user_id=user_id, request_id=request_id, details={"error_type": type(e).__name__})
             return f"An internal error occurred while generating the answer: {str(e)}", 0, 0.0, actual_contexts_for_llm
 
     async def _optimize_field_selection(
@@ -689,7 +1025,7 @@ class EnhancedAIQAService:
             if any(keyword in question_lower for keyword in ["待辦", "任務", "action", "todo"]):
                 selected_fields.update(field_mapping["action"])
                 
-            if any(keyword in question_lower for keyword in ["內容", "文字", "content", "text"]):
+            if any(keyword in question_lower for keyword in ["內容", "文字", "content", "text", "具體", "詳細", "細節", "技術", "實現", "方式", "機制", "流程", "步驟"]):
                 selected_fields.update(field_mapping["content"])
                 
             if any(keyword in question_lower for keyword in ["檔名", "類型", "metadata", "file"]):
@@ -699,11 +1035,14 @@ class EnhancedAIQAService:
             if any(char.isupper() for char in user_question) or "誰" in question_lower or "who" in question_lower:
                 selected_fields.update(field_mapping["dynamic"])
             
-            # 如果沒有明確匹配，使用保守策略（包含更多欄位）
+            # 如果沒有明確匹配，使用平衡策略
             if len(selected_fields) <= 2:
                 selected_fields.update(field_mapping["summary"])
                 selected_fields.update(field_mapping["topic"])
                 selected_fields.update(field_mapping["dynamic"])
+                # 對於複雜問題，也包含部分原始內容
+                if any(complex_keyword in question_lower for complex_keyword in ["如何", "為什麼", "機制", "原理", "流程", "架構"]):
+                    selected_fields.update(field_mapping["content"])
             
             # 建構 MongoDB projection
             projection = {field: 1 for field in selected_fields}
@@ -815,7 +1154,8 @@ class EnhancedAIQAService:
                     try:
                         # 使用優化的 projection 查詢文檔
                         mongo_filter = {"_id": doc.id}
-                        fetched_data = await db.documents.find_one(mongo_filter, projection=optimized_projection)
+                        safe_projection = remove_projection_path_collisions(optimized_projection)
+                        fetched_data = await db.documents.find_one(mongo_filter, projection=safe_projection)
                         
                         if fetched_data:
                             # 資料清理
