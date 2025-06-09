@@ -114,7 +114,7 @@ async def process_data():
     1. RAG evaluation dataset (with filename that exists in database) - ragas格式
     2. QA evaluation dataset (ALL data, regardless of filename) - 標準格式
     """
-    input_filepath = "datasets2.json"
+    input_filepath = "QAdataset.json"
     rag_output_filepath = "evaluation/processed_rag_dataset.json"
     qa_output_filepath = "evaluation/processed_qa_dataset.json"
     

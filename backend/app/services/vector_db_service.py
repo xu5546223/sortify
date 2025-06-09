@@ -417,5 +417,52 @@ class VectorDatabaseService:
         except Exception as e:
             logger.error(f"關閉ChromaDB連接失敗: {e}")
 
+    def get_all_chunks_by_doc_id(self, owner_id: str, document_id: str) -> List[Dict[str, Any]]:
+        """
+        直接按文檔ID獲取其所有相關的向量塊（文本和摘要）。
+        使用ChromaDB的 'where' 過濾器進行高效查詢。
+        """
+        if not self.collection:
+            logger.warning("集合未初始化，無法按文檔ID獲取塊")
+            return []
+        
+        try:
+            results = self.collection.get(
+                where={
+                    "$and": [
+                        {"document_id": {"$eq": document_id}},
+                        {"owner_id": {"$eq": owner_id}}
+                    ]
+                },
+                include=["metadatas", "documents"]
+            )
+            
+            if not results or not results.get("ids"):
+                return []
+            
+            # 將ChromaDB的返回格式轉換為我們API期望的格式
+            formatted_results = []
+            for i, vector_id in enumerate(results["ids"]):
+                metadata = results["metadatas"][i]
+                page_content = results["documents"][i]
+                formatted_results.append({
+                    "id": vector_id,
+                    "payload": {
+                        "page_content": page_content,
+                        "metadata": metadata,
+                    },
+                    "metadata": metadata,
+                    "document_id": metadata.get("document_id"),
+                    "chunk_type": metadata.get("chunk_type"),
+                    "page_number": metadata.get("page_number"),
+                    # 修正：符合 SemanticSearchResult 模型
+                    "summary_text": page_content,
+                    "similarity_score": 1.0  # 直接獲取，相似度設為1.0
+                })
+            return formatted_results
+        except Exception as e:
+            logger.error(f"按文檔ID {document_id} 獲取塊時出錯: {e}")
+            return []
+
 # 全局向量資料庫服務實例
 vector_db_service = VectorDatabaseService() 

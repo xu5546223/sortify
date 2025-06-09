@@ -363,12 +363,16 @@ export interface SemanticSearchRequest {
   filter_conditions?: Record<string, any>;
   collection_name?: string;
   
-  // 新增：兩階段混合檢索配置
+  // 兩階段混合檢索配置
   enable_hybrid_search?: boolean;
   enable_diversity_optimization?: boolean;
   search_type?: 'hybrid' | 'summary_only' | 'chunks_only' | 'legacy' | 'rrf_fusion';
   query_expansion_factor?: number;
   rerank_top_k?: number;
+  
+  // RRF 融合檢索權重配置
+  rrf_weights?: Record<string, number>;
+  rrf_k_constant?: number;
 }
 
 export interface SemanticSearchResult {

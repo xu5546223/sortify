@@ -7,3 +7,5 @@ langchain-google-genai
 langchain-openai
 pandas
 numpy
+aiohttp
+google-generativeai

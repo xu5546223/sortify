@@ -103,47 +103,47 @@ class EnhancedAIQAService:
         semantic_contexts_for_response: List[SemanticContextDocument] = []
 
         try:
-            # === 新的智能觸發流程：基於探針搜索的真實相似度分數 ===
-            confidence_threshold = 0.75  # 可調超參數 (從 0.85 降低)
+            # === 智能觸發流程：基於傳統單階段搜索的真實相似度分數 ===
+            # 根據實驗數據，傳統單階段搜索（摘要+文本片段）效果最好，我們將其作為第一道防線。
+            confidence_threshold = 0.75  # 可調超參數
 
-            # 第一步：探針搜索 (Probe Search) - 僅對文檔摘要進行快速向量搜索
-            logger.info(f"🔬 智能觸發 - 步驟1: 執行探針搜索 (門檻: {confidence_threshold})")
-            probe_results = await self._perform_probe_search(
+            # 第一步：執行傳統單階段搜索 (Traditional Single-Stage Search)
+            logger.info(f"🔬 智能觸發 - 步驟 1: 執行傳統單階段搜索 (門檻: {confidence_threshold})")
+            initial_search_results = await self._perform_traditional_single_stage_search(
                 db, 
                 original_query=request.question, 
                 top_k=getattr(request, 'max_documents_for_selection', request.context_limit),
                 user_id=user_id_str, 
                 request_id=request_id,
-                similarity_threshold=0.3, # 降低探針搜索閾值以獲得更多結果
+                similarity_threshold=0.3, # 初始搜索的閾值可以寬鬆一些
                 document_ids=request.document_ids
             )
 
             # 第二步：智能觸發決策
             use_full_rewrite_flow = True
-            top_probe_score = 0.0
+            top_initial_score = 0.0
             
-            if probe_results:
-                top_probe_score = probe_results[0].similarity_score
-                logger.info(f"探針搜索最高分 (raw similarity): {top_probe_score:.4f}")
+            if initial_search_results:
+                top_initial_score = initial_search_results[0].similarity_score
+                logger.info(f"傳統單階段搜索最高分 (raw similarity): {top_initial_score:.4f}")
                 
-                # IF probe_similarity_score > 0.85
-                if top_probe_score > confidence_threshold:
+                if top_initial_score > confidence_threshold:
                     use_full_rewrite_flow = False
-                    logger.info(f"✅ 置信度足夠 ({top_probe_score:.4f} > {confidence_threshold})，跳過AI重寫和RRF，直接使用探針結果。")
+                    logger.info(f"✅ 置信度足夠 ({top_initial_score:.4f} > {confidence_threshold})，跳過AI重寫和RRF，直接使用初始搜索結果。")
                 else:
-                    logger.info(f"🔄 置信度不足 ({top_probe_score:.4f} <= {confidence_threshold})，觸發完整AI查詢重寫和RRF融合流程。")
+                    logger.info(f"🔄 置信度不足 ({top_initial_score:.4f} <= {confidence_threshold})，觸發完整AI查詢重寫和RRF融合流程。")
             else:
-                logger.info("探針搜索無結果，觸發完整AI查詢重寫和RRF融合流程。")
+                logger.info("初始搜索無結果，觸發完整AI查詢重寫和RRF融合流程。")
             
             # 第三步：根據決策執行相應流程
             if use_full_rewrite_flow:
-                # ELSE (probe_similarity_score <= 0.85) -> Trigger full flow
-                logger.info("智能觸發 - 步驟2: 執行完整優化流程 (AI重寫 + RRF檢索)")
+                # ELSE (top_initial_score <= confidence_threshold) -> Trigger full flow
+                logger.info("智能觸發 - 步驟 2: 執行完整優化流程 (AI重寫 + RRF檢索)")
                 await log_event(db=db, level=LogLevel.INFO,
-                                message=f"智能觸發：執行AI重寫和RRF (探針分數: {top_probe_score:.4f})",
+                                message=f"智能觸發：執行AI重寫和RRF (初始分數: {top_initial_score:.4f})",
                                 source="service.enhanced_ai_qa.smart_trigger_full_flow",
                                 user_id=user_id_str, request_id=request_id,
-                                details={"probe_score": top_probe_score, "confidence_threshold": confidence_threshold, "decision": "TRIGGER_FULL_FLOW"})
+                                details={"initial_score": top_initial_score, "confidence_threshold": confidence_threshold, "decision": "TRIGGER_FULL_FLOW"})
                 
                 query_rewrite_result, rewrite_tokens = await self._rewrite_query_unified(
                     db, request.question, user_id_str, request_id, 
@@ -160,22 +160,22 @@ class EnhancedAIQAService:
                     getattr(request, 'enable_query_expansion', True)
                 )
             else:
-                # IF probe_similarity_score > 0.85 -> Skip full flow, use probe results
-                logger.info("智能觸發 - 步驟2: 跳過完整優化流程，直接使用探針結果")
+                # IF top_initial_score > confidence_threshold -> Skip full flow, use initial search results
+                logger.info("智能觸發 - 步驟 2: 跳過完整優化流程，直接使用初始搜索結果")
                 await log_event(db=db, level=LogLevel.INFO,
-                                message=f"智能觸發：跳過AI重寫和RRF (探針分數: {top_probe_score:.4f})",
+                                message=f"智能觸發：跳過AI重寫和RRF (初始分數: {top_initial_score:.4f})",
                                 source="service.enhanced_ai_qa.smart_trigger_probe_skip",
                                 user_id=user_id_str, request_id=request_id,
-                                details={"probe_score": top_probe_score, "confidence_threshold": confidence_threshold, "decision": "SKIP_FULL_FLOW", "cost_saving": "YES"})
+                                details={"initial_score": top_initial_score, "confidence_threshold": confidence_threshold, "decision": "SKIP_FULL_FLOW", "cost_saving": "YES"})
                 
                 # 創建一個簡單的查詢重寫結果以保持兼容性
                 query_rewrite_result = QueryRewriteResult(
                     original_query=request.question,
                     rewritten_queries=[request.question],
                     extracted_parameters={},
-                    intent_analysis="智能觸發跳過重寫，使用探針搜索結果"
+                    intent_analysis="智能觸發跳過重寫，使用傳統單階段搜索結果"
                 )
-                semantic_results_raw = probe_results
+                semantic_results_raw = initial_search_results
                 document_ids = []
 
             if semantic_results_raw:
@@ -547,7 +547,7 @@ class EnhancedAIQAService:
             return QueryRewriteResult(original_query=original_query, rewritten_queries=output.rewritten_queries, extracted_parameters=output.extracted_parameters, intent_analysis=output.intent_analysis), tokens
         return QueryRewriteResult(original_query=original_query, rewritten_queries=[original_query], extracted_parameters={}, intent_analysis="Query rewrite failed."), tokens
 
-    async def _perform_probe_search(
+    async def _perform_traditional_single_stage_search(
         self,
         db: AsyncIOMotorDatabase,
         original_query: str,
@@ -555,29 +555,71 @@ class EnhancedAIQAService:
         user_id: Optional[str],
         request_id: Optional[str],
         similarity_threshold: float,
-        document_ids: Optional[List[str]] = None,
-        force_semantic: bool = False
+        document_ids: Optional[List[str]] = None
     ) -> List[SemanticSearchResult]:
-        """執行探針搜索 - 直接複用 enhanced_search_service 的 summary_only 查詢邏輯，確保與前端/評估一致"""
-        logger.info(f"🔬 探針查詢參數 user_id={user_id}, top_k={top_k}, similarity_threshold={similarity_threshold}, search_type=summary_only")
-        try:
-            results = await enhanced_search_service.two_stage_hybrid_search(
-                db=db,
-                query=original_query,
-                user_id=user_id,  # 修正：傳遞正確的 user_id
-                search_type="summary_only",
-                stage2_top_k=top_k,
-                similarity_threshold=similarity_threshold
-            )
-            logger.info(f"🔬 探針查詢回傳 {len(results)} 筆摘要結果")
-            if results and len(results) > 0:
-                logger.debug(f"🔬 第一筆摘要: doc_id={results[0].document_id}, score={results[0].similarity_score}, summary={results[0].summary_text[:50]}")
-            return results
-        except Exception as e:
-            logger.error(f"探針摘要查詢 (enhanced_search_service) 失敗: {str(e)}", exc_info=True)
-            await log_event(db=db, level=LogLevel.ERROR, message=f"Probe summary search (enhanced_search_service) failed: {e}",
-                            source="service.enhanced_ai_qa.probe_search_enhanced", user_id=user_id, request_id=request_id)
+        """
+        執行傳統的單階段向量搜索，同時搜索文檔摘要和文本片段。
+        """
+        logger.info(f"執行傳統單階段搜索 (摘要+文本片段) for query: '{original_query[:100]}...'")
+
+        # 1. 生成查詢向量
+        # 修正: 使用正確的方法名稱 encode_text
+        query_embedding = embedding_service.encode_text(original_query)
+        if not query_embedding or not any(query_embedding): # 檢查是否為空或零向量
+            logger.error("無法生成查詢的嵌入向量或生成了零向量。")
             return []
+
+        # 2. 並行執行對摘要和文本片段的搜索
+        # 修正: 使用單一 collection 並通過 metadata filter 區分 'summary' 和 'chunk'
+        # 修正: 使用 asyncio.to_thread 來調用同步的 aiohttp 方法
+
+        # 準備摘要搜索的過濾器
+        summary_metadata_filter = {"type": "summary"}
+        if document_ids:
+            summary_metadata_filter["document_id"] = {"$in": document_ids}
+
+        summary_search_task = asyncio.to_thread(
+            vector_db_service.search_similar_vectors,
+            query_vector=query_embedding,
+            top_k=top_k,
+            owner_id_filter=user_id,
+            metadata_filter=summary_metadata_filter,
+            similarity_threshold=similarity_threshold
+        )
+        
+        # 準備文本片段搜索的過濾器
+        chunks_metadata_filter = {"type": "chunk"}
+        if document_ids:
+            chunks_metadata_filter["document_id"] = {"$in": document_ids}
+
+        chunks_search_task = asyncio.to_thread(
+            vector_db_service.search_similar_vectors,
+            query_vector=query_embedding,
+            top_k=top_k,
+            owner_id_filter=user_id,
+            metadata_filter=chunks_metadata_filter,
+            similarity_threshold=similarity_threshold
+        )
+        
+        summary_results, chunks_results = await asyncio.gather(summary_search_task, chunks_search_task)
+        
+        # 3. 合併並去重結果
+        # 使用字典來確保每個 document_id 只保留最高分
+        all_results = {}
+        
+        search_results = summary_results + chunks_results
+        
+        for result in search_results:
+            doc_id = result.document_id
+            if doc_id not in all_results or result.similarity_score > all_results[doc_id].similarity_score:
+                all_results[doc_id] = result
+        
+        # 4. 按分數降序排序
+        final_results = sorted(list(all_results.values()), key=lambda r: r.similarity_score, reverse=True)
+        
+        logger.info(f"傳統單階段搜索完成，合併後共找到 {len(final_results)} 個不重複的文檔。")
+        
+        return final_results[:top_k]
 
     async def _perform_optimized_search_direct(
         self,

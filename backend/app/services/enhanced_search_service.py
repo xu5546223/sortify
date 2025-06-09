@@ -39,6 +39,7 @@ class EnhancedSearchService:
         stage1_top_k: Optional[int] = None,
         stage2_top_k: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
+        filter_conditions: Optional[Dict[str, Any]] = None,
         # 新增：RRF 動態權重配置
         rrf_weights: Optional[Dict[str, float]] = None,
         rrf_k_constant: Optional[int] = None

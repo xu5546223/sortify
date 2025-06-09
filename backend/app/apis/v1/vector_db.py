@@ -403,6 +403,8 @@ async def semantic_search(
                 stage1_top_k=min(request.top_k * 2, 20),  # 第一階段候選數
                 stage2_top_k=request.top_k,  # 最終結果數
                 similarity_threshold=request.similarity_threshold,
+                # 修正：傳遞過濾條件
+                filter_conditions=request.filter_conditions,
                 # 傳遞動態 RRF 權重配置
                 rrf_weights=request.rrf_weights,
                 rrf_k_constant=request.rrf_k_constant
@@ -631,3 +633,139 @@ async def batch_delete_documents_from_vector_db(
             details={"error": str(e), "error_type": type(e).__name__}
         )
         raise HTTPException(status_code=500, detail=f"Batch vector removal failed: {str(e)}")
+
+@router.get("/documents/{document_id}/chunks", response_model=List[SemanticSearchResult], summary="按文檔ID直接獲取所有向量塊")
+async def get_all_chunks_by_document_id(
+    document_id: uuid.UUID,
+    fastapi_request: Request,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    直接從向量數據庫中獲取指定文檔ID的所有相關向量塊（摘要和文本塊）。
+    這是一個直接提取操作，而非語義搜索。
+    """
+    request_id_val = fastapi_request.state.request_id if hasattr(fastapi_request.state, 'request_id') else None
+    
+    # 步驟 1: 驗證文檔所有權
+    doc = await get_document_by_id(db, document_id)
+    if not doc or doc.owner_id != current_user.id:
+        await log_event(
+            db=db, level=LogLevel.WARNING,
+            message=f"用戶 {current_user.username} 嘗試獲取不屬於自己的文檔塊: {document_id}",
+            source="api.vector_db.get_chunks_by_doc_id", user_id=str(current_user.id), request_id=request_id_val,
+            details={"document_id": str(document_id)}
+        )
+        raise HTTPException(status_code=404, detail="找不到文檔或無權訪問")
+
+    # 步驟 2: 從向量數據庫直接獲取塊
+    try:
+        vector_db_service_instance = get_vector_db_service()
+        
+        # 調用新的、正確的服務層方法
+        all_chunks = vector_db_service_instance.get_all_chunks_by_doc_id(
+            owner_id=str(current_user.id),
+            document_id=str(document_id)
+        )
+
+        await log_event(
+            db=db, level=LogLevel.DEBUG,
+            message=f"用戶 {current_user.username} 成功獲取文檔 {document_id} 的 {len(all_chunks)} 個塊",
+            source="api.vector_db.get_chunks_by_doc_id", user_id=str(current_user.id), request_id=request_id_val,
+            details={"document_id": str(document_id), "chunk_count": len(all_chunks)}
+        )
+        return all_chunks
+    except Exception as e:
+        await log_event(
+            db=db, level=LogLevel.ERROR,
+            message=f"為用戶 {current_user.username} 獲取文檔 {document_id} 的塊時出錯: {e}",
+            source="api.vector_db.get_chunks_by_doc_id", user_id=str(current_user.id), request_id=request_id_val,
+            details={"document_id": str(document_id), "error": str(e)}
+        )
+        raise HTTPException(status_code=500, detail="獲取向量塊時發生內部錯誤")
+
+@router.post("/batch-process-summaries", response_model=BasicResponse)
+async def batch_process_summaries(
+    body: BatchProcessRequest, 
+    background_tasks: BackgroundTasks,
+    request: Request,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db)
+):
+    """
+    批量處理文檔到向量資料庫 - 需要用戶認證
+    """
+    request_id_val = request.state.request_id if hasattr(request.state, 'request_id') else None
+    document_ids_str_from_request = body.document_ids
+
+    await log_event(
+        db=db, level=LogLevel.INFO,
+        message=f"User {current_user.username} requested batch processing of {len(document_ids_str_from_request)} documents.",
+        source="api.vector_db.batch_process_summaries", user_id=str(current_user.id), request_id=request_id_val,
+        details={"requested_doc_ids": document_ids_str_from_request} # Log requested IDs
+    )
+
+    try:
+        valid_document_ids_for_processing = []
+        skipped_ids_details = []
+
+        for doc_id_str in document_ids_str_from_request:
+            try:
+                doc_uuid = uuid.UUID(doc_id_str)
+            except ValueError:
+                logger.warning(f"Invalid document ID format in batch: {doc_id_str}, skipping.") # Keep for internal debug
+                skipped_ids_details.append({"id": doc_id_str, "reason": "Invalid ID format"})
+                await log_event(db=db, level=LogLevel.WARNING, message=f"Invalid document ID format in batch: {doc_id_str}", source="api.vector_db.batch_process_summaries", user_id=str(current_user.id), request_id=request_id_val)
+                continue
+
+            document = await get_document_by_id(db, doc_uuid)
+            if document and document.owner_id == current_user.id:
+                valid_document_ids_for_processing.append(doc_id_str)
+            else:
+                reason = "Not found" if not document else "Unauthorized"
+                logger.warning(f"Document {doc_id_str} (UUID: {doc_uuid}) {reason.lower()} or user unauthorized, skipping batch processing.") # Keep
+                skipped_ids_details.append({"id": doc_id_str, "reason": reason})
+                await log_event(db=db, level=LogLevel.WARNING, message=f"Skipping document in batch processing: {doc_id_str} - {reason}", source="api.vector_db.batch_process_summaries", user_id=str(current_user.id), request_id=request_id_val)
+        
+        if not valid_document_ids_for_processing:
+            await log_event(db=db, level=LogLevel.WARNING, message="Batch processing: No valid or authorized documents found.", source="api.vector_db.batch_process_summaries", user_id=str(current_user.id), request_id=request_id_val, details={"skipped_ids": skipped_ids_details})
+            raise HTTPException(status_code=400, detail="No valid documents found for processing or user unauthorized for all provided documents.")
+        
+        background_tasks.add_task(
+            semantic_summary_service.batch_process_summaries,
+            db,
+            valid_document_ids_for_processing 
+        )
+        
+        final_message = f"{len(valid_document_ids_for_processing)} documents successfully queued for batch processing."
+        await log_event(
+            db=db, level=LogLevel.INFO,
+            message=final_message,
+            source="api.vector_db.batch_process_summaries", user_id=str(current_user.id), request_id=request_id_val,
+            details={
+                "queued_count": len(valid_document_ids_for_processing),
+                "skipped_count": len(skipped_ids_details),
+                "skipped_details": skipped_ids_details
+            }
+        )
+        return JSONResponse(
+            status_code=202, # Accepted
+            content={
+                "message": final_message, # User-friendly
+                "document_count": len(valid_document_ids_for_processing),
+                "skipped_count": len(skipped_ids_details),
+                "status": "processing_queued"
+            }
+        )
+        
+    except HTTPException: # Re-raise known HTTP exceptions
+        raise
+    except Exception as e:
+        # logger.error(f"批量處理文檔失敗: {e}", exc_info=True) # Replaced
+        await log_event(
+            db=db, level=LogLevel.ERROR,
+            message=f"Batch document processing request failed unexpectedly for user {current_user.username}: {str(e)}",
+            source="api.vector_db.batch_process_summaries", user_id=str(current_user.id), request_id=request_id_val,
+            details={"error": str(e), "error_type": type(e).__name__}
+        )
+        raise HTTPException(status_code=500, detail="Failed to batch process documents.") # User-friendly

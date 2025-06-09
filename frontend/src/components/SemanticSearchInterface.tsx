@@ -62,6 +62,10 @@ interface SearchConfig {
   topK: number;
   similarityThreshold: number;
   enableDiversityOptimization: boolean;
+  rrfSummaryWeight: number;
+  rrfChunksWeight: number;
+  rrfKConstant: number;
+  queryExpansionFactor: number;
 }
 
 const SemanticSearchInterface: React.FC<SemanticSearchInterfaceProps> = ({
@@ -87,6 +91,12 @@ const SemanticSearchInterface: React.FC<SemanticSearchInterfaceProps> = ({
     topK: 10,
     similarityThreshold: 0.4,
     enableDiversityOptimization: true,
+    // RRF 融合檢索權重配置
+    rrfSummaryWeight: 0.4,
+    rrfChunksWeight: 0.6,
+    rrfKConstant: 60,
+    // 混合檢索配置
+    queryExpansionFactor: 1.5,
   });
 
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
@@ -101,15 +111,46 @@ const SemanticSearchInterface: React.FC<SemanticSearchInterfaceProps> = ({
     try {
       setIsSearching(true);
       
+      // 添加調試信息
+      console.log('🔍 開始搜索:', {
+        query: currentQuery.trim(),
+        config: {
+          searchType: searchConfig.searchType,
+          enableHybridSearch: searchConfig.enableHybridSearch,
+          topK: searchConfig.topK,
+          similarityThreshold: searchConfig.similarityThreshold,
+          enableDiversityOptimization: searchConfig.enableDiversityOptimization
+        }
+      });
+      
       let results: SemanticSearchResult[];
       
       if (searchConfig.enableHybridSearch) {
-        // 使用混合搜索
-        results = await performHybridSearch(
+        // 使用混合搜索 - 支持完整的配置選項
+        const searchOptions = {
+          enableHybridSearch: true,
+          enableDiversityOptimization: searchConfig.enableDiversityOptimization,
+          searchType: searchConfig.searchType === 'legacy' ? 'hybrid' : searchConfig.searchType,
+          queryExpansionFactor: searchConfig.queryExpansionFactor,
+          rerankTopK: searchConfig.topK * 2,
+          // RRF 權重配置（僅當使用 RRF 融合時）
+          ...(searchConfig.searchType === 'rrf_fusion' && {
+            rrfWeights: { 
+              summary: searchConfig.rrfSummaryWeight, 
+              chunks: searchConfig.rrfChunksWeight 
+            },
+            rrfKConstant: searchConfig.rrfKConstant
+          })
+        };
+
+        console.log('🔧 搜索選項:', searchOptions);
+
+        results = await performSemanticSearch(
           currentQuery.trim(),
           searchConfig.topK,
           searchConfig.similarityThreshold,
-          searchConfig.searchType === 'legacy' ? 'hybrid' : searchConfig.searchType
+          undefined,
+          searchOptions
         );
       } else {
         // 使用傳統搜索
@@ -126,6 +167,15 @@ const SemanticSearchInterface: React.FC<SemanticSearchInterfaceProps> = ({
         );
       }
       
+      console.log('✅ 搜索結果:', {
+        resultCount: results.length,
+        results: results.slice(0, 3).map(r => ({
+          document_id: r.document_id,
+          similarity_score: r.similarity_score,
+          vector_type: r.vector_type
+        }))
+      });
+      
       setSearchResults(results);
 
       const historyItem: SearchHistoryItem = {
@@ -140,11 +190,28 @@ const SemanticSearchInterface: React.FC<SemanticSearchInterfaceProps> = ({
         setSearchHistory(prev => [historyItem, ...prev.slice(0, 9)]);
       }
       
-      showPCMessage(`找到 ${results.length} 個相關結果 (${historyItem.searchType} 搜索)`, 'success');
+      if (results.length === 0) {
+        showPCMessage('沒有找到相關結果，嘗試降低相似度閾值或使用不同的搜索策略', 'info');
+      } else {
+        showPCMessage(`找到 ${results.length} 個相關結果 (${historyItem.searchType} 搜索)`, 'success');
+      }
       
     } catch (error) {
-      console.error('語義搜索失敗:', error);
-      showPCMessage('語義搜索失敗', 'error');
+      console.error('❌ 語義搜索失敗:', error);
+      
+      // 提供更詳細的錯誤信息
+      let errorMessage = '語義搜索失敗';
+      if (error instanceof Error) {
+        if (error.message.includes('network') || error.message.includes('fetch')) {
+          errorMessage = '網絡連接錯誤，請檢查後端服務是否運行正常';
+        } else if (error.message.includes('embedding')) {
+          errorMessage = 'Embedding模型未準備就緒，請稍後再試';
+        } else {
+          errorMessage = `搜索錯誤: ${error.message}`;
+        }
+      }
+      
+      showPCMessage(errorMessage, 'error');
     } finally {
       setIsSearching(false);
     }
@@ -360,7 +427,80 @@ const SemanticSearchInterface: React.FC<SemanticSearchInterfaceProps> = ({
                         unCheckedChildren="關閉"
                       />
                     </Form.Item>
+
+                    <Form.Item label="查詢擴展因子">
+                      <Slider
+                        min={1.0}
+                        max={3.0}
+                        step={0.1}
+                        value={searchConfig.queryExpansionFactor}
+                        onChange={(value) => setSearchConfig(prev => ({ ...prev, queryExpansionFactor: value }))}
+                        marks={{ 1.0: '1.0', 1.5: '1.5', 2.0: '2.0', 3.0: '3.0' }}
+                      />
+                    </Form.Item>
                   </div>
+
+                  {/* RRF 融合檢索專用配置 */}
+                  {searchConfig.searchType === 'rrf_fusion' && (
+                    <div className="mt-4 p-4 border border-blue-200 rounded-lg bg-blue-50">
+                      <div className="mb-3">
+                        <Text strong className="text-blue-700">🚀 RRF 融合檢索權重配置</Text>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <Form.Item label={`摘要權重 (${searchConfig.rrfSummaryWeight.toFixed(1)})`}>
+                          <Slider
+                            min={0.1}
+                            max={0.9}
+                            step={0.1}
+                            value={searchConfig.rrfSummaryWeight}
+                            onChange={(value) => setSearchConfig(prev => ({ 
+                              ...prev, 
+                              rrfSummaryWeight: value,
+                              rrfChunksWeight: Math.round((1 - value) * 10) / 10 // 自動調整另一個權重
+                            }))}
+                            marks={{ 0.1: '0.1', 0.4: '0.4', 0.6: '0.6', 0.9: '0.9' }}
+                          />
+                        </Form.Item>
+                        
+                        <Form.Item label={`內容塊權重 (${searchConfig.rrfChunksWeight.toFixed(1)})`}>
+                          <Slider
+                            min={0.1}
+                            max={0.9}
+                            step={0.1}
+                            value={searchConfig.rrfChunksWeight}
+                            onChange={(value) => setSearchConfig(prev => ({ 
+                              ...prev, 
+                              rrfChunksWeight: value,
+                              rrfSummaryWeight: Math.round((1 - value) * 10) / 10 // 自動調整另一個權重
+                            }))}
+                            marks={{ 0.1: '0.1', 0.4: '0.4', 0.6: '0.6', 0.9: '0.9' }}
+                          />
+                        </Form.Item>
+                        
+                        <Form.Item label="RRF K 常數" className="col-span-2">
+                          <Slider
+                            min={10}
+                            max={200}
+                            step={10}
+                            value={searchConfig.rrfKConstant}
+                            onChange={(value) => setSearchConfig(prev => ({ ...prev, rrfKConstant: value }))}
+                            marks={{ 10: '10', 60: '60', 100: '100', 200: '200' }}
+                          />
+                          <Text type="secondary" style={{fontSize: '12px'}}>
+                            K 值越小，高排名文檔的優勢越明顯；K 值越大，排名分佈越平均
+                          </Text>
+                        </Form.Item>
+                      </div>
+                      
+                      <Alert
+                        message="權重配置說明"
+                        description={`摘要權重: ${searchConfig.rrfSummaryWeight.toFixed(1)} | 內容塊權重: ${searchConfig.rrfChunksWeight.toFixed(1)} | 總和: ${(searchConfig.rrfSummaryWeight + searchConfig.rrfChunksWeight).toFixed(1)}`}
+                        type="info"
+                        showIcon
+                        className="mt-3"
+                      />
+                    </div>
+                  )}
                 </Form>
                 
                 <Alert
@@ -409,14 +549,19 @@ const SemanticSearchInterface: React.FC<SemanticSearchInterfaceProps> = ({
           <div className="flex justify-between items-center text-sm text-gray-500">
             <Space size="small">
               <Text type="secondary">搜索模式:</Text>
-                             <Tag color={searchConfig.enableHybridSearch ? 'blue' : 'default'}>
-                 {searchConfig.searchType === 'rrf_fusion' ? '🚀 RRF融合' :
-                  searchConfig.searchType === 'hybrid' ? '混合檢索' :
-                  searchConfig.searchType === 'summary_only' ? '摘要搜索' :
-                  searchConfig.searchType === 'chunks_only' ? '文本塊搜索' : '傳統搜索'}
-               </Tag>
+              <Tag color={searchConfig.enableHybridSearch ? 'blue' : 'default'}>
+                {searchConfig.searchType === 'rrf_fusion' ? '🚀 RRF融合' :
+                 searchConfig.searchType === 'hybrid' ? '混合檢索' :
+                 searchConfig.searchType === 'summary_only' ? '摘要搜索' :
+                 searchConfig.searchType === 'chunks_only' ? '文本塊搜索' : '傳統搜索'}
+              </Tag>
               <Text type="secondary">閾值: {searchConfig.similarityThreshold}</Text>
               <Text type="secondary">數量: {searchConfig.topK}</Text>
+              {searchConfig.searchType === 'rrf_fusion' && (
+                <Tag color="purple" title="RRF權重配置">
+                  摘要:{searchConfig.rrfSummaryWeight.toFixed(1)} | 內容:{searchConfig.rrfChunksWeight.toFixed(1)}
+                </Tag>
+              )}
             </Space>
           </div>
 

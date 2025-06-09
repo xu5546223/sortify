@@ -34,6 +34,12 @@ export const performSemanticSearch = async (
     enableDiversityOptimization?: boolean;
     searchType?: 'hybrid' | 'summary_only' | 'chunks_only' | 'legacy' | 'rrf_fusion';
     filterConditions?: Record<string, any>;
+    // 新增：RRF 融合檢索權重配置
+    rrfWeights?: Record<string, number>;
+    rrfKConstant?: number;
+    // 新增：混合檢索配置
+    queryExpansionFactor?: number;
+    rerankTopK?: number;
   }
 ): Promise<SemanticSearchResult[]> => {
   const requestPayload = {
@@ -41,11 +47,17 @@ export const performSemanticSearch = async (
     top_k: topK,
     similarity_threshold: threshold,
     collection_name: collectionName,
-    // 新增：兩階段混合檢索配置
+    // 兩階段混合檢索配置
     enable_hybrid_search: options?.enableHybridSearch ?? true, // 預設啟用
     enable_diversity_optimization: options?.enableDiversityOptimization ?? true,
-    search_type: options?.searchType || 'hybrid', // 新增：搜索類型
-    filter_conditions: options?.filterConditions
+    search_type: options?.searchType || 'hybrid', // 搜索類型
+    filter_conditions: options?.filterConditions,
+    // RRF 融合檢索權重配置
+    rrf_weights: options?.rrfWeights || null,
+    rrf_k_constant: options?.rrfKConstant || null,
+    // 混合檢索配置
+    query_expansion_factor: options?.queryExpansionFactor || 1.5,
+    rerank_top_k: options?.rerankTopK || Math.min(topK * 2, 20)
   };
 
   try {
@@ -71,16 +83,20 @@ export const performHybridSearch = async (
   });
 };
 
-// 🚀 新增：RRF 融合檢索接口（終極策略）
+// 🚀 新增：RRF 融合檢索接口（終極策略）- 支持自定義權重
 export const performRRFSearch = async (
   query: string, 
   topK = 10, 
-  threshold = 0.4
+  threshold = 0.4,
+  rrfWeights?: Record<string, number>,
+  rrfKConstant?: number
 ): Promise<SemanticSearchResult[]> => {
   return performSemanticSearch(query, topK, threshold, undefined, {
     enableHybridSearch: true,
     enableDiversityOptimization: true,
-    searchType: 'rrf_fusion'
+    searchType: 'rrf_fusion',
+    rrfWeights: rrfWeights || { summary: 0.4, chunks: 0.6 }, // 預設權重
+    rrfKConstant: rrfKConstant || 60 // 預設 k 常數
   });
 };
 

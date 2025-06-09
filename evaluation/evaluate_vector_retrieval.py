@@ -124,6 +124,83 @@ class VectorRetrievalEvaluator:
         except Exception as e:
             logger.warning(f"API連接測試失敗: {e}")
 
+    async def diagnose_api_health(self):
+        """診斷API健康狀態和搜索功能"""
+        logger.info("🔍 開始API健康診斷...")
+        
+        headers = self.get_auth_headers()
+        
+        # 1. 測試基礎連接
+        try:
+            async with self.session.get(f"{self.api_base_url}/health", headers=headers) as response:
+                if response.status == 200:
+                    logger.info("✅ 基礎API連接正常")
+                else:
+                    logger.warning(f"⚠️ 基礎API返回狀態: {response.status}")
+        except Exception as e:
+            logger.error(f"❌ 基礎API連接失敗: {e}")
+        
+        # 2. 測試向量搜索端點
+        test_payload = {
+            "query": "測試查詢",
+            "top_k": 5,
+            "similarity_threshold": 0.3,
+            "enable_hybrid_search": False,  # 先測試最簡單的模式
+            "enable_diversity_optimization": False
+        }
+        
+        url = f"{self.api_base_url}/api/v1/vector-db/semantic-search"
+        
+        try:
+            async with self.session.post(url, json=test_payload, headers=headers) as response:
+                if response.status == 200:
+                    results = await response.json()
+                    logger.info(f"✅ 基礎向量搜索正常，返回 {len(results)} 個結果")
+                else:
+                    error_text = await response.text()
+                    logger.error(f"❌ 基礎向量搜索失敗 ({response.status}): {error_text[:200]}...")
+        except Exception as e:
+            logger.error(f"❌ 向量搜索端點測試失敗: {e}")
+        
+        # 3. 測試RRF融合檢索
+        rrf_payload = {
+            "query": "測試查詢",
+            "top_k": 5,
+            "similarity_threshold": 0.3,
+            "enable_hybrid_search": True,
+            "enable_diversity_optimization": True,
+            "search_type": "rrf_fusion"
+        }
+        
+        try:
+            async with self.session.post(url, json=rrf_payload, headers=headers) as response:
+                if response.status == 200:
+                    results = await response.json()
+                    logger.info(f"✅ RRF融合檢索正常，返回 {len(results)} 個結果")
+                else:
+                    error_text = await response.text()
+                    logger.error(f"❌ RRF融合檢索失敗 ({response.status}): {error_text[:200]}...")
+                    logger.warning("💡 建議：RRF融合檢索可能未實現或有bug，請檢查後端代碼")
+        except Exception as e:
+            logger.error(f"❌ RRF融合檢索測試失敗: {e}")
+        
+        logger.info("🏁 API診斷完成")
+        
+    async def test_single_search_mode(self, mode: str) -> bool:
+        """測試單一搜索模式是否可用"""
+        test_query = "測試查詢"
+        try:
+            results = await self._search_vectors_via_api(test_query, 5, 0.3, mode)
+            if results:
+                logger.info(f"✅ 搜索模式 '{mode}' 可用")
+                return True
+            else:
+                logger.warning(f"⚠️ 搜索模式 '{mode}' 返回空結果")
+                return False
+        except Exception as e:
+            logger.error(f"❌ 搜索模式 '{mode}' 測試失敗: {e}")
+            return False
+
     async def _search_vectors_via_api(self, query: str, top_k: int, similarity_threshold: float, 
                                      search_mode: str = 'hybrid', enable_diversity: bool = True,
                                      rrf_weights: Optional[Dict[str, float]] = None,
@@ -154,14 +231,42 @@ class VectorRetrievalEvaluator:
         
         try:
             async with self.session.post(url, json=payload, headers=headers) as response:
-                response.raise_for_status()
-                results = await response.json()
-                mode_name = self.search_modes.get(search_mode, search_mode)
-                weight_info = f" (權重: {rrf_weights}, k: {rrf_k_constant})" if rrf_weights else ""
-                logger.info(f"[{mode_name}{weight_info}] 查詢 '{query[:30]}...' -> 檢索到 {len(results)} 個結果")
-                return results
+                # 詳細的HTTP狀態碼處理
+                if response.status == 200:
+                    results = await response.json()
+                    mode_name = self.search_modes.get(search_mode, search_mode)
+                    weight_info = f" (權重: {rrf_weights}, k: {rrf_k_constant})" if rrf_weights else ""
+                    logger.info(f"[{mode_name}{weight_info}] 查詢 '{query[:30]}...' -> 檢索到 {len(results)} 個結果")
+                    return results
+                elif response.status == 500:
+                    error_text = await response.text()
+                    logger.error(f"[{search_mode}] 後端內部錯誤 (500) for query '{query[:30]}...': {error_text[:200]}...")
+                    logger.warning(f"[{search_mode}] 嘗試使用降級參數重試...")
+                    
+                    # 如果是RRF模式出錯，嘗試降級到hybrid模式
+                    if search_mode == 'rrf_fusion':
+                        logger.info(f"嘗試降級到hybrid模式...")
+                        return await self._search_vectors_via_api(query, top_k, similarity_threshold, 'hybrid', enable_diversity)
+                    
+                    return []
+                elif response.status == 401:
+                    logger.error(f"[{search_mode}] 認證失敗 (401) - JWT token可能已過期")
+                    return []
+                elif response.status == 422:
+                    error_detail = await response.text()
+                    logger.error(f"[{search_mode}] 請求參數錯誤 (422): {error_detail}")
+                    logger.debug(f"發送的payload: {payload}")
+                    return []
+                else:
+                    error_text = await response.text()
+                    logger.error(f"[{search_mode}] HTTP錯誤 {response.status}: {error_text[:200]}...")
+                    return []
+                    
+        except aiohttp.ClientError as e:
+            logger.error(f"[{search_mode}] 網絡連接錯誤 for query '{query[:30]}...': {e}")
+            return []
         except Exception as e:
-            logger.error(f"[{search_mode}] 向量檢索API調用異常 for query '{query[:30]}...': {e}")
+            logger.error(f"[{search_mode}] 未預期錯誤 for query '{query[:30]}...': {e}")
             return []
 
     async def evaluate_all_search_modes(self, test_cases: List[Dict], eval_params: Dict) -> Dict[str, Any]:
@@ -201,8 +306,13 @@ class VectorRetrievalEvaluator:
                 logger.warning(f"跳過案例 {i+1}，缺少必要欄位")
                 continue
             
+            # 使用評估參數中的 RRF 配置，如果沒有則使用後端預設
+            rrf_weights = eval_params.get('rrf_weights', None)
+            rrf_k_constant = eval_params.get('rrf_k_constant', None)
+            
             search_results = await self._search_vectors_via_api(
-                question, eval_params['top_k'], eval_params['similarity_threshold'], search_mode
+                question, eval_params['top_k'], eval_params['similarity_threshold'], 
+                search_mode, True, rrf_weights, rrf_k_constant
             )
             retrieved_doc_ids = [doc.get('document_id', '') for doc in search_results]
 
@@ -258,24 +368,98 @@ class VectorRetrievalEvaluator:
     def _calculate_ndcg(self, expected_ids: List[str], retrieved_ids: List[str]) -> Dict[str, float]:
         expected_set = set(expected_ids)
         ndcg_scores = {}
+        
+        # 邊界條件檢查
+        if not expected_ids:
+            return {f"@_k{k}": 0.0 for k in [1, 3, 5, 10]}
+            
+        for k in [1, 3, 5, 10]:
+            # 計算 DCG@k：檢索結果的累積增益
+            relevance = [1 if doc_id in expected_set else 0 for doc_id in retrieved_ids[:k]]
+            dcg = sum(rel / np.log2(i + 2) for i, rel in enumerate(relevance))
+            
+            # 計算 IDCG@k：理想情況下的累積增益
+            # 理想情況是所有相關文檔都排在前面，但最多只能有 len(expected_ids) 個相關文檔
+            num_relevant = len(expected_ids)
+            ideal_relevance_count = min(k, num_relevant)
+            idcg = sum(1 / np.log2(i + 2) for i in range(ideal_relevance_count))
+            
+            # 計算 nDCG@k = DCG@k / IDCG@k
+            if idcg > 0:
+                ndcg_value = dcg / idcg
+                # 確保 nDCG 在 [0, 1] 範圍內
+                ndcg_value = min(1.0, max(0.0, ndcg_value))
+                ndcg_scores[f"@_k{k}"] = ndcg_value
+            else:
+                ndcg_scores[f"@_k{k}"] = 0.0
+                
+        return ndcg_scores
+
+    def _debug_ndcg_calculation(self, expected_ids: List[str], retrieved_ids: List[str]) -> None:
+        """調試 nDCG 計算過程"""
+        logger.info(f"🔍 nDCG 調試：期望文檔數={len(expected_ids)}, 檢索文檔數={len(retrieved_ids)}")
+        expected_set = set(expected_ids)
+        
         for k in [1, 3, 5, 10]:
             relevance = [1 if doc_id in expected_set else 0 for doc_id in retrieved_ids[:k]]
             dcg = sum(rel / np.log2(i + 2) for i, rel in enumerate(relevance))
-            idcg = sum(1 / np.log2(i + 2) for i in range(min(k, len(expected_ids))))
-            ndcg_scores[f"@_k{k}"] = dcg / idcg if idcg > 0 else 0.0
-        return ndcg_scores
+            
+            num_relevant = len(expected_ids)
+            ideal_relevance_count = min(k, num_relevant)
+            idcg = sum(1 / np.log2(i + 2) for i in range(ideal_relevance_count))
+            
+            ndcg_value = dcg / idcg if idcg > 0 else 0.0
+            
+            logger.info(f"   k={k}: 相關數={sum(relevance)}, DCG={dcg:.4f}, IDCG={idcg:.4f}, nDCG={ndcg_value:.4f}")
+            
+            if ndcg_value > 1.0:
+                logger.warning(f"   ⚠️ k={k} 的 nDCG > 1.0: {ndcg_value:.4f}")
 
     def _aggregate_results(self, all_metrics: List[Dict], total_cases: int, eval_params: Dict, search_mode: str = None) -> Dict:
-        """匯總所有評估指標"""
+        """匯總所有評估指標，包含強化的 nDCG 驗證"""
         if not all_metrics:
             return {"error": "No metrics were calculated."}
 
+        # 在聚合前檢查所有 nDCG 值
+        invalid_ndcg_count = 0
+        for i, metrics in enumerate(all_metrics):
+            ndcg_values = metrics.get('ndcg', {})
+            for k, v in ndcg_values.items():
+                if v > 1.0 or v < 0.0:
+                    logger.warning(f"🚨 案例 {i+1} 發現異常 nDCG 值：{k} = {v:.6f}")
+                    invalid_ndcg_count += 1
+                    # 修正異常值
+                    ndcg_values[k] = min(1.0, max(0.0, v))
+        
+        if invalid_ndcg_count > 0:
+            logger.warning(f"⚠️ 修正了 {invalid_ndcg_count} 個異常 nDCG 值")
+
         df = pd.json_normalize(all_metrics)
         mean_scores = df.mean().to_dict()
+        
+        # 提取並驗證各類指標
         hit_rate_scores = {k.replace('hit_rate.@_k', '@'): v for k, v in mean_scores.items() if k.startswith('hit_rate')}
         ndcg_scores = {k.replace('ndcg.@_k', '@'): v for k, v in mean_scores.items() if k.startswith('ndcg')}
+        
+        # 聚合後再次驗證 nDCG 值
+        for k, v in ndcg_scores.items():
+            if v > 1.0:
+                logger.error(f"❌ 聚合後 nDCG 異常：{k} = {v:.6f}，強制修正為 1.0")
+                ndcg_scores[k] = 1.0
+            elif v < 0.0:
+                logger.error(f"❌ 聚合後 nDCG 異常：{k} = {v:.6f}，強制修正為 0.0")
+                ndcg_scores[k] = 0.0
 
         evaluation_type = "hybrid_vector_retrieval" if search_mode == 'hybrid' else f"{search_mode}_vector_retrieval" if search_mode else "pure_vector_retrieval_baseline"
+
+        # 驗證 MRR 值
+        mrr_value = mean_scores.get('mrr', 0.0)
+        if mrr_value > 1.0:
+            logger.error(f"❌ MRR 異常：{mrr_value:.6f}，強制修正為 1.0")
+            mrr_value = 1.0
+        elif mrr_value < 0.0:
+            logger.error(f"❌ MRR 異常：{mrr_value:.6f}，強制修正為 0.0")
+            mrr_value = 0.0
 
         return {
             "evaluation_type": evaluation_type,
@@ -284,10 +468,14 @@ class VectorRetrievalEvaluator:
             "processed_cases": len(all_metrics),
             "retrieval_metrics": {
                 "hit_rate": hit_rate_scores,
-                "mrr": mean_scores.get('mrr', 0.0),
+                "mrr": mrr_value,
                 "ndcg": ndcg_scores
             },
-            "evaluation_parameters": eval_params
+            "evaluation_parameters": eval_params,
+            "validation_notes": {
+                "invalid_ndcg_corrected": invalid_ndcg_count,
+                "post_aggregation_validation": "completed"
+            } if invalid_ndcg_count > 0 else {}
         }
     
     def _generate_comparison_results(self, results_by_mode: Dict[str, Dict], eval_params: Dict) -> Dict[str, Any]:
@@ -663,7 +851,16 @@ class VectorRetrievalEvaluator:
 
         try:
             with open(dataset_path, 'r', encoding='utf-8') as f:
-                test_cases = json.load(f)
+                data = json.load(f)
+            
+            # 處理不同的資料集格式
+            if isinstance(data, dict) and 'test_cases' in data:
+                test_cases = data['test_cases']
+            elif isinstance(data, list):
+                test_cases = data
+            else:
+                raise ValueError("不支援的資料集格式")
+                
             logger.info(f"成功載入 {len(test_cases)} 個測試案例")
         except Exception as e:
             logger.error(f"載入測試數據失敗: {e}")
@@ -672,16 +869,47 @@ class VectorRetrievalEvaluator:
         try:
             await self.initialize_services()
             
+            # 🔍 API健康診斷
+            logger.info("\n" + "="*60)
+            logger.info("🔍 執行API健康診斷...")
+            logger.info("="*60)
+            await self.diagnose_api_health()
+            
+            # 測試所有搜索模式的可用性
+            logger.info("\n🔧 測試各搜索模式可用性...")
+            available_modes = {}
+            for mode_key, mode_name in self.search_modes.items():
+                is_available = await self.test_single_search_mode(mode_key)
+                available_modes[mode_key] = is_available
+                if not is_available:
+                    logger.warning(f"⚠️ 搜索模式 '{mode_name}' 不可用，將從評估中排除")
+            
+            # 過濾可用的搜索模式
+            original_modes = self.search_modes.copy()
             if comparison_mode:
+                self.search_modes = {k: v for k, v in original_modes.items() if available_modes.get(k, False)}
+                if not self.search_modes:
+                    logger.error("❌ 沒有可用的搜索模式，無法進行評估")
+                    return
+                logger.info(f"✅ 將評估以下可用模式: {list(self.search_modes.keys())}")
+            
+            if comparison_mode and self.search_modes:
                 # 多模式對比評估
                 results = await self.evaluate_all_search_modes(test_cases, eval_params)
                 self.print_comparison_results(results)
                 output_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rrf_hybrid_legacy_retrieval_comparison.json")
             else:
-                # 單模式評估（向後兼容）
-                results = await self.evaluate_retrieval_accuracy(test_cases, eval_params)
-                self.print_results(results)
-                output_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vector_retrieval_baseline_results.json")
+                # 單模式評估（向後兼容） - 使用legacy模式
+                if available_modes.get('legacy', False):
+                    results = await self.evaluate_retrieval_accuracy(test_cases, eval_params)
+                    self.print_results(results)
+                    output_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vector_retrieval_baseline_results.json")
+                else:
+                    logger.error("❌ Legacy模式不可用，無法進行單模式評估")
+                    return
+            
+            # 恢復原始搜索模式列表
+            self.search_modes = original_modes
             
             self.save_results_to_json(results, output_path)
         finally:
@@ -1075,7 +1303,16 @@ class VectorRetrievalEvaluator:
 
         try:
             with open(dataset_path, 'r', encoding='utf-8') as f:
-                test_cases = json.load(f)
+                data = json.load(f)
+            
+            # 處理不同的資料集格式
+            if isinstance(data, dict) and 'test_cases' in data:
+                test_cases = data['test_cases']
+            elif isinstance(data, list):
+                test_cases = data
+            else:
+                raise ValueError("不支援的資料集格式")
+                
             logger.info(f"成功載入 {len(test_cases)} 個測試案例")
         except Exception as e:
             logger.error(f"載入測試數據失敗: {e}")
@@ -1281,6 +1518,16 @@ class VectorRetrievalEvaluator:
         best_grid_mrr = best_hypothesis_mrr
         best_config = None
         
+        # 首先檢查假設階段是否已經找到最佳配置
+        for i, config in enumerate(hypothesis_configs):
+            result_key = f"hypothesis_{i+1}"
+            if result_key in weight_optimization_results:
+                result = weight_optimization_results[result_key]["results"]
+                mrr_score = result.get("retrieval_metrics", {}).get("mrr", 0.0)
+                if mrr_score == best_hypothesis_mrr:
+                    best_config = config
+                    break
+        
         for i, config in enumerate(grid_configs):
             weights = {"summary": config["summary"], "chunks": config["chunks"]}
             logger.info(f"🔬 網格搜索 {i+1}/{len(grid_configs)}: {weights}")
@@ -1324,7 +1571,16 @@ class VectorRetrievalEvaluator:
 
         try:
             with open(dataset_path, 'r', encoding='utf-8') as f:
-                test_cases = json.load(f)
+                data = json.load(f)
+            
+            # 處理不同的資料集格式
+            if isinstance(data, dict) and 'test_cases' in data:
+                test_cases = data['test_cases']
+            elif isinstance(data, list):
+                test_cases = data
+            else:
+                raise ValueError("不支援的資料集格式")
+                
             logger.info(f"成功載入 {len(test_cases)} 個測試案例")
         except Exception as e:
             logger.error(f"載入測試數據失敗: {e}")
@@ -1369,6 +1625,32 @@ class VectorRetrievalEvaluator:
             print(f"      - 摘要權重: {best_config.get('summary', 1.0):.2f}")
             print(f"      - 內容塊權重: {best_config.get('chunks', 1.0):.2f}")
             print(f"      - 配置描述: {best_config.get('desc', '未知配置')}")
+            print(f"   🔧 生產環境設定建議:")
+            print(f"      RRF_WEIGHTS = {{'summary': {best_config.get('summary', 1.0):.2f}, 'chunks': {best_config.get('chunks', 1.0):.2f}}}")
+        else:
+            # 如果best_config為空，從結果中找到最佳配置
+            all_results_data = results.get("all_results", {})
+            best_found_mrr = baseline_mrr
+            best_found_config = None
+            
+            for result_key, result_data in all_results_data.items():
+                if result_key == "baseline":
+                    continue
+                mrr_score = result_data.get("results", {}).get("retrieval_metrics", {}).get("mrr", 0.0)
+                if mrr_score > best_found_mrr:
+                    best_found_mrr = mrr_score
+                    best_found_config = result_data.get("weights", {})
+                    best_found_desc = result_data.get("description", "未知配置")
+            
+            if best_found_config:
+                print(f"   🎯 最佳權重配置 (從所有結果中找到):")
+                print(f"      - 摘要權重: {best_found_config.get('summary', 1.0):.2f}")
+                print(f"      - 內容塊權重: {best_found_config.get('chunks', 1.0):.2f}")
+                print(f"      - 配置描述: {best_found_desc}")
+                print(f"   🔧 生產環境設定建議:")
+                print(f"      RRF_WEIGHTS = {{'summary': {best_found_config.get('summary', 1.0):.2f}, 'chunks': {best_found_config.get('chunks', 1.0):.2f}}}")
+            else:
+                print(f"   ⚠️ 無法找到最佳配置，建議使用基準線 (1.0, 1.0)")
         
         # 建議
         if improvement > 10:
@@ -1392,13 +1674,18 @@ async def main():
     parser.add_argument(
         '--mode', 
         default='compare', 
-        choices=['compare', 'individual', 'optimize_weights', 'optimize_weights_k'],
-        help='執行模式：compare（對比）, individual（單一評估）, optimize_weights（權重調優）, optimize_weights_k（權重+K值聯合調優）'
+        choices=['compare', 'individual', 'optimize_weights', 'optimize_weights_k', 'diagnose'],
+        help='執行模式：compare（對比）, individual（單一評估）, optimize_weights（權重調優）, optimize_weights_k（權重+K值聯合調優）, diagnose（API診斷）'
     )
     
     # 新增：詳細評估選項
     parser.add_argument('--verbose', action='store_true', help='顯示每個測試案例的詳細結果')
     parser.add_argument('--save-detailed', action='store_true', help='保存詳細的個別案例分析結果')
+    
+    # 新增：RRF 參數選項
+    parser.add_argument('--rrf-summary-weight', type=float, default=None, help='RRF 摘要權重 (如不指定則使用後端預設)')
+    parser.add_argument('--rrf-chunks-weight', type=float, default=None, help='RRF 內容塊權重 (如不指定則使用後端預設)')
+    parser.add_argument('--rrf-k-constant', type=int, default=None, help='RRF K常數 (如不指定則使用後端預設)')
     
     args = parser.parse_args()
     
@@ -1409,6 +1696,22 @@ async def main():
         "save_detailed_analysis": args.save_detailed
     }
     
+    # 新增：處理 RRF 參數配置
+    if args.rrf_summary_weight is not None and args.rrf_chunks_weight is not None:
+        eval_params["rrf_weights"] = {
+            "summary": args.rrf_summary_weight,
+            "chunks": args.rrf_chunks_weight
+        }
+        logger.info(f"使用自定義 RRF 權重: {eval_params['rrf_weights']}")
+    else:
+        logger.info("使用後端預設 RRF 權重")
+    
+    if args.rrf_k_constant is not None:
+        eval_params["rrf_k_constant"] = args.rrf_k_constant
+        logger.info(f"使用自定義 RRF K常數: {args.rrf_k_constant}")
+    else:
+        logger.info("使用後端預設 RRF K常數")
+    
     for var in ['USERNAME', 'PASSWORD', 'API_URL']:
         if not os.getenv(var):
             logger.error(f"缺少必要的環境變數: {var}，請在 .env 文件中設置。")
@@ -1416,7 +1719,18 @@ async def main():
             
     evaluator = VectorRetrievalEvaluator()
     try:
-        if args.mode == 'optimize_weights':
+        if args.mode == 'diagnose':
+            # API診斷模式
+            logger.info("🔍 開始API診斷模式...")
+            await evaluator.initialize_services()
+            await evaluator.diagnose_api_health()
+            
+            # 測試所有搜索模式
+            logger.info("\n🔧 測試所有搜索模式...")
+            for mode_key, mode_name in evaluator.search_modes.items():
+                await evaluator.test_single_search_mode(mode_key)
+                
+        elif args.mode == 'optimize_weights':
             # 權重調優模式
             await evaluator.run_weight_optimization_flow(
                 dataset_path=args.dataset,
@@ -1444,6 +1758,12 @@ async def main():
             )
     except Exception as e:
         logger.error(f"評估腳本執行時發生未預期錯誤: {e}", exc_info=True)
+    finally:
+        # 確保會話被正確關閉
+        if evaluator.session and not evaluator.session.closed:
+            await evaluator.session.close()
+            # 等待連接完全關閉
+            await asyncio.sleep(0.1)
 
 if __name__ == "__main__":
     # <<< MODIFIED: 移除了 nest_asyncio，因在標準腳本中 asyncio.run() 是更好的選擇

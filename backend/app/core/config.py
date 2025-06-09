@@ -34,8 +34,8 @@ class Settings(BaseSettings):
     VECTOR_SEARCH_STAGE2_TOP_K: int = 5   # 第二階段（精排序）最終返回的結果數
     
     # RRF 融合檢索設定
-    RRF_K_CONSTANT: int = 45  # RRF 常數 k，降低高排名影響力（標準值為60）
-    RRF_WEIGHTS: dict = {"summary": 1.0, "chunks": 1.3}  # 摘要和內容塊搜索的權重配置
+    RRF_K_CONSTANT: int = 60  # RRF 常數 k，降低高排名影響力（標準值為60）
+    RRF_WEIGHTS: dict = {"summary": 2.0, "chunks": 1.0}  # 摘要和內容塊搜索的權重配置
 
     # Cloudflare Tunnel (如果在此處管理)
     CLOUDFLARE_TUNNEL_URL: str | None = None
