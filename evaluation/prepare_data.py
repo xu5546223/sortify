@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
-    mongodb_url: str = os.getenv("MONGODB_URL", "mongodb://admin:password@localhost:27017")
+    mongodb_url: str = os.getenv("MONGODB_URL")
     db_name: str = os.getenv("DB_NAME", "sortify_db")
 
     class Config:
