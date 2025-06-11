@@ -96,11 +96,16 @@ class AIQARequest(BaseModel):
     ensure_chinese_output: Optional[bool] = Field(None, description="確保AI回答使用中文輸出，如果未指定則使用全域設定")
 
 class QueryRewriteResult(BaseModel):
-    """查詢重寫結果"""
+    """查詢重寫結果 - 支持智能意圖分析和動態策略路由"""
     original_query: str = Field(..., description="原始查詢")
     rewritten_queries: List[str] = Field(..., description="重寫後的查詢列表")
     extracted_parameters: Dict[str, Any] = Field(default_factory=dict, description="提取的結構化參數")
     intent_analysis: Optional[str] = Field(None, description="意圖分析")
+    
+    # 新增：智能策略路由字段
+    query_granularity: Optional[str] = Field(None, description="問題粒度：thematic, detailed, unknown")
+    search_strategy_suggestion: Optional[str] = Field(None, description="建議的搜索策略：summary_only, rrf_fusion, keyword_enhanced_rrf")
+    reasoning: Optional[str] = Field(None, description="AI 對原始問題的分析推理過程")
 
 # 新增：用於表示向量搜索的單個原始結果
 class SemanticContextDocument(BaseModel):

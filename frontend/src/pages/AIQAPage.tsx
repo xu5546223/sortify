@@ -678,6 +678,50 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
                             key="query-rewrite"
                             extra={<Tooltip title="AI如何理解並優化您的問題"><InfoCircleOutlined style={{color: '#1890ff'}} /></Tooltip>}
                           >
+                            {/* 新增：顯示AI分析結果 */}
+                            {(session.queryRewriteResult.reasoning || 
+                              session.queryRewriteResult.query_granularity || 
+                              session.queryRewriteResult.search_strategy_suggestion) && (
+                              <div className="mb-4 p-3 bg-blue-50 rounded-lg border-l-4 border-blue-400">
+                                <div className="space-y-2">
+                                  {session.queryRewriteResult.reasoning && (
+                                    <div>
+                                      <Text strong style={{color: '#1890ff'}}>🧠 AI分析推理：</Text>
+                                      <div className="mt-1 text-sm text-gray-700">
+                                        {session.queryRewriteResult.reasoning}
+                                      </div>
+                                    </div>
+                                  )}
+                                  <div className="flex flex-wrap gap-2">
+                                    {session.queryRewriteResult.query_granularity && (
+                                      <div>
+                                        <Text strong style={{color: '#52c41a'}}>📊 問題粒度：</Text>
+                                        <Tag color={
+                                          session.queryRewriteResult.query_granularity === 'thematic' ? 'blue' :
+                                          session.queryRewriteResult.query_granularity === 'detailed' ? 'green' : 'orange'
+                                        }>
+                                          {session.queryRewriteResult.query_granularity === 'thematic' ? '主題級' :
+                                           session.queryRewriteResult.query_granularity === 'detailed' ? '細節級' : '不確定'}
+                                        </Tag>
+                                      </div>
+                                    )}
+                                    {session.queryRewriteResult.search_strategy_suggestion && (
+                                      <div>
+                                        <Text strong style={{color: '#722ed1'}}>🎯 建議策略：</Text>
+                                        <Tag color={
+                                          session.queryRewriteResult.search_strategy_suggestion === 'summary_only' ? 'cyan' :
+                                          session.queryRewriteResult.search_strategy_suggestion === 'rrf_fusion' ? 'purple' : 'magenta'
+                                        }>
+                                          {session.queryRewriteResult.search_strategy_suggestion === 'summary_only' ? '摘要專用' :
+                                           session.queryRewriteResult.search_strategy_suggestion === 'rrf_fusion' ? 'RRF融合' : '關鍵詞增強RRF'}
+                                        </Tag>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            
                             <Steps direction="vertical" size="small" current={session.queryRewriteResult.rewritten_queries.length}>
                               <Steps.Step 
                                 title="原始問題" 
@@ -957,6 +1001,49 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
                         )}
                         {session.queryRewriteResult && (
                           <Panel header="查詢重寫過程" key="modal-query-rewrite">
+                            {/* 新增：顯示AI分析結果 */}
+                            {(session.queryRewriteResult.reasoning || 
+                              session.queryRewriteResult.query_granularity || 
+                              session.queryRewriteResult.search_strategy_suggestion) && (
+                              <div className="mb-4 p-3 bg-blue-50 rounded-lg border-l-4 border-blue-400">
+                                <div className="space-y-2">
+                                  {session.queryRewriteResult.reasoning && (
+                                    <div>
+                                      <Text strong style={{color: '#1890ff'}}>🧠 AI分析推理：</Text>
+                                      <div className="mt-1 text-sm text-gray-700">
+                                        {session.queryRewriteResult.reasoning}
+                                      </div>
+                                    </div>
+                                  )}
+                                  <div className="flex flex-wrap gap-2">
+                                    {session.queryRewriteResult.query_granularity && (
+                                      <div>
+                                        <Text strong style={{color: '#52c41a'}}>📊 問題粒度：</Text>
+                                        <Tag color={
+                                          session.queryRewriteResult.query_granularity === 'thematic' ? 'blue' :
+                                          session.queryRewriteResult.query_granularity === 'detailed' ? 'green' : 'orange'
+                                        }>
+                                          {session.queryRewriteResult.query_granularity === 'thematic' ? '主題級' :
+                                           session.queryRewriteResult.query_granularity === 'detailed' ? '細節級' : '不確定'}
+                                        </Tag>
+                                      </div>
+                                    )}
+                                    {session.queryRewriteResult.search_strategy_suggestion && (
+                                      <div>
+                                        <Text strong style={{color: '#722ed1'}}>🎯 建議策略：</Text>
+                                        <Tag color={
+                                          session.queryRewriteResult.search_strategy_suggestion === 'summary_only' ? 'cyan' :
+                                          session.queryRewriteResult.search_strategy_suggestion === 'rrf_fusion' ? 'purple' : 'magenta'
+                                        }>
+                                          {session.queryRewriteResult.search_strategy_suggestion === 'summary_only' ? '摘要專用' :
+                                           session.queryRewriteResult.search_strategy_suggestion === 'rrf_fusion' ? 'RRF融合' : '關鍵詞增強RRF'}
+                                        </Tag>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
                             <Steps direction="vertical" size="small" current={session.queryRewriteResult.rewritten_queries.length}>
                               <Steps.Step title="原始問題" description={session.queryRewriteResult.original_query} icon={<UserOutlined />} />
                               {session.queryRewriteResult.rewritten_queries.map((rq, idx) => (

@@ -419,6 +419,11 @@ export interface QueryRewriteResult { // Used in AIQAResponse
   rewritten_queries: string[];
   extracted_parameters: Record<string, any>;
   intent_analysis?: string | null;
+  
+  // 新增：智能策略路由字段
+  query_granularity?: string | null; // "thematic", "detailed", "unknown"
+  search_strategy_suggestion?: string | null; // "summary_only", "rrf_fusion", "keyword_enhanced_rrf"
+  reasoning?: string | null; // AI 對原始問題的分析推理過程
 }
 
 export interface LLMContextDocument {

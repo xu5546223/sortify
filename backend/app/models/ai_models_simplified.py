@@ -106,6 +106,38 @@ class AITextAnalysisOutput(BaseModel):
 # === New Model Definitions ===
 
 class AIQueryRewriteOutput(BaseModel):
+    """智能查詢重寫輸出模型 - 支持意圖分析和動態策略路由"""
+    reasoning: str = Field(..., description="對原始問題的分析過程和推理")
+    
+    query_granularity: str = Field(
+        ..., 
+        description="問題粒度：'thematic' (主題級/概括性) 或 'detailed' (細節級/精確性) 或 'unknown' (不確定)"
+    )
+    
+    rewritten_queries: List[str] = Field(
+        ..., 
+        description="基於分析結果生成的多個優化查詢，數量應為3到5個"
+    )
+    
+    search_strategy_suggestion: str = Field(
+        ...,
+        description="根據問題粒度和內容建議的搜索策略：'summary_only', 'rrf_fusion', 或 'keyword_enhanced_rrf'"
+    )
+    
+    # 保留原有的 extracted_parameters 以保持向後兼容
+    extracted_parameters: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="提取的查詢參數，包含時間範圍、實體、領域等結構化信息"
+    )
+    
+    # 擴展的意圖分析信息
+    intent_analysis: str = Field(
+        default="Intent analysis not provided",
+        description="深度意圖分析結果"
+    )
+
+# 原有的向後兼容版本
+class AIQueryRewriteOutputLegacy(BaseModel):
     rewritten_queries: List[str] = Field(default_factory=list)
     extracted_parameters: Dict[str, Any] = Field(default_factory=dict)
     intent_analysis: str = "Intent analysis not provided"

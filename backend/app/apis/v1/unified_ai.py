@@ -265,7 +265,7 @@ async def ai_question_answer(
         )
 
 # === 查詢重寫端點（已切換到簡化版） ===
-@router.post("/rewrite-query")
+@router.post("/rewrite-query", response_model=dict)
 async def rewrite_query(
     fastapi_request: Request, # Added
     request_data: QueryRewriteRequest,
@@ -310,13 +310,25 @@ async def rewrite_query(
                 "processing_time_ms": int(ai_response.processing_time_seconds * 1000) if ai_response.processing_time_seconds else None
             }
         )
-        return {
+        # 構建符合前端期望的 QueryRewriteResponse 格式
+        query_rewrite_response = {
             "original_query": request_data.query,
-            "rewritten_result": ai_response.output_data.model_dump_json() if hasattr(ai_response.output_data, 'model_dump_json') else str(ai_response.output_data),
+            "rewritten_queries": getattr(ai_response.output_data, 'rewritten_queries', []),
+            "extracted_parameters": getattr(ai_response.output_data, 'extracted_parameters', {}),
+            "intent_analysis": getattr(ai_response.output_data, 'intent_analysis', None),
+            "processing_time": ai_response.processing_time_seconds,
+            "model_used": ai_response.model_used
+        }
+        
+        # 包裝在 AIResponse 格式中
+        return {
+            "success": True,
+            "content": query_rewrite_response,
             "token_usage": ai_response.token_usage.model_dump() if ai_response.token_usage else None,
             "model_used": ai_response.model_used,
             "processing_time": ai_response.processing_time_seconds,
-            "simplified_version": True
+            "request_id": None,
+            "created_at": None
         }
         
     except HTTPException:

@@ -32,6 +32,52 @@ from app.services.enhanced_search_service import enhanced_search_service
 
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
 
+
+class SearchWeightConfig:
+    """搜索權重配置類 - 統一管理所有權重相關邏輯"""
+    
+    QUERY_TYPE_WEIGHTS = {
+        0: 1.3,  # 類型A：自然語言摘要風格 - 最高權重
+        1: 1.1,  # 類型B：關鍵詞密集查詢 - 中等權重  
+        2: 1.0   # 類型C：領域專業查詢 - 標準權重
+    }
+    
+    @classmethod
+    def apply_query_weights(cls, results: List[SemanticSearchResult], query_index: int) -> List[SemanticSearchResult]:
+        """應用查詢權重到搜索結果"""
+        weight = cls.QUERY_TYPE_WEIGHTS.get(query_index, 1.0)
+        for result in results:
+            result.similarity_score *= weight
+        return results
+    
+    @classmethod
+    def get_query_weight(cls, query_index: int) -> float:
+        """獲取特定查詢索引的權重"""
+        return cls.QUERY_TYPE_WEIGHTS.get(query_index, 1.0)
+    
+    @classmethod
+    def merge_weighted_results(cls, all_results_map: Dict[str, SemanticSearchResult], new_results: List[SemanticSearchResult], query_index: int) -> None:
+        """合併加權結果到總結果集"""
+        weight = cls.get_query_weight(query_index)
+        
+        for result in new_results:
+            weighted_score = result.similarity_score * weight
+            
+            if result.document_id not in all_results_map:
+                # 創建新結果
+                all_results_map[result.document_id] = SemanticSearchResult(
+                    document_id=result.document_id,
+                    similarity_score=weighted_score,
+                    summary_text=result.summary_text,
+                    metadata=result.metadata
+                )
+            else:
+                # 已存在的文檔，取最高分數
+                if weighted_score > all_results_map[result.document_id].similarity_score:
+                    all_results_map[result.document_id].similarity_score = weighted_score
+                    all_results_map[result.document_id].summary_text = result.summary_text
+
+
 def remove_projection_path_collisions(projection: dict) -> dict:
     """
     移除 MongoDB projection 中的父子欄位衝突，只保留最底層欄位。
@@ -54,6 +100,7 @@ def remove_projection_path_collisions(projection: dict) -> dict:
         projection.pop(k, None)
     return projection
 
+
 class EnhancedAIQAService:
     """增強的AI問答服務 - 使用統一AI管理架構和專門的緩存管理器"""
     
@@ -67,8 +114,327 @@ class EnhancedAIQAService:
         
         logger.info("EnhancedAIQAService 初始化完成，使用專門的 AI 緩存管理器")
     
-# 注意：_get_or_create_schema_cache 和 _get_or_create_system_instruction_cache 方法
-# 現在通過 self.cache_manager 統一管理，不再需要在此類中單獨實現
+    async def _get_query_vectors(self, queries: List[str]) -> Dict[str, List[float]]:
+        """統一向量獲取接口 - 通過緩存管理器統一處理"""
+        vectors = {}
+        uncached_queries = [q for q in queries if self.cache_manager.get_query_embedding(q) is None]
+        
+        # 批次處理未緩存的查詢
+        if uncached_queries:
+            try:
+                query_vectors = embedding_service.encode_batch(uncached_queries)
+                self.cache_manager.batch_set_query_embeddings(uncached_queries, query_vectors)
+                logger.debug(f"批次生成並緩存了 {len(uncached_queries)} 個查詢的向量")
+            except Exception as e:
+                logger.error(f"批次向量生成失敗: {str(e)}")
+                # 回退到單個處理
+                for query in uncached_queries:
+                    try:
+                        single_vector = embedding_service.encode_text(query)
+                        if single_vector:
+                            self.cache_manager.set_query_embedding(query, single_vector)
+                    except Exception as single_e:
+                        logger.error(f"單個查詢向量生成失敗 '{query[:30]}...': {str(single_e)}")
+        
+        # 收集所有向量
+        for query in queries:
+            vector = self.cache_manager.get_query_embedding(query)
+            if vector:
+                vectors[query] = vector
+            else:
+                logger.warning(f"無法獲取查詢向量: '{query[:30]}...'")
+        
+        return vectors
+
+    def _extract_search_strategy(self, query_rewrite_result: Optional[QueryRewriteResult]) -> str:
+        """提取搜索策略 - 統一策略決策邏輯"""
+        if not query_rewrite_result:
+            return "hybrid"
+        
+        suggested = getattr(query_rewrite_result, 'search_strategy_suggestion', None)
+        granularity = getattr(query_rewrite_result, 'query_granularity', None)
+        
+        # 策略映射邏輯
+        strategy_map = {
+            "summary_only": "summary_only",
+            "rrf_fusion": "rrf_fusion", 
+            "keyword_enhanced_rrf": "rrf_fusion"
+        }
+        
+        # 根據粒度自動選擇
+        if granularity == "thematic":
+            return "summary_only"
+        elif granularity in ["detailed", "unknown"]:
+            return "rrf_fusion"
+        
+        return strategy_map.get(suggested, "hybrid")
+
+    async def _unified_search(
+        self,
+        db: AsyncIOMotorDatabase,
+        queries: List[str],
+        search_strategy: str,
+        top_k: int,
+        user_id: Optional[str],
+        request_id: Optional[str],
+        similarity_threshold: float,
+        **kwargs
+    ) -> List[SemanticSearchResult]:
+        """統一搜索接口 - 調用 enhanced_search_service 或回退到基礎搜索"""
+        
+        if not queries:
+            return []
+        
+        primary_query = queries[0]
+        
+        try:
+            if search_strategy == "summary_only":
+                # 摘要專用搜索策略
+                return await self._summary_only_search_optimized(
+                    db, queries, top_k, user_id, request_id, similarity_threshold, **kwargs
+                )
+            elif search_strategy in ["rrf_fusion", "hybrid"]:
+                # 使用兩階段混合檢索
+                if self.enable_hybrid_search_for_aiqa:
+                    return await self._hybrid_search_optimized(
+                        db, queries, top_k, user_id, request_id, similarity_threshold, **kwargs
+                    )
+                else:
+                    # 回退到傳統搜索
+                    return await self._legacy_search_optimized(
+                        db, queries, top_k, user_id, request_id, similarity_threshold, **kwargs
+                    )
+            else:
+                # 未知策略，使用混合搜索
+                logger.warning(f"未知搜索策略 '{search_strategy}'，回退到混合搜索")
+                return await self._hybrid_search_optimized(
+                    db, queries, top_k, user_id, request_id, similarity_threshold, **kwargs
+                )
+                
+        except Exception as e:
+            logger.error(f"統一搜索失敗，使用基礎回退搜索: {str(e)}")
+            # 最終回退到最基礎的搜索
+            return await self._basic_fallback_search(
+                db, primary_query, top_k, user_id, similarity_threshold
+            )
+
+    async def _summary_only_search_optimized(
+        self,
+        db: AsyncIOMotorDatabase,
+        queries: List[str],
+        top_k: int,
+        user_id: Optional[str],
+        request_id: Optional[str],
+        similarity_threshold: float,
+        **kwargs
+    ) -> List[SemanticSearchResult]:
+        """優化的摘要專用搜索"""
+        logger.info(f"🎯 執行摘要專用搜索，查詢數量: {len(queries)}")
+        
+        # 獲取查詢向量
+        query_vectors = await self._get_query_vectors(queries)
+        all_results_map: Dict[str, SemanticSearchResult] = {}
+        
+        for i, query in enumerate(queries):
+            if query not in query_vectors:
+                logger.warning(f"跳過無向量的查詢: {query[:30]}...")
+                continue
+            
+            query_embedding = query_vectors[query]
+            
+            # 準備摘要搜索的過濾器
+            summary_metadata_filter = {"type": "summary"}
+            document_ids = kwargs.get('document_ids')
+            if document_ids:
+                summary_metadata_filter["document_id"] = {"$in": document_ids}
+            
+            # 執行摘要向量搜索
+            summary_results = await asyncio.to_thread(
+                vector_db_service.search_similar_vectors,
+                query_vector=query_embedding,
+                top_k=top_k * 2,  # 多取一些候選
+                owner_id_filter=user_id,
+                metadata_filter=summary_metadata_filter,
+                similarity_threshold=similarity_threshold * 0.9  # 稍微降低閾值
+            )
+            
+            # 應用查詢權重並合併結果
+            SearchWeightConfig.merge_weighted_results(all_results_map, summary_results, i)
+        
+        # 排序並返回結果
+        final_results = list(all_results_map.values())
+        final_results.sort(key=lambda x: x.similarity_score, reverse=True)
+        
+        logger.info(f"摘要專用搜索完成，找到 {len(final_results)} 個結果")
+        return final_results[:top_k]
+
+    async def _hybrid_search_optimized(
+        self,
+        db: AsyncIOMotorDatabase,
+        queries: List[str],
+        top_k: int,
+        user_id: Optional[str],
+        request_id: Optional[str],
+        similarity_threshold: float,
+        **kwargs
+    ) -> List[SemanticSearchResult]:
+        """優化的混合搜索 - 使用 enhanced_search_service"""
+        
+        try:
+            all_results_map: Dict[str, SemanticSearchResult] = {}
+            
+            # 為每個重寫查詢執行兩階段搜索
+            for i, query in enumerate(queries):
+                logger.debug(f"執行第 {i+1}/{len(queries)} 個查詢的混合搜索: {query[:50]}...")
+                
+                # 執行 RRF 融合搜索
+                stage_results = await enhanced_search_service.two_stage_hybrid_search(
+                    db=db,
+                    query=query,
+                    user_id=user_id,
+                    search_type="rrf_fusion",
+                    stage1_top_k=min(top_k * 2, 15),
+                    stage2_top_k=top_k,
+                    similarity_threshold=similarity_threshold * 0.8
+                )
+                
+                # 應用查詢權重並合併結果
+                SearchWeightConfig.merge_weighted_results(all_results_map, stage_results, i)
+                
+                logger.debug(f"查詢 {i+1} 完成，本次找到 {len(stage_results)} 個結果")
+            
+            # 最終結果排序和多樣性優化
+            final_results = list(all_results_map.values())
+            final_results.sort(key=lambda x: x.similarity_score, reverse=True)
+            
+            # 多樣性優化
+            if len(final_results) > top_k:
+                final_results = self._apply_diversity_optimization(final_results, top_k)
+            
+            result_list = final_results[:top_k]
+            
+            logger.info(f"混合搜索完成: {len(queries)} 個查詢 → {len(result_list)} 個最終結果")
+            
+            return result_list
+            
+        except Exception as e:
+            logger.error(f"混合搜索失敗，回退到傳統搜索: {str(e)}", exc_info=True)
+            return await self._legacy_search_optimized(
+                db, queries, top_k, user_id, request_id, similarity_threshold, **kwargs
+            )
+
+    async def _legacy_search_optimized(
+        self,
+        db: AsyncIOMotorDatabase,
+        queries: List[str],
+        top_k: int,
+        user_id: Optional[str],
+        request_id: Optional[str],
+        similarity_threshold: float,
+        **kwargs
+    ) -> List[SemanticSearchResult]:
+        """優化的傳統搜索"""
+        
+        # 獲取查詢向量
+        query_vectors = await self._get_query_vectors(queries)
+        all_results_map: Dict[str, SemanticSearchResult] = {}
+        
+        # 準備元數據過濾器
+        chroma_metadata_filter: Dict[str, Any] = {}
+        # 這裡可以根據 kwargs 添加更多過濾邏輯
+        
+        for i, query in enumerate(queries):
+            if query not in query_vectors:
+                continue
+                
+            query_vector = query_vectors[query]
+            adjusted_top_k = min(top_k * 2, 20) if len(queries) > 1 else top_k
+            
+            # 執行向量搜索
+            results = vector_db_service.search_similar_vectors(
+                query_vector=query_vector, 
+                top_k=adjusted_top_k, 
+                owner_id_filter=user_id, 
+                metadata_filter=chroma_metadata_filter,
+                similarity_threshold=similarity_threshold * 0.8
+            )
+            
+            # 如果帶過濾條件的搜索沒有結果，嘗試回退搜索
+            if not results and chroma_metadata_filter:
+                logger.warning(f"帶 metadata_filter 的搜索沒有結果，嘗試回退搜索")
+                results = vector_db_service.search_similar_vectors(
+                    query_vector=query_vector, 
+                    top_k=adjusted_top_k, 
+                    owner_id_filter=user_id, 
+                    metadata_filter=None,
+                    similarity_threshold=similarity_threshold * 0.8
+                )
+            
+            # 應用查詢權重並合併結果
+            SearchWeightConfig.merge_weighted_results(all_results_map, results, i)
+        
+        # 排序和多樣性優化
+        final_results = list(all_results_map.values())
+        final_results.sort(key=lambda x: x.similarity_score, reverse=True)
+        
+        if len(final_results) > top_k:
+            final_results = self._apply_diversity_optimization(final_results, top_k)
+        
+        # 最終過濾
+        final_threshold = similarity_threshold
+        final_results = [r for r in final_results if r.similarity_score >= final_threshold]
+        
+        return final_results[:top_k]
+
+    async def _basic_fallback_search(
+        self,
+        db: AsyncIOMotorDatabase,
+        query: str,
+        top_k: int,
+        user_id: Optional[str],
+        similarity_threshold: float
+    ) -> List[SemanticSearchResult]:
+        """最基礎的回退搜索"""
+        try:
+            query_embedding = embedding_service.encode_text(query)
+            if not query_embedding or not any(query_embedding):
+                logger.error("無法生成查詢的嵌入向量")
+                return []
+            
+            results = vector_db_service.search_similar_vectors(
+                query_vector=query_embedding,
+                top_k=top_k,
+                owner_id_filter=user_id,
+                metadata_filter=None,
+                similarity_threshold=similarity_threshold * 0.7  # 更寬鬆的閾值
+            )
+            
+            logger.info(f"基礎回退搜索找到 {len(results)} 個結果")
+            return results
+            
+        except Exception as e:
+            logger.error(f"基礎回退搜索也失敗: {str(e)}")
+            return []
+
+    def _apply_diversity_optimization(self, results: List[SemanticSearchResult], top_k: int) -> List[SemanticSearchResult]:
+        """應用多樣性優化算法"""
+        diversified_results = []
+        seen_summary_keywords = set()
+        
+        for result in results:
+            # 提取摘要的關鍵詞進行去重判斷
+            summary_words = set(result.summary_text.lower().split()[:10])
+            overlap = len(summary_words.intersection(seen_summary_keywords))
+            
+            # 如果重疊度不高，或者還沒有足夠的結果，則加入
+            if overlap < 5 or len(diversified_results) < max(3, top_k // 2):
+                diversified_results.append(result)
+                seen_summary_keywords.update(summary_words)
+                
+                if len(diversified_results) >= top_k:
+                    break
+        
+        return diversified_results
 
     async def process_qa_request(
         self, 
@@ -540,12 +906,50 @@ class EnhancedAIQAService:
             return fallback_selection
 
     async def _rewrite_query_unified(self, db: AsyncIOMotorDatabase, original_query: str, user_id: Optional[str], request_id: Optional[str], query_rewrite_count: int) -> Tuple[QueryRewriteResult, int]:
+        """統一的查詢重寫方法 - 支持新的智能意圖分析和動態策略路由"""
         ai_response = await unified_ai_service_simplified.rewrite_query(original_query=original_query, db=db)
         tokens = ai_response.token_usage.total_tokens if ai_response.token_usage else 0
-        if ai_response.success and isinstance(ai_response.output_data, AIQueryRewriteOutput):
-            output = ai_response.output_data
-            return QueryRewriteResult(original_query=original_query, rewritten_queries=output.rewritten_queries, extracted_parameters=output.extracted_parameters, intent_analysis=output.intent_analysis), tokens
-        return QueryRewriteResult(original_query=original_query, rewritten_queries=[original_query], extracted_parameters={}, intent_analysis="Query rewrite failed."), tokens
+        
+        if ai_response.success and ai_response.output_data:
+            # 嘗試解析新的 AIQueryRewriteOutput 格式
+            if isinstance(ai_response.output_data, AIQueryRewriteOutput):
+                output = ai_response.output_data
+                logger.info(f"🧠 AI意圖分析：{output.reasoning}")
+                logger.info(f"📊 問題粒度：{output.query_granularity}")
+                logger.info(f"🎯 建議策略：{output.search_strategy_suggestion}")
+                logger.info(f"📝 重寫查詢數量：{len(output.rewritten_queries)}")
+                
+                # 創建擴展的 QueryRewriteResult，包含新的策略信息
+                return QueryRewriteResult(
+                    original_query=original_query, 
+                    rewritten_queries=output.rewritten_queries, 
+                    extracted_parameters=output.extracted_parameters, 
+                    intent_analysis=output.intent_analysis,
+                    # 添加新的策略信息到 extracted_parameters
+                    query_granularity=output.query_granularity,
+                    search_strategy_suggestion=output.search_strategy_suggestion,
+                    reasoning=output.reasoning
+                ), tokens
+            
+            # 向後兼容：處理舊的 AIQueryRewriteOutputLegacy 格式
+            elif hasattr(ai_response.output_data, 'rewritten_queries'):
+                output = ai_response.output_data
+                logger.warning("使用舊版查詢重寫格式，缺少智能策略路由信息")
+                return QueryRewriteResult(
+                    original_query=original_query, 
+                    rewritten_queries=output.rewritten_queries if hasattr(output, 'rewritten_queries') else [original_query], 
+                    extracted_parameters=output.extracted_parameters if hasattr(output, 'extracted_parameters') else {}, 
+                    intent_analysis=output.intent_analysis if hasattr(output, 'intent_analysis') else "Legacy format - no intent analysis"
+                ), tokens
+        
+        # 失敗回退
+        logger.error("查詢重寫失敗，使用原始查詢")
+        return QueryRewriteResult(
+            original_query=original_query, 
+            rewritten_queries=[original_query], 
+            extracted_parameters={}, 
+            intent_analysis="Query rewrite failed."
+        ), tokens
 
     async def _perform_traditional_single_stage_search(
         self,
@@ -621,6 +1025,71 @@ class EnhancedAIQAService:
         
         return final_results[:top_k]
 
+    async def _semantic_search_summary_only(
+        self,
+        db: AsyncIOMotorDatabase,
+        queries: List[str],
+        top_k: int,
+        user_id: Optional[str],
+        request_id: Optional[str],
+        similarity_threshold: float,
+        document_ids: Optional[List[str]] = None
+    ) -> List[SemanticSearchResult]:
+        """摘要專用搜索 - 適合主題級問題"""
+        logger.info(f"🎯 執行摘要專用搜索，查詢數量: {len(queries)}")
+        
+        all_results_map: Dict[str, SemanticSearchResult] = {}
+        
+        for i, query in enumerate(queries):
+            logger.debug(f"執行第 {i+1}/{len(queries)} 個查詢的摘要搜索: {query[:50]}...")
+            
+            # 生成查詢向量
+            query_embedding = embedding_service.encode_text(query)
+            if not query_embedding or not any(query_embedding):
+                logger.warning(f"查詢 '{query[:30]}...' 無法生成嵌入向量，跳過")
+                continue
+            
+            # 準備摘要搜索的過濾器
+            summary_metadata_filter = {"type": "summary"}
+            if document_ids:
+                summary_metadata_filter["document_id"] = {"$in": document_ids}
+            
+            # 執行摘要向量搜索
+            summary_results = await asyncio.to_thread(
+                vector_db_service.search_similar_vectors,
+                query_vector=query_embedding,
+                top_k=top_k * 2,  # 多取一些候選
+                owner_id_filter=user_id,
+                metadata_filter=summary_metadata_filter,
+                similarity_threshold=similarity_threshold * 0.9  # 稍微降低閾值以獲得更多候選
+            )
+            
+            # 應用查詢權重（主題級查詢第一個通常最重要）
+            query_weight = 1.2 if i == 0 else 1.0
+            
+            for result in summary_results:
+                weighted_score = result.similarity_score * query_weight
+                
+                if result.document_id not in all_results_map:
+                    all_results_map[result.document_id] = SemanticSearchResult(
+                        document_id=result.document_id,
+                        similarity_score=weighted_score,
+                        summary_text=result.summary_text,
+                        metadata=result.metadata
+                    )
+                else:
+                    # 保留最高分
+                    if weighted_score > all_results_map[result.document_id].similarity_score:
+                        all_results_map[result.document_id].similarity_score = weighted_score
+                        all_results_map[result.document_id].summary_text = result.summary_text
+        
+        # 排序並返回結果
+        final_results = list(all_results_map.values())
+        final_results.sort(key=lambda x: x.similarity_score, reverse=True)
+        
+        logger.info(f"摘要專用搜索完成，找到 {len(final_results)} 個結果")
+        return final_results[:top_k]
+
     async def _perform_optimized_search_direct(
         self,
         db: AsyncIOMotorDatabase,
@@ -632,20 +1101,23 @@ class EnhancedAIQAService:
         similarity_threshold: float,
         enable_query_expansion: bool
     ) -> List[SemanticSearchResult]:
-        """直接執行優化檢索 - 使用重寫查詢進行檢索"""
+        """簡化的搜索執行邏輯 - 使用統一搜索接口"""
         
-        if self.enable_hybrid_search_for_aiqa:
-            logger.info(f"執行兩階段混合檢索優化，查詢數量: {len(queries)}")
-            return await self._semantic_search_with_hybrid_retrieval(
-                db, queries, top_k, user_id, request_id, query_rewrite_result, 
-                similarity_threshold, enable_query_expansion
-            )
-        else:
-            logger.info(f"執行傳統檢索優化，查詢數量: {len(queries)}")
-            return await self._semantic_search_legacy(
-                db, queries, top_k, user_id, request_id, query_rewrite_result, 
-                similarity_threshold, enable_query_expansion
-            )
+        # 獲取 AI 建議的策略
+        strategy = self._extract_search_strategy(query_rewrite_result)
+        
+        logger.info(f"🎯 執行搜索策略: {strategy}")
+        
+        # 統一搜索調用
+        return await self._unified_search(
+            db=db,
+            queries=queries,
+            search_strategy=strategy,
+            top_k=top_k,
+            user_id=user_id,
+            request_id=request_id,
+            similarity_threshold=similarity_threshold
+                )
     
     async def _semantic_search_with_hybrid_retrieval(
         self, 
@@ -658,7 +1130,7 @@ class EnhancedAIQAService:
         similarity_threshold: float, 
         enable_query_expansion: bool
     ) -> List[SemanticSearchResult]:
-        """使用兩階段混合檢索進行語義搜索 - 為AIQA優化"""
+        """使用兩階段混合檢索進行語義搜索 - 已重構使用統一配置"""
         
         # 為了日誌和服務調用，確保 user_id 是字串
         user_id_str = str(user_id) if user_id else None
@@ -668,13 +1140,6 @@ class EnhancedAIQAService:
             from app.services.enhanced_search_service import enhanced_search_service
             
             all_results_map: Dict[str, SemanticSearchResult] = {}
-            
-            # 應用查詢類型權重 (保持AIQA原有的優化邏輯)
-            query_type_weights = {
-                0: 1.3,  # 類型A：自然語言摘要風格 - 最高權重
-                1: 1.1,  # 類型B：關鍵詞密集查詢 - 中等權重
-                2: 1.0   # 類型C：領域專業查詢 - 標準權重
-            }
             
             # 為每個重寫查詢執行兩階段搜索
             for i, query in enumerate(queries):
@@ -691,76 +1156,40 @@ class EnhancedAIQAService:
                     similarity_threshold=similarity_threshold * 0.8  # 保持AIQA原有的閾值策略
                 )
                 
-                # 應用查詢權重和結果融合 (保持AIQA原有邏輯)
-                query_weight = query_type_weights.get(i, 1.0)
-                
-                for result in stage_results:
-                    # 計算加權相似度分數
-                    weighted_score = result.similarity_score * query_weight
-                    
-                    # 融合多查詢結果
-                    if result.document_id not in all_results_map:
-                        # 創建新結果
-                        all_results_map[result.document_id] = SemanticSearchResult(
-                            document_id=result.document_id,
-                            similarity_score=weighted_score,
-                            summary_text=result.summary_text,
-                            metadata=result.metadata
-                        )
-                    else:
-                        # 已存在的文檔，取最高分數
-                        if weighted_score > all_results_map[result.document_id].similarity_score:
-                            all_results_map[result.document_id].similarity_score = weighted_score
-                            # 可能需要更新摘要文本為更相關的版本
-                            all_results_map[result.document_id].summary_text = result.summary_text
+                # 使用統一的權重配置合併結果
+                SearchWeightConfig.merge_weighted_results(all_results_map, stage_results, i)
                 
                 logger.debug(f"查詢 {i+1} 完成，本次找到 {len(stage_results)} 個結果")
             
-            # 最終結果排序和多樣性優化 (保持AIQA原有邏輯)
+            # 最終結果排序和多樣性優化
             final_results = list(all_results_map.values())
             final_results.sort(key=lambda x: x.similarity_score, reverse=True)
             
             # 多樣性優化
             if len(final_results) > top_k:
-                diversified_results = []
-                seen_summary_keywords = set()
-                
-                for result in final_results:
-                    summary_words = set(result.summary_text.lower().split()[:10])
-                    overlap = len(summary_words.intersection(seen_summary_keywords))
-                    
-                    if overlap < 5 or len(diversified_results) < max(3, top_k // 2):
-                        diversified_results.append(result)
-                        seen_summary_keywords.update(summary_words)
-                        
-                        if len(diversified_results) >= top_k:
-                            break
-                
-                final_results = diversified_results
+                final_results = self._apply_diversity_optimization(final_results, top_k)
             
-            # 最終閾值過濾 - RRF分數與相似度閾值不可比，故移除此過濾
-            # final_results = [r for r in final_results if r.similarity_score >= similarity_threshold]
             result_list = final_results[:top_k]
             
-            logger.info(f"AIQA兩階段混合檢索完成: {len(queries)} 個查詢 → {len(result_list)} 個最終結果 (已移除不適用的RRF分數閾值過濾)")
+            logger.info(f"兩階段混合檢索完成: {len(queries)} 個查詢 → {len(result_list)} 個最終結果")
             
             await log_event(db=db, level=LogLevel.INFO,
-                            message=f"AIQA兩階段混合檢索完成: {len(result_list)} 個結果",
+                            message=f"兩階段混合檢索完成: {len(result_list)} 個結果",
                             source="service.enhanced_ai_qa.semantic_search_hybrid",
                             user_id=user_id_str, request_id=request_id,
                             details={
                                 "query_count": len(queries),
                                 "final_results": len(result_list),
                                 "search_strategy": "two_stage_hybrid",
-                                "diversity_optimization": len(final_results) != len(list(all_results_map.values()))
+                                "diversity_optimization": True
                             })
             
             return result_list
             
         except Exception as e:
-            logger.error(f"AIQA兩階段混合檢索失敗，回退到傳統搜索: {str(e)}", exc_info=True)
+            logger.error(f"兩階段混合檢索失敗，回退到傳統搜索: {str(e)}", exc_info=True)
             await log_event(db=db, level=LogLevel.WARNING,
-                            message=f"AIQA兩階段混合檢索失敗，回退到傳統搜索: {str(e)}",
+                            message=f"兩階段混合檢索失敗，回退到傳統搜索: {str(e)}",
                             source="service.enhanced_ai_qa.semantic_search_hybrid_fallback",
                             user_id=user_id_str, request_id=request_id,
                             details={"error": str(e)})
@@ -793,97 +1222,52 @@ class EnhancedAIQAService:
             if file_type: 
                 chroma_metadata_filter["file_type"] = file_type
 
-        # 使用緩存管理器處理查詢向量緩存
-        uncached_queries = [q for q in queries if self.cache_manager.get_query_embedding(q) is None]
-        if uncached_queries:
-            query_vectors = embedding_service.encode_batch(uncached_queries)
-            self.cache_manager.batch_set_query_embeddings(uncached_queries, query_vectors)
+        # 使用統一的向量獲取接口
+        query_vectors = await self._get_query_vectors(queries)
         
         try:
             owner_id_filter_for_vector_db = user_id if user_id else None
 
-            # 新增：多策略檢索與融合 - 調整權重以匹配新的查詢重寫策略
-            query_type_weights = {
-                0: 1.3,  # 類型A：自然語言摘要風格 - 最高權重，因為最匹配向量化文本的第一行
-                1: 1.1,  # 類型B：關鍵詞密集查詢 - 中等權重，匹配關鍵詞行
-                2: 1.0   # 類型C：領域專業查詢 - 標準權重，匹配專業領域行
-            }
-
             for i, q_item in enumerate(queries):
-                query_vector = self.cache_manager.get_query_embedding(q_item)
-                if query_vector:
-                    # 根據查詢類型調整 top_k，確保多樣性
-                    adjusted_top_k = min(top_k * 2, 20) if len(queries) > 1 else top_k
+                if q_item not in query_vectors:
+                    continue
                     
-                    # 嘗試帶過濾條件的搜索
+                query_vector = query_vectors[q_item]
+                # 根據查詢類型調整 top_k，確保多樣性
+                adjusted_top_k = min(top_k * 2, 20) if len(queries) > 1 else top_k
+                
+                # 嘗試帶過濾條件的搜索
+                results = vector_db_service.search_similar_vectors(
+                    query_vector=query_vector, 
+                    top_k=adjusted_top_k, 
+                    owner_id_filter=owner_id_filter_for_vector_db, 
+                    metadata_filter=chroma_metadata_filter,
+                    similarity_threshold=similarity_threshold * 0.8  # 略微降低閾值以獲得更多候選
+                )
+                
+                # 如果帶過濾條件的搜索沒有結果，且有 metadata_filter，則嘗試不帶 metadata_filter 的搜索
+                if not results and chroma_metadata_filter:
+                    logger.warning(f"帶 metadata_filter 的搜索沒有結果，嘗試回退搜索。Filter: {chroma_metadata_filter}")
                     results = vector_db_service.search_similar_vectors(
                         query_vector=query_vector, 
                         top_k=adjusted_top_k, 
                         owner_id_filter=owner_id_filter_for_vector_db, 
-                        metadata_filter=chroma_metadata_filter,
-                        similarity_threshold=similarity_threshold * 0.8  # 略微降低閾值以獲得更多候選
+                        metadata_filter=None,  # 回退：移除 metadata_filter
+                        similarity_threshold=similarity_threshold * 0.8
                     )
+                    if results:
+                        logger.info(f"回退搜索成功找到 {len(results)} 個結果")
                     
-                    # 如果帶過濾條件的搜索沒有結果，且有 metadata_filter，則嘗試不帶 metadata_filter 的搜索
-                    if not results and chroma_metadata_filter:
-                        logger.warning(f"帶 metadata_filter 的搜索沒有結果，嘗試回退搜索。Filter: {chroma_metadata_filter}")
-                        results = vector_db_service.search_similar_vectors(
-                            query_vector=query_vector, 
-                            top_k=adjusted_top_k, 
-                            owner_id_filter=owner_id_filter_for_vector_db, 
-                            metadata_filter=None,  # 回退：移除 metadata_filter
-                            similarity_threshold=similarity_threshold * 0.8
-                        )
-                        if results:
-                            logger.info(f"回退搜索成功找到 {len(results)} 個結果")
-                    
-                    # 應用查詢類型權重和重排序
-                    query_weight = query_type_weights.get(i, 1.0)
-                    for res in results:
-                        # 計算加權相似度分數
-                        weighted_score = res.similarity_score * query_weight
-                        
-                        # 如果是新文檔或分數更高，則更新
-                        if res.document_id not in all_results_map:
-                            # 創建新結果，調整分數
-                            new_result = SemanticSearchResult(
-                                document_id=res.document_id,
-                                similarity_score=weighted_score,
-                                summary_text=res.summary_text,
-                                metadata=res.metadata
-                            )
-                            all_results_map[res.document_id] = new_result
-                        else:
-                            # 已存在的文檔，取最高分數
-                            if weighted_score > all_results_map[res.document_id].similarity_score:
-                                all_results_map[res.document_id].similarity_score = weighted_score
+                # 使用統一的權重配置合併結果
+                SearchWeightConfig.merge_weighted_results(all_results_map, results, i)
 
             # 重排序和多樣性優化
             final_results = list(all_results_map.values())
-            
-            # 首先按分數排序
             final_results.sort(key=lambda x: x.similarity_score, reverse=True)
             
-            # 多樣性優化：確保不同類型的文檔都有機會被選中
+            # 多樣性優化
             if len(final_results) > top_k:
-                # 簡單的多樣性算法：確保前 top_k 個結果在內容上有差異
-                diversified_results = []
-                seen_summary_keywords = set()
-                
-                for result in final_results:
-                    # 提取摘要的關鍵詞進行去重判斷
-                    summary_words = set(result.summary_text.lower().split()[:10])  # 取前10個詞
-                    overlap = len(summary_words.intersection(seen_summary_keywords))
-                    
-                    # 如果重疊度不高，或者還沒有足夠的結果，則加入
-                    if overlap < 5 or len(diversified_results) < max(3, top_k // 2):
-                        diversified_results.append(result)
-                        seen_summary_keywords.update(summary_words)
-                        
-                        if len(diversified_results) >= top_k:
-                            break
-                
-                final_results = diversified_results
+                final_results = self._apply_diversity_optimization(final_results, top_k)
             
             # 最終過濾：確保分數不低於調整後的閾值
             final_threshold = similarity_threshold
