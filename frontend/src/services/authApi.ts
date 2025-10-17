@@ -381,6 +381,43 @@ export const validateToken = async (): Promise<boolean> => {
   }
 };
 
+/**
+ * 使用 Google OAuth Token 進行登入
+ * @param googleToken Google OAuth ID Token
+ * @returns Promise<Token> 包含 access_token 和 token_type
+ */
+export const googleLogin = async (googleToken: string): Promise<Token> => {
+  try {
+    const response = await apiClient.post<Token>('/auth/google-login', {
+      google_token: googleToken
+    });
+    // 登入成功後，將 token 儲存到 localStorage
+    if (response.data.access_token) {
+      localStorage.setItem('authToken', response.data.access_token);
+      console.log('Google login successful, token stored');
+    }
+    return response.data;
+  } catch (error: any) {
+    console.error('Google login failed:', error);
+    
+    // 處理不同類型的錯誤
+    if (error.response) {
+      const errorData = error.response.data as APIError;
+      let errorMessage = 'Google 登入失敗';
+      
+      if (typeof errorData.detail === 'string') {
+        errorMessage = errorData.detail;
+      } else if (Array.isArray(errorData.detail)) {
+        errorMessage = errorData.detail.map(err => err.msg).join(', ');
+      }
+      
+      throw new Error(errorMessage);
+    }
+    
+    throw new Error('網路連接錯誤，請檢查您的網路設定');
+  }
+};
+
 // 匯出認證相關的工具函數
 export const AuthUtils = {
   isUserLoggedIn,

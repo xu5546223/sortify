@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { ConfigProvider } from 'antd';
+import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { SettingsProvider } from './contexts/SettingsContext';
@@ -11,8 +12,7 @@ import DashboardPage from './pages/DashboardPage';
 import NotFoundPage from './pages/NotFoundPage';
 import UserProfilePage from './pages/UserProfilePage';
 import PasswordUpdatePage from './pages/auth/PasswordUpdatePage';
-import { CopilotPopup } from '@copilotkit/react-ui';
-import "@copilotkit/react-ui/styles.css";
+import GmailCallback from './pages/auth/GmailCallback';
 import { navItems } from './config/navConfig';
 import MainLayoutWithSidebar from './components/layout/MainLayoutWithSidebar';
 import MessageBoxPC from './components/common/MessageBoxPC';
@@ -37,6 +37,7 @@ const AppWithTheme: React.FC = () => {
       <Routes>
         <Route path="/auth/login" element={<PublicRouteWrapper><LoginPage /></PublicRouteWrapper>} />
         <Route path="/auth/register" element={<PublicRouteWrapper><RegisterPage /></PublicRouteWrapper>} />
+        <Route path="/auth/gmail-callback" element={<GmailCallback />} />
         <Route path="/" element={<RootRedirect />} />
         <Route 
           element={
@@ -66,29 +67,25 @@ const AppWithTheme: React.FC = () => {
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
       <MessageBoxPC message={messageBox.message} type={messageBox.type} visible={messageBox.visible} />
-      <CopilotPopup
-        instructions="You are Sortify AI, A useful project assistant.Always respond in 繁體中文. "
-        defaultOpen={false}
-        labels={{
-          title: "Sortify AI Assistant",
-          initial: "Hi! How can I help you with your Sortify project today?"
-        }}
-      />
     </ConfigProvider>
   );
 };
 
 const App: React.FC = () => {
+  const googleClientId = process.env.REACT_APP_GOOGLE_CLIENT_ID || '';
+
   return (
-    <Router>
-      <AuthProvider>
-        <ThemeProvider>
-          <SettingsProvider>
-            <AppWithTheme />
-          </SettingsProvider>
-        </ThemeProvider>
-      </AuthProvider>
-    </Router>
+    <GoogleOAuthProvider clientId={googleClientId}>
+      <Router>
+        <AuthProvider>
+          <ThemeProvider>
+            <SettingsProvider>
+              <AppWithTheme />
+            </SettingsProvider>
+          </ThemeProvider>
+        </AuthProvider>
+      </Router>
+    </GoogleOAuthProvider>
   );
 };
 

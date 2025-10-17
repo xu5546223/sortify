@@ -66,6 +66,14 @@ class DocumentInDBBase(DocumentBase):
     
     error_details: Optional[str] = Field(None, description="處理過程中的詳細錯誤信息")
 
+    # 新增 Gmail 相關字段
+    email_source: Optional[str] = Field(None, description="郵件來源 (gmail, custom)")
+    email_metadata: Optional[Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Gmail 郵件元數據 (email_id, thread_id, from, to, 等)"
+    )
+    email_synced_at: Optional[datetime] = Field(None, description="郵件同步時間")
+
     @root_validator(pre=True)
     @classmethod
     def _set_id_from_underscore_id(cls, values: Dict[str, Any]) -> Dict[str, Any]:

@@ -52,6 +52,15 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 # 例如 60 分鐘
 
+    # Google OAuth 相關設定 (Gmail 集成)
+    GOOGLE_CLIENT_ID: Optional[str] = None
+    GOOGLE_CLIENT_SECRET: Optional[str] = None
+    GOOGLE_REDIRECT_URI: str = "http://localhost:3000/auth/gmail-callback"
+    
+    # Gmail API 相關設定
+    GMAIL_SCOPES: list[str] = ["https://www.googleapis.com/auth/gmail.readonly"]
+    GMAIL_API_QUOTA_PER_USER: int = 250  # Gmail API 每個用戶的每日配額
+
     # CORS 相關設定
     # 在生產環境中，應明確指定您的前端域名，例如: ["https://your-frontend.com", "http://localhost:3000"]
     # 若要允許所有來源 (通常僅用於開發)，可以使用 ["*"]，但請謹慎使用。

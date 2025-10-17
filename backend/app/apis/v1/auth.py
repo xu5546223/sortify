@@ -3,7 +3,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm # 用於接收 username 和 password
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from datetime import timedelta
-
+from pydantic import BaseModel
+import json
+import base64
 
 from ...models.token_models import Token # Token 回應模型
 from ...models.user_models import User, UserCreate, UserInDB, UserUpdate, PasswordUpdateIn # <--- 確保 UserUpdate 已導入
@@ -14,6 +16,11 @@ from ...core.password_utils import get_password_hash # 從 password_utils.py 匯
 from ...core.config import settings
 from ...core.logging_utils import log_event
 from ...models.log_models import LogLevel
+
+
+# Google OAuth 請求模型
+class GoogleLoginRequest(BaseModel):
+    google_token: str
 
 
 router = APIRouter()
@@ -274,6 +281,146 @@ async def delete_current_user_account(
 
     await log_event(db, LogLevel.INFO, f"User {username_to_delete} (ID: {user_id_to_delete}) successfully deleted their account", source="api.auth.delete_account", user_id=str(user_id_to_delete), request_id=request_id_for_log)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+@router.post("/google-login", response_model=Token, summary="使用 Google OAuth Token 登入")
+async def google_login(
+    request: Request,
+    google_login_req: GoogleLoginRequest,
+    db: AsyncIOMotorDatabase = Depends(get_db)
+):
+    """
+    使用 Google OAuth ID Token 進行身份驗證，成功則返回 Access Token。
+    """
+    request_id_for_log = request.state.request_id if hasattr(request.state, 'request_id') else None
+    
+    try:
+        # 解碼 Google ID Token (不驗證簽名，因為客戶端已驗證)
+        # Google ID Token 由三部分組成，以 '.' 分隔
+        token_parts = google_login_req.google_token.split('.')
+        if len(token_parts) != 3:
+            raise ValueError("Invalid token format")
+        
+        # 解碼 payload (第二部分)
+        payload = token_parts[1]
+        # 添加必要的 padding
+        padding = 4 - (len(payload) % 4)
+        if padding != 4:
+            payload += '=' * padding
+        
+        decoded_payload = json.loads(base64.urlsafe_b64decode(payload))
+        google_email = decoded_payload.get('email')
+        google_name = decoded_payload.get('name', '')
+        
+        if not google_email:
+            await log_event(
+                db=db,
+                level=LogLevel.WARNING,
+                message="Google login failed: No email in token",
+                source="api.auth.google_login",
+                request_id=request_id_for_log
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid Google token: missing email"
+            )
+        
+        # 檢查用戶是否存在
+        user = await crud_users.get_user_by_email(db, email=google_email)
+        
+        if not user:
+            # 創建新用戶
+            # 生成一個用戶名 (使用 email 的本地部分)
+            username = google_email.split('@')[0]
+            
+            # 確保用戶名唯一
+            counter = 1
+            original_username = username
+            while await crud_users.get_user_by_username(db, username=username):
+                username = f"{original_username}{counter}"
+                counter += 1
+            
+            # 創建臨時密碼（Google OAuth 用戶不會使用它）
+            temp_password = "google_oauth_user_" + google_email.replace('@', '_').replace('.', '_')
+            
+            user_create = UserCreate(
+                username=username,
+                email=google_email,
+                full_name=google_name or username,
+                password=temp_password
+            )
+            
+            try:
+                user = await crud_users.create_user(db=db, user_in=user_create)
+                await log_event(
+                    db=db,
+                    level=LogLevel.INFO,
+                    message=f"New user created via Google OAuth: {user.username}",
+                    source="api.auth.google_login",
+                    user_id=str(user.id),
+                    request_id=request_id_for_log,
+                    details={"email": google_email, "username": user.username}
+                )
+            except Exception as e:
+                await log_event(
+                    db=db,
+                    level=LogLevel.ERROR,
+                    message=f"Failed to create user from Google OAuth: {str(e)}",
+                    source="api.auth.google_login",
+                    request_id=request_id_for_log,
+                    details={"email": google_email}
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create user account"
+                )
+        else:
+            # 檢查用戶是否活躍
+            if not user.is_active:
+                await log_event(
+                    db=db,
+                    level=LogLevel.WARNING,
+                    message="Google login failed: User account is inactive",
+                    source="api.auth.google_login",
+                    user_id=str(user.id),
+                    request_id=request_id_for_log
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Account is inactive"
+                )
+        
+        # 生成 Access Token
+        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            subject=str(user.id), expires_delta=access_token_expires
+        )
+        
+        await log_event(
+            db=db,
+            level=LogLevel.INFO,
+            message="User login successful via Google OAuth",
+            source="api.auth.google_login",
+            user_id=str(user.id),
+            request_id=request_id_for_log,
+            details={"email": google_email, "username": user.username}
+        )
+        
+        return Token(access_token=access_token, token_type="bearer")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await log_event(
+            db=db,
+            level=LogLevel.ERROR,
+            message=f"Google login error: {str(e)}",
+            source="api.auth.google_login",
+            request_id=request_id_for_log
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred during Google login"
+        )
 
 # 後續可以添加 /users/me 端點來獲取當前用戶信息，以及註冊端點
 # @router.post("/register", response_model=User, status_code=status.HTTP_201_CREATED)

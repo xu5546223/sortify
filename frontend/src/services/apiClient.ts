@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // 從環境變數讀取 API 基礎 URL，若無則使用預設值
-const API_BASE_URL = process.env.REACT_APP_API_URL || '';
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || process.env.REACT_APP_API_URL || 'http://localhost:8000/api/v1';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -12,6 +12,7 @@ export const apiClient = axios.create({
 
 // 更新的請求攔截器 - 支援新的認證要求
 apiClient.interceptors.request.use(config => {
+  // 每次請求時都從 localStorage 讀取最新的 token，而不是使用快取的值
   const token = localStorage.getItem('authToken');
   
   // 定義需要認證的端點模式
@@ -22,6 +23,7 @@ apiClient.interceptors.request.use(config => {
     '/documents/',
     '/dashboard/',
     '/logs/',
+    '/gmail/',
     '/auth/users/' // 用戶相關端點需要認證
   ];
   
@@ -54,12 +56,25 @@ apiClient.interceptors.request.use(config => {
 apiClient.interceptors.response.use(
   response => response,
   error => {
-    // 處理認證錯誤
+    // 處理認證錯誤 - 區分認證失敗和功能未授權
     if (error.response?.status === 401) {
-      console.warn('Authentication failed, removing token and redirecting to login');
-      localStorage.removeItem('authToken');
-      // 可以在此處添加重定向邏輯
-      // window.location.href = '/login';
+      const detail = error.response?.data?.detail || '';
+      const isFeatureAuthError = typeof detail === 'string' && 
+        (detail.includes('Gmail') || 
+         detail.includes('Google') || 
+         detail.includes('授權') ||
+         detail.includes('authorization'));
+      
+      if (!isFeatureAuthError) {
+        // 這是真正的認證失敗 - 清除 token 並重定向
+        console.warn('Authentication failed, removing token and redirecting to login');
+        localStorage.removeItem('authToken');
+        // 可以在此處添加重定向邏輯
+        // window.location.href = '/login';
+      } else {
+        // 這是功能未授權 (如 Gmail 未授權) - 保留 token，讓組件處理
+        console.warn('Feature not authorized:', detail);
+      }
     }
     
     // 處理權限錯誤

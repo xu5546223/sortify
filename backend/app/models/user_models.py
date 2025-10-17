@@ -19,6 +19,10 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     is_active: Optional[bool] = None
     is_admin: Optional[bool] = None # 允許更新管理員狀態
+    # Google OAuth 相關字段 (用於 Gmail 集成)
+    google_credentials: Optional[dict] = None
+    google_credentials_encrypted_at: Optional[datetime] = None
+    gmail_synced_at: Optional[datetime] = None
     # 密碼更新應通過特定端點處理
 
 class UserInDBBase(UserBase):
@@ -26,6 +30,20 @@ class UserInDBBase(UserBase):
     hashed_password: str = Field(..., description="哈希後的密碼")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Google OAuth 相關字段 (用於 Gmail 集成)
+    google_credentials: Optional[dict] = Field(
+        None, 
+        description="加密的 Google OAuth credentials (包含 access_token, refresh_token 等)"
+    )
+    google_credentials_encrypted_at: Optional[datetime] = Field(
+        None,
+        description="Google credentials 加密時間"
+    )
+    gmail_synced_at: Optional[datetime] = Field(
+        None,
+        description="Gmail 最後同步時間"
+    )
 
     model_config = {
         "from_attributes": True, # Pydantic v2 (舊版 orm_mode)

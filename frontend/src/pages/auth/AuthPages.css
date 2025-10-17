@@ -1,0 +1,560 @@
+/* 主容器 - 分為左右兩部分 */
+.auth-container {
+  display: flex;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+}
+
+/* ===================== 左側品牌區域 ===================== */
+.auth-brand-section {
+  flex: 1;
+  background: linear-gradient(135deg, #52b788 0%, #2d6a4f 100%);
+  color: white;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 60px 50px;
+  position: relative;
+  overflow: hidden;
+}
+
+.auth-brand-section::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  right: -10%;
+  width: 600px;
+  height: 600px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+}
+
+.auth-brand-section::after {
+  content: '';
+  position: absolute;
+  bottom: -50%;
+  left: -10%;
+  width: 500px;
+  height: 500px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 50%;
+}
+
+/* 品牌 Logo */
+.brand-logo {
+  margin-bottom: 30px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.brand-logo-image {
+  width: 120px;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+.logo-icon {
+  width: 80px;
+  height: 80px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+  font-weight: bold;
+  backdrop-filter: blur(10px);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+}
+
+/* 品牌名稱 */
+.brand-name {
+  font-size: 48px;
+  font-weight: 700;
+  margin: 0 0 10px 0;
+  letter-spacing: 2px;
+  z-index: 1;
+}
+
+.brand-description {
+  font-size: 24px;
+  font-weight: 300;
+  margin: 0 0 5px 0;
+  opacity: 0.95;
+  z-index: 1;
+}
+
+.brand-subtitle {
+  font-size: 16px;
+  opacity: 0.8;
+  margin: 0;
+  z-index: 1;
+}
+
+/* 品牌特性 - 水平排列，無容器背景 */
+.brand-features {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 48px;
+  z-index: 1;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  margin-top: 28px;
+  border: none;
+}
+
+.feature {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  opacity: 0.95;
+  padding: 0;
+  color: #0f5132;
+}
+
+.feature-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+
+/* 品牌頭部 */
+.brand-header {
+  z-index: 1;
+}
+
+/* 品牌圖片容器 */
+.brand-image-container {
+  margin: 30px 0 40px 0;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+  z-index: 1;
+  min-height: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.brand-image {
+  width: 80%;
+  height: auto;
+  object-fit: contain;
+  display: block;
+  max-width: 280px;
+}
+
+/* ===================== 右側表單區域 ===================== */
+.auth-form-section {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 50px;
+  background: white;
+}
+
+.form-wrapper {
+  width: 100%;
+  max-width: 420px;
+}
+
+.form-title {
+  font-size: 32px;
+  font-weight: 700;
+  color: #333;
+  margin: 0 0 30px 0;
+  text-align: left;
+}
+
+/* ===================== 表單群組 ===================== */
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-icon {
+  position: absolute;
+  left: 12px;
+  font-size: 18px;
+  pointer-events: none;
+}
+
+.form-input {
+  width: 100%;
+  padding: 12px 40px 12px 40px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 14px;
+  transition: all 0.3s ease;
+  box-sizing: border-box;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: #52b788;
+  background-color: #f8fff8;
+  box-shadow: 0 0 0 3px rgba(82, 183, 136, 0.1);
+}
+
+.form-input::placeholder {
+  color: #999;
+}
+
+.password-toggle {
+  position: absolute;
+  right: 12px;
+  background: none;
+  border: none;
+  color: #52b788;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 8px;
+  transition: color 0.2s;
+}
+
+.password-toggle:hover {
+  color: #2d6a4f;
+}
+
+/* ===================== 表單選項 ===================== */
+.form-options {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  font-size: 14px;
+}
+
+.remember-me {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: #555;
+  user-select: none;
+}
+
+.remember-me input {
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+}
+
+.forgot-password {
+  color: #52b788;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.forgot-password:hover {
+  color: #2d6a4f;
+  text-decoration: underline;
+}
+
+/* ===================== 提交按鈕 ===================== */
+.submit-button {
+  width: 100%;
+  padding: 14px;
+  background: linear-gradient(135deg, #52b788 0%, #2d6a4f 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  margin-bottom: 20px;
+}
+
+.submit-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(82, 183, 136, 0.3);
+}
+
+.submit-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.submit-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* ===================== 分割線 ===================== */
+.divider {
+  display: flex;
+  align-items: center;
+  margin: 24px 0;
+  color: #999;
+  font-size: 14px;
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #e0e0e0;
+}
+
+.divider span {
+  padding: 0 12px;
+}
+
+/* ===================== OAuth 按鈕 ===================== */
+.oauth-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.oauth-button-placeholder {
+  padding: 16px;
+  background-color: #fff3cd;
+  color: #856404;
+  border-radius: 8px;
+  text-align: center;
+  border: 1px solid #ffeaa7;
+  font-size: 14px;
+}
+
+.oauth-button-placeholder p {
+  margin: 0 0 4px 0;
+  font-weight: 500;
+}
+
+.oauth-button-placeholder small {
+  display: block;
+  opacity: 0.8;
+}
+
+/* 為 Google 登錄按鈕添加樣式 */
+.oauth-buttons > div {
+  display: flex;
+  justify-content: center !important;
+}
+
+.oauth-buttons button {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  background: white;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.oauth-buttons button:hover {
+  border-color: #52b788;
+  background-color: #f8fff8;
+}
+
+/* ===================== 驗證文本 ===================== */
+.error-message {
+  padding: 12px;
+  background-color: #ffebee;
+  color: #c62828;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-size: 14px;
+  border-left: 4px solid #c62828;
+}
+
+.success-message {
+  padding: 12px;
+  background-color: #e8f5e9;
+  color: #2e7d32;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-size: 14px;
+  border-left: 4px solid #2e7d32;
+}
+
+/* ===================== 帳號切換 ===================== */
+.auth-switch {
+  text-align: center;
+  font-size: 14px;
+  color: #666;
+}
+
+.auth-link {
+  color: #52b788;
+  text-decoration: none;
+  font-weight: 600;
+  transition: color 0.2s;
+  margin-left: 4px;
+}
+
+.auth-link:hover {
+  color: #2d6a4f;
+  text-decoration: underline;
+}
+
+/* ===================== 響應式設計 ===================== */
+@media (max-width: 1024px) {
+  .auth-container {
+    flex-direction: column;
+  }
+
+  .auth-brand-section {
+    padding: 40px 30px;
+    min-height: 40vh;
+  }
+
+  .brand-name {
+    font-size: 36px;
+  }
+
+  .brand-description {
+    font-size: 18px;
+  }
+
+  .auth-form-section {
+    padding: 30px 20px;
+    min-height: 60vh;
+  }
+
+  .form-wrapper {
+    max-width: 100%;
+  }
+
+  /* 小螢幕回復為直排 */
+  .brand-features {
+    flex-direction: column;
+    gap: 12px;
+  }
+}
+
+@media (max-width: 768px) {
+  .auth-container {
+    flex-direction: column;
+  }
+
+  .auth-brand-section {
+    padding: 30px 20px;
+  }
+
+  .logo-icon {
+    width: 60px;
+    height: 60px;
+    font-size: 30px;
+  }
+
+  .brand-name {
+    font-size: 28px;
+  }
+
+  .brand-description {
+    font-size: 16px;
+  }
+
+  .brand-subtitle {
+    font-size: 14px;
+  }
+
+  .brand-features {
+    gap: 10px;
+  }
+
+  .feature {
+    font-size: 13px;
+  }
+
+  .feature-icon {
+    font-size: 18px;
+  }
+
+  .auth-form-section {
+    padding: 25px 15px;
+  }
+
+  .form-wrapper {
+    max-width: 100%;
+  }
+
+  .form-title {
+    font-size: 24px;
+    margin-bottom: 20px;
+  }
+}
+
+@media (max-width: 480px) {
+  .auth-brand-section {
+    padding: 25px 15px;
+  }
+
+  .logo-icon {
+    width: 50px;
+    height: 50px;
+    font-size: 24px;
+  }
+
+  .brand-name {
+    font-size: 24px;
+    margin-bottom: 8px;
+  }
+
+  .brand-description {
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+
+  .brand-subtitle {
+    font-size: 12px;
+  }
+
+  .auth-form-section {
+    padding: 20px 12px;
+  }
+
+  .form-title {
+    font-size: 20px;
+    margin-bottom: 18px;
+  }
+
+  .form-input {
+    padding: 10px 36px 10px 36px;
+    font-size: 13px;
+  }
+
+  .submit-button {
+    padding: 12px;
+    font-size: 14px;
+  }
+}

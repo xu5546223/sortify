@@ -17,7 +17,6 @@ charset-normalizer==3.4.1
 chromadb>=0.4.0
 click==8.1.8
 colorama==0.4.6
-copilotkit
 coloredlogs==15.0.1
 cryptography==44.0.3
 Deprecated==1.2.18
@@ -40,6 +39,8 @@ google-ai-generativelanguage==0.6.15
 google-api-core==2.24.2
 google-auth==2.40.1
 google-auth-httplib2==0.2.0
+google-auth-oauthlib>=1.0.0
+google-api-python-client>=2.80.0
 google-genai>=0.5.0
 googleapis-common-protos==1.70.0
 greenlet==3.2.1

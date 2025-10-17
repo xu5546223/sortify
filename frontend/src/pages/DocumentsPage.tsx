@@ -14,6 +14,7 @@ import {
   DocumentTableActions,
   UploadAndFilterControls
 } from '../components';
+import GmailImporter from '../components/GmailImporter';
 import { HeaderConfig } from '../components/table/Table';
 import type {
   Document,
@@ -155,6 +156,9 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
   const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
 
   const { settings: globalSettings } = useContext(SettingsContext) as SettingsContextType;
+
+  // Gmail 導入對話框狀態
+  const [isGmailImporterVisible, setIsGmailImporterVisible] = useState<boolean>(false);
 
   const isMounted = useRef(true);
   const hasLoadedInitialData = useRef(false);
@@ -686,6 +690,27 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
         isDeleting={isDeleting}
         onUploadClick={triggerFileInput}
         onDeleteSelected={handleDeleteSelected}
+      />
+
+      {/* Gmail 導入按鈕 */}
+      <div style={{ marginTop: '16px', marginBottom: '16px' }}>
+        <Button 
+          onClick={() => setIsGmailImporterVisible(true)}
+          style={{ marginRight: '8px' }}
+        >
+          📧 讀取 Gmail
+        </Button>
+      </div>
+
+      {/* Gmail 導入對話框 */}
+      <GmailImporter
+        visible={isGmailImporterVisible}
+        onClose={() => setIsGmailImporterVisible(false)}
+        onSuccess={() => {
+          // 導入成功後刷新文檔列表
+          setCurrentPage(1);
+          fetchDocumentsData(); // Changed from handleLoadDocuments to fetchDocumentsData
+        }}
       />
 
       <input 

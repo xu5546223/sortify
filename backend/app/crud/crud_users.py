@@ -219,7 +219,7 @@ class CRUDUser:
     async def update_user(
         self, db: AsyncIOMotorDatabase, user_id: UUID, user_in: UserUpdate
     ) -> UserInDB | None:
-        update_data = user_in.model_dump(exclude_unset=True)
+        update_data = user_in.model_dump(exclude_none=True)
         if not update_data: # 如果沒有提供任何更新數據
             return await self.get_user_by_id(db, user_id)
 

@@ -15,6 +15,7 @@ from .apis.v1 import vector_db as vector_db_api_v1 # 新增 vector_db router 導
 from .apis.v1 import embedding as embedding_api_v1 # 新增 embedding router 導入
 from .apis.v1 import unified_ai as unified_ai_api_v1 # 新增統一AI router導入
 from .apis.v1 import cache_monitoring as cache_monitoring_api_v1 # 新增緩存監控 router 導入
+from .apis.v1 import gmail as gmail_api_v1 # 新增 Gmail router 導入
 
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -275,25 +276,12 @@ app.include_router(unified_ai_api_v1.router, prefix="/api/v1/unified-ai", tags=[
 # 註冊新的緩存監控路由
 app.include_router(cache_monitoring_api_v1.router, prefix="/api/v1/cache", tags=["v1 - Cache Monitoring"])
 
+# 註冊新的 Gmail 路由
+app.include_router(gmail_api_v1.router, prefix="/api/v1/gmail", tags=["v1 - Gmail Services"])
+
 
 # 註冊新的緩存分析路由
 
-
-
-# 直接在 app 上註冊 CopilotKit 端點
-try:
-    from .copilot_setup import python_backend_sdk
-    from copilotkit.integrations.fastapi import add_fastapi_endpoint
-    if python_backend_sdk:
-        # 同時註冊有無斜線的路徑
-        add_fastapi_endpoint(app, python_backend_sdk, "/api/v1/copilotkit_actions")
-        std_logger.info("CopilotKit Actions 端點已直接註冊到 app，路徑為 /api/v1/copilotkit_actions 及 /api/v1/copilotkit_actions/")
-except ImportError as e:
-    std_logger.error(f"無法導入 CopilotKit SDK 或相關函數: {e}")
-except Exception as e:
-    std_logger.error(f"註冊 CopilotKit 端點時發生錯誤: {e}")
-
-# 之後會在這裡引入其他 API 路由 
 
 
 # ---- 用於調試路由 ----

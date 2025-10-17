@@ -8,8 +8,13 @@ const icon = (className: string): JSX.Element => <i className={`fas ${className}
 const Sidebar = React.memo(() => {
   return (
     <div className="sidebar fixed top-0 left-0 h-full overflow-y-auto bg-surface-900 text-surface-100 w-64">
-      <div className="logo p-5 text-center text-xl font-semibold border-b border-surface-700">
-        {icon("fa-cogs")}AI 文件助理
+      <div className="logo p-5 text-center border-b border-surface-700 flex flex-col items-center justify-center">
+        <img 
+          src="/images/logo.png" 
+          alt="Sortify Logo" 
+          className="w-12 h-auto mb-3 object-contain"
+        />
+        <span className="text-lg font-semibold text-white">Sortify</span>
       </div>
       <nav>
         {navItems.map((item) => (
