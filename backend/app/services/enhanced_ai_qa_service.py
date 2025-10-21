@@ -10,10 +10,10 @@ import asyncio
 
 
 from app.core.logging_utils import AppLogger, log_event, LogLevel
-from app.services.ai_cache_manager import ai_cache_manager
-from app.services.unified_ai_service_simplified import unified_ai_service_simplified, AIResponse as UnifiedAIResponse
-from app.services.embedding_service import embedding_service
-from app.services.vector_db_service import vector_db_service
+from app.services.ai.ai_cache_manager import ai_cache_manager
+from app.services.ai.unified_ai_service_simplified import unified_ai_service_simplified, AIResponse as UnifiedAIResponse
+from app.services.vector.embedding_service import embedding_service
+from app.services.vector.vector_db_service import vector_db_service
 from app.models.vector_models import (
     AIQARequest, AIQAResponse, QueryRewriteResult, LLMContextDocument,
     SemanticSearchResult, SemanticContextDocument
@@ -27,8 +27,8 @@ from app.models.ai_models_simplified import (
 )
 from app.models.document_models import Document
 from app.crud.crud_documents import get_documents_by_ids
-from app.services.vector_db_service import vector_db_service
-from app.services.enhanced_search_service import enhanced_search_service
+from app.services.vector.vector_db_service import vector_db_service
+from app.services.vector.enhanced_search_service import enhanced_search_service
 
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
 
@@ -108,11 +108,250 @@ class EnhancedAIQAService:
         # 使用專門的緩存管理器
         self.cache_manager = ai_cache_manager
         
+        # 從配置文件讀取設定(不硬編碼)
+        from app.core.config import settings
+        
         # 配置選項：是否為AIQA啟用兩階段混合檢索
         # 設為 True 以獲得更高準確度，設為 False 保持向後兼容
         self.enable_hybrid_search_for_aiqa = True
         
-        logger.info("EnhancedAIQAService 初始化完成，使用專門的 AI 緩存管理器")
+        # 配置選項：是否啟用智能問題分類和路由
+        self.enable_intelligent_routing = settings.ENABLE_INTELLIGENT_ROUTING
+        
+        logger.info(f"EnhancedAIQAService 初始化完成，智能路由: {self.enable_intelligent_routing}")
+    
+    async def process_qa_request_intelligent(
+        self,
+        db: AsyncIOMotorDatabase,
+        request: AIQARequest,
+        user_id: Optional[str] = None,
+        request_id: Optional[str] = None
+    ) -> AIQAResponse:
+        """
+        智能問答處理入口 - 根據問題意圖動態路由
+        
+        流程:
+        1. 快速意圖分類 (使用 Gemini 2.0 Flash)
+        2. 根據意圖路由到對應的處理器
+        3. 延遲載入必要的上下文
+        4. 返回優化的回答
+        
+        Args:
+            db: 數據庫連接
+            request: AI QA 請求
+            user_id: 用戶ID
+            request_id: 請求ID
+            
+        Returns:
+            AIQAResponse: 問答響應
+        """
+        start_time = time.time()
+        
+        logger.info(f"🚀 智能問答請求: {request.question[:100]}...")
+        
+        # 檢查是否跳過智能路由
+        if not self.enable_intelligent_routing or request.skip_classification:
+            logger.info("智能路由已禁用或被跳過,使用標準流程")
+            return await self.process_qa_request(db, request, user_id, request_id)
+        
+        try:
+            # Step 1: 先載入對話上下文(用於意圖分類)
+            from app.services.qa_workflow.unified_context_helper import unified_context_helper
+            
+            conversation_context = await unified_context_helper.load_conversation_history_list(
+                db=db,
+                conversation_id=request.conversation_id,
+                user_id=str(user_id) if user_id else None,
+                limit=10  # 增加到10條，支持最多5輪澄清對話
+            )
+            
+            if conversation_context:
+                logger.info(f"載入了 {len(conversation_context)} 條歷史消息用於意圖分類")
+            
+            # Step 1.5: 如果有對話ID，獲取緩存文檔信息用於分類
+            cached_documents_info_for_classifier = None
+            if request.conversation_id and user_id:
+                try:
+                    from app.crud import crud_conversations
+                    from uuid import UUID
+                    
+                    conversation_uuid = UUID(request.conversation_id)
+                    user_uuid = UUID(str(user_id)) if not isinstance(user_id, UUID) else user_id
+                    
+                    # 獲取緩存的文檔ID
+                    cached_doc_ids, _ = await crud_conversations.get_cached_documents(
+                        db=db,
+                        conversation_id=conversation_uuid,
+                        user_id=user_uuid
+                    )
+                    
+                    if cached_doc_ids:
+                        # 獲取文檔詳細信息
+                        from app.crud.crud_documents import get_documents_by_ids
+                        documents = await get_documents_by_ids(db, cached_doc_ids)
+                        
+                        # 構建文檔信息列表
+                        cached_documents_info_for_classifier = []
+                        for idx, doc in enumerate(documents, 1):
+                            doc_info = {
+                                "document_id": str(doc.id),
+                                "filename": doc.filename,
+                                "reference_number": idx,
+                                "summary": ""
+                            }
+                            
+                            # 安全獲取摘要
+                            try:
+                                enriched_data = getattr(doc, 'enriched_data', None)
+                                if enriched_data and isinstance(enriched_data, dict):
+                                    doc_info["summary"] = enriched_data.get('summary', '')
+                                
+                                if not doc_info["summary"] and hasattr(doc, 'analysis') and doc.analysis:
+                                    if hasattr(doc.analysis, 'ai_analysis_output') and isinstance(doc.analysis.ai_analysis_output, dict):
+                                        key_info = doc.analysis.ai_analysis_output.get('key_information', {})
+                                        if isinstance(key_info, dict):
+                                            doc_info["summary"] = key_info.get('content_summary', '')
+                            except Exception as e:
+                                logger.warning(f"獲取文檔 {idx} 摘要失敗: {e}")
+                            
+                            cached_documents_info_for_classifier.append(doc_info)
+                        
+                        logger.info(f"準備了 {len(cached_documents_info_for_classifier)} 個緩存文檔信息用於分類")
+                except Exception as e:
+                    logger.warning(f"獲取緩存文檔信息失敗: {e}")
+            
+            # Step 2: 快速意圖分類(帶上下文和文檔信息)
+            from app.services.qa_workflow.question_classifier_service import question_classifier_service
+            
+            classification = await question_classifier_service.classify_question(
+                question=request.question,
+                conversation_history=conversation_context,  # 傳遞對話歷史
+                has_cached_documents=bool(request.conversation_id),
+                cached_documents_info=cached_documents_info_for_classifier,  # 傳遞緩存文檔信息
+                db=db,
+                user_id=str(user_id) if user_id else None
+            )
+            
+            logger.info(
+                f"📊 問題分類完成: intent={classification.intent}, "
+                f"confidence={classification.confidence:.2f}, "
+                f"strategy={classification.suggested_strategy}"
+            )
+            
+            # Step 2: 根據意圖路由到對應處理器
+            from app.models.question_models import QuestionIntent
+            from app.services.intent_handlers.greeting_handler import greeting_handler
+            from app.services.intent_handlers.clarification_handler import clarification_handler
+            from app.services.intent_handlers.simple_factual_handler import simple_factual_handler
+            from app.services.intent_handlers.document_search_handler import document_search_handler
+            from app.services.intent_handlers.document_detail_query_handler import document_detail_query_handler
+            from app.services.intent_handlers.complex_analysis_handler import complex_analysis_handler
+            
+            if classification.intent == QuestionIntent.GREETING or classification.intent == QuestionIntent.CHITCHAT:
+                logger.info("→ 路由到: 寒暄處理器")
+                return await greeting_handler.handle(
+                    request, classification, db, user_id, request_id
+                )
+            
+            elif classification.intent == QuestionIntent.CLARIFICATION_NEEDED:
+                logger.info("→ 路由到: 澄清處理器")
+                return await clarification_handler.handle(
+                    request, classification, db, user_id, request_id
+                )
+            
+            elif classification.intent == QuestionIntent.SIMPLE_FACTUAL:
+                logger.info("→ 路由到: 簡單事實處理器")
+                return await simple_factual_handler.handle(
+                    request, classification, db, user_id, request_id
+                )
+            
+            elif classification.intent == QuestionIntent.DOCUMENT_SEARCH:
+                logger.info("→ 路由到: 文檔搜索處理器")
+                # 延遲載入上下文
+                context = await self._load_context_if_needed(
+                    db, request, user_id, classification
+                )
+                return await document_search_handler.handle(
+                    request, classification, context, db, user_id, request_id
+                )
+            
+            elif classification.intent == QuestionIntent.DOCUMENT_DETAIL_QUERY:
+                logger.info("→ 路由到: 文檔詳細查詢處理器 ⭐")
+                # 載入上下文（需要獲取已緩存的文檔ID）
+                context = await self._load_context_if_needed(
+                    db, request, user_id, classification
+                )
+                return await document_detail_query_handler.handle(
+                    request, classification, context, db, user_id, request_id
+                )
+            
+            elif classification.intent == QuestionIntent.COMPLEX_ANALYSIS:
+                logger.info("→ 路由到: 複雜分析處理器(完整RAG流程)")
+                # 延遲載入上下文
+                context = await self._load_context_if_needed(
+                    db, request, user_id, classification
+                )
+                return await complex_analysis_handler.handle(
+                    request, classification, context, db, user_id, request_id
+                )
+            
+            else:
+                logger.warning(f"未知的意圖類型: {classification.intent}, 使用標準流程")
+                return await self.process_qa_request(db, request, user_id, request_id)
+                
+        except Exception as e:
+            logger.error(f"智能路由處理失敗,回退到標準流程: {e}", exc_info=True)
+            
+            # 記錄錯誤
+            await log_event(
+                db=db,
+                level=LogLevel.ERROR,
+                message=f"智能路由失敗: {str(e)}",
+                source="service.enhanced_ai_qa.intelligent_routing_error",
+                user_id=str(user_id) if user_id else None,
+                request_id=request_id,
+                details={"error": str(e), "question": request.question[:100]}
+            )
+            
+            # 回退到標準流程
+            return await self.process_qa_request(db, request, user_id, request_id)
+    
+    async def _load_context_if_needed(
+        self,
+        db: AsyncIOMotorDatabase,
+        request: AIQARequest,
+        user_id: Optional[str],
+        classification
+    ) -> Optional[dict]:
+        """延遲載入對話上下文"""
+        try:
+            from app.services.qa_workflow.context_loader_service import context_loader_service
+            
+            context = await context_loader_service.load_conversation_context_if_needed(
+                db=db,
+                conversation_id=request.conversation_id,
+                user_id=str(user_id) if user_id else None,
+                requires_context=classification.requires_context
+            )
+            
+            if context and context.recent_messages:
+                logger.info(f"載入了 {len(context.recent_messages)} 條歷史消息")
+            
+            # 轉換為字典格式(保持兼容性)
+            if context:
+                return {
+                    "conversation_id": context.conversation_id,
+                    "recent_messages": context.recent_messages,
+                    "cached_document_ids": context.cached_document_ids,
+                    "cached_document_data": context.cached_document_data,
+                    "message_count": context.message_count
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"載入上下文失敗,繼續處理: {e}")
+            return None
     
     async def _get_query_vectors(self, queries: List[str]) -> Dict[str, List[float]]:
         """統一向量獲取接口 - 通過緩存管理器統一處理"""
@@ -477,7 +716,7 @@ class EnhancedAIQAService:
             if request.conversation_id and user_id:
                 try:
                     from uuid import UUID
-                    from app.services.conversation_cache_service import conversation_cache_service
+                    from app.services.cache.conversation_cache_service import conversation_cache_service
                     from app.crud import crud_conversations
                     
                     conversation_uuid = UUID(request.conversation_id)
@@ -833,7 +1072,7 @@ class EnhancedAIQAService:
                 try:
                     from uuid import UUID
                     from app.crud import crud_conversations
-                    from app.services.conversation_cache_service import conversation_cache_service
+                    from app.services.cache.conversation_cache_service import conversation_cache_service
                     
                     logger.info(f"開始保存對話: conversation_id={request.conversation_id}, user_id={user_id}")
                     
@@ -1286,7 +1525,7 @@ class EnhancedAIQAService:
 
         try:
             # 導入兩階段搜索服務
-            from app.services.enhanced_search_service import enhanced_search_service
+            from app.services.vector.enhanced_search_service import enhanced_search_service
             
             all_results_map: Dict[str, SemanticSearchResult] = {}
             

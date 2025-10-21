@@ -9,7 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.db.mongodb_utils import get_db
 from app.core.logging_utils import log_event, LogLevel
-from app.services.ai_cache_manager import ai_cache_manager, CacheType, CacheStats
+from app.services.ai.ai_cache_manager import ai_cache_manager, CacheType, CacheStats
 from app.models.user_models import User
 from app.core.security import get_current_active_user
 
@@ -257,7 +257,7 @@ async def get_prompt_cache_detailed_statistics(
     
     try:
         # 導入 prompt manager 來獲取詳細統計
-        from app.services.prompt_manager_simplified import prompt_manager_simplified, PromptType
+        from app.services.ai.prompt_manager_simplified import prompt_manager_simplified, PromptType
         
         # 獲取提示詞緩存統計
         prompt_stats = await prompt_manager_simplified.get_prompt_cache_statistics(db)
@@ -349,7 +349,7 @@ async def optimize_all_prompt_caches(
     
     try:
         # 導入所需的模組
-        from app.services.prompt_manager_simplified import prompt_manager_simplified, PromptType
+        from app.services.ai.prompt_manager_simplified import prompt_manager_simplified, PromptType
         
         optimization_results = {}
         success_count = 0

@@ -16,7 +16,7 @@ import re
 
 from app.core.config import settings
 from app.core.logging_utils import AppLogger
-from app.services.google_context_cache_service import (
+from app.services.cache.google_context_cache_service import (
     google_context_cache_service, 
     ContextCacheConfig, 
     ContextCacheType,
@@ -35,8 +35,8 @@ from app.models.ai_models_simplified import (
     AIMongoDBQueryDetailOutput,
     AIDocumentSelectionOutput
 )
-from app.services.prompt_manager_simplified import prompt_manager_simplified, PromptType, PromptTemplate
-from app.services.unified_ai_config import unified_ai_config, AIModelConfig, TaskType
+from app.services.ai.prompt_manager_simplified import prompt_manager_simplified, PromptType, PromptTemplate
+from app.services.ai.unified_ai_config import unified_ai_config, AIModelConfig, TaskType
 import logging
 
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
@@ -71,6 +71,39 @@ class UnifiedAIServiceSimplified:
         self.context_cache_service = google_context_cache_service
         self._schema_context_caches: Dict[str, ContextCacheInfo] = {}
         self._system_instruction_caches: Dict[str, ContextCacheInfo] = {}
+    
+    def _clean_json_output(self, output_text: str) -> str:
+        """清理AI輸出的JSON格式問題"""
+        import re
+        
+        # 移除可能的markdown包裝
+        cleaned = output_text.strip()
+        if cleaned.startswith("```json") and cleaned.endswith("```"):
+            cleaned = cleaned[7:-3].strip()
+        elif cleaned.startswith("```") and cleaned.endswith("```"):
+            cleaned = cleaned[3:-3].strip()
+        
+        # 如果JSON被截斷,嘗試修復
+        if not cleaned.endswith('}'):
+            logger.warning("檢測到JSON可能被截斷,嘗試修復")
+            
+            # 找到最後一個完整的字段
+            # 如果有未完成的字符串,補上引號和結束
+            if cleaned.count('"') % 2 == 1:
+                # 奇數個引號,補上一個
+                cleaned += '"'
+            
+            # 如果有未完成的數組,補上結束
+            open_brackets = cleaned.count('[') - cleaned.count(']')
+            if open_brackets > 0:
+                cleaned += ']' * open_brackets
+            
+            # 補上缺失的結束括號
+            open_braces = cleaned.count('{') - cleaned.count('}')
+            if open_braces > 0:
+                cleaned += '}' * open_braces
+        
+        return cleaned
 
     @retry(wait=wait_exponential(multiplier=1, min=2, max=30), stop=stop_after_attempt(3), reraise=True)
     async def _execute_google_ai_request(
@@ -179,6 +212,10 @@ class UnifiedAIServiceSimplified:
             prompt_type = PromptType.CLUSTER_LABEL_GENERATION
         elif request.task_type == TaskType.BATCH_CLUSTER_LABELS:
             prompt_type = PromptType.BATCH_CLUSTER_LABEL_GENERATION
+        elif request.task_type == TaskType.QUESTION_INTENT_CLASSIFICATION:
+            prompt_type = PromptType.QUESTION_INTENT_CLASSIFICATION
+        elif request.task_type == TaskType.GENERATE_CLARIFICATION_QUESTION:
+            prompt_type = PromptType.GENERATE_CLARIFICATION_QUESTION
         else:
             logger.error(f"未知的任務類型: {request.task_type}")
             return AIResponse(success=False, task_type=request.task_type, error_message=f"未知的任務類型: {request.task_type}", processing_time_seconds=time.time() - start_time)
@@ -301,6 +338,32 @@ class UnifiedAIServiceSimplified:
                 elif request.task_type == TaskType.BATCH_CLUSTER_LABELS:
                     from app.models.ai_models_simplified import AIBatchClusterLabelsOutput
                     parsed_output = AIBatchClusterLabelsOutput.model_validate_json(output_text)
+                elif request.task_type == TaskType.QUESTION_INTENT_CLASSIFICATION:
+                    # 直接解析為字典,由 question_classifier_service 處理
+                    import json
+                    try:
+                        parsed_output = json.loads(output_text)
+                    except json.JSONDecodeError as json_error:
+                        logger.error(f"JSON解析失敗,原始輸出: {output_text}")
+                        # 嘗試修復常見的JSON問題
+                        cleaned_text = self._clean_json_output(output_text)
+                        try:
+                            parsed_output = json.loads(cleaned_text)
+                            logger.info("JSON清理後解析成功")
+                        except:
+                            raise ValueError(f"JSON格式錯誤: {json_error}")
+                elif request.task_type == TaskType.GENERATE_CLARIFICATION_QUESTION:
+                    # 直接解析為字典
+                    import json
+                    try:
+                        parsed_output = json.loads(output_text)
+                    except json.JSONDecodeError as json_error:
+                        logger.error(f"JSON解析失敗,原始輸出: {output_text}")
+                        cleaned_text = self._clean_json_output(output_text)
+                        try:
+                            parsed_output = json.loads(cleaned_text)
+                        except:
+                            raise ValueError(f"JSON格式錯誤: {json_error}")
                 else: 
                     logger.warning(f"任務類型 {request.task_type} 沒有特定的解析邏輯。輸出將是原始文本。")
                     parsed_output = output_text
@@ -633,7 +696,7 @@ class UnifiedAIServiceSimplified:
                     del self._system_instruction_caches[cache_key]
             
             # 獲取對應的系統指令內容
-            from app.services.prompt_manager_simplified import prompt_manager_simplified, PromptType
+            from app.services.ai.prompt_manager_simplified import prompt_manager_simplified, PromptType
             
             prompt_type_mapping = {
                 TaskType.TEXT_GENERATION: PromptType.TEXT_ANALYSIS,
@@ -643,7 +706,9 @@ class UnifiedAIServiceSimplified:
                 TaskType.MONGODB_DETAIL_QUERY_GENERATION: PromptType.MONGODB_DETAIL_QUERY_GENERATION,
                 TaskType.DOCUMENT_SELECTION_FOR_QUERY: PromptType.DOCUMENT_SELECTION_FOR_QUERY,
                 TaskType.CLUSTER_LABEL_GENERATION: PromptType.CLUSTER_LABEL_GENERATION,
-                TaskType.BATCH_CLUSTER_LABELS: PromptType.BATCH_CLUSTER_LABEL_GENERATION
+                TaskType.BATCH_CLUSTER_LABELS: PromptType.BATCH_CLUSTER_LABEL_GENERATION,
+                TaskType.QUESTION_INTENT_CLASSIFICATION: PromptType.QUESTION_INTENT_CLASSIFICATION,
+                TaskType.GENERATE_CLARIFICATION_QUESTION: PromptType.GENERATE_CLARIFICATION_QUESTION
             }
             
             prompt_type = prompt_type_mapping.get(task_type)

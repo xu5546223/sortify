@@ -20,8 +20,8 @@ from app.models.email_models import (
     EmailSource
 )
 from app.models.document_models import DocumentStatus
-from app.services.gmail_service import GmailService
-from app.services.email_document_processor import EmailDocumentProcessor
+from app.services.external.gmail_service import GmailService
+from app.services.document.email_document_processor import EmailDocumentProcessor
 from app.crud.crud_users import crud_users
 from app.crud import crud_documents
 from app.core.logging_utils import AppLogger, log_event, LogLevel

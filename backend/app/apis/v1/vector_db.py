@@ -10,8 +10,8 @@ from app.core.security import get_current_active_user, get_current_admin_user
 from app.models.user_models import User
 from app.models.vector_models import SemanticSearchRequest, SemanticSearchResult, BatchProcessRequest
 from app.models.response_models import BasicResponse
-from app.services.semantic_summary_service import semantic_summary_service
-from app.services.embedding_service import embedding_service
+from app.services.document.semantic_summary_service import semantic_summary_service
+from app.services.vector.embedding_service import embedding_service
 from app.dependencies import get_vector_db_service
 from app.core.logging_utils import AppLogger
 import logging
@@ -375,7 +375,7 @@ async def semantic_search(
         # 決定使用哪種搜索策略
         if request.enable_hybrid_search:
             # 使用兩階段混合檢索
-            from app.services.enhanced_search_service import enhanced_search_service
+            from app.services.vector.enhanced_search_service import enhanced_search_service
             
             # 根據前端指定的搜索類型決定策略
             search_type = request.search_type or "hybrid"

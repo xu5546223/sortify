@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Dict, Any, Union
-from app.services.unified_ai_config import TaskType
+from app.services.ai.unified_ai_config import TaskType
 
 class TokenUsage(BaseModel):
     prompt_tokens: int = Field(..., description="輸入提示詞所使用的 Token 數量")

@@ -48,12 +48,12 @@ from ...crud import crud_documents
 from ...core.config import settings, Settings
 from ...core.logging_utils import log_event, LogLevel, AppLogger
 from ...core.security import get_current_active_user
-from ...services.document_processing_service import DocumentProcessingService, SUPPORTED_IMAGE_TYPES_FOR_AI
+from ...services.document.document_processing_service import DocumentProcessingService, SUPPORTED_IMAGE_TYPES_FOR_AI
 # unified_ai_service_simplified and its components are no longer directly used in this file
 # from ...services.unified_ai_service_simplified import unified_ai_service_simplified, AIRequest, TaskType as AIServiceTaskType
 # from ...services.unified_ai_config import unified_ai_config 
-from ...services.document_tasks_service import DocumentTasksService
-from app.services.vector_db_service import vector_db_service
+from ...services.document.document_tasks_service import DocumentTasksService
+from app.services.vector.vector_db_service import vector_db_service
 from .vector_db import BatchDeleteRequest as VectorDBBatchDeleteRequest
 from ...utils import file_handling_utils # Added
 

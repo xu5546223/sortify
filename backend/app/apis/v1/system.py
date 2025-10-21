@@ -15,7 +15,7 @@ from ...models.system_models import (
     TestDBConnectionResponse,
 )
 from ...crud import crud_settings
-from ...services.unified_ai_config import verify_google_api_key, get_google_ai_models
+from ...services.ai.unified_ai_config import verify_google_api_key, get_google_ai_models
 from ...core.logging_utils import log_event
 from ...models.log_models import LogLevel
 

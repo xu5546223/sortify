@@ -1,11 +1,11 @@
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from .db.mongodb_utils import db_manager, get_db
-from .services.document_processing_service import DocumentProcessingService
+from .services.document.document_processing_service import DocumentProcessingService
 from .core.config import settings, Settings
-from app.services.unified_ai_service_simplified import unified_ai_service_simplified
+from app.services.ai.unified_ai_service_simplified import unified_ai_service_simplified
 from app.services.enhanced_ai_qa_service import enhanced_ai_qa_service
-from app.services.vector_db_service import vector_db_service, VectorDatabaseService
-from app.services.document_tasks_service import DocumentTasksService
+from app.services.vector.vector_db_service import vector_db_service, VectorDatabaseService
+from app.services.document.document_tasks_service import DocumentTasksService
 
 
 

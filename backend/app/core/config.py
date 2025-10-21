@@ -41,6 +41,17 @@ class Settings(BaseSettings):
     # RRF 融合檢索設定
     RRF_K_CONSTANT: int = 60  # RRF 常數 k，降低高排名影響力（標準值為60）
     RRF_WEIGHTS: dict = {"summary": 2.0, "chunks": 1.0}  # 摘要和內容塊搜索的權重配置
+    
+    # 問題分類器設定
+    QUESTION_CLASSIFIER_ENABLED: bool = True  # 是否啟用問題分類器
+    QUESTION_CLASSIFIER_MODEL: str = "gemini-2.0-flash-exp"  # 分類器使用的模型
+    QUESTION_CLASSIFIER_CONFIDENCE_THRESHOLD: float = 0.7  # 分類置信度閾值
+    
+    # 智能工作流設定
+    ENABLE_INTELLIGENT_ROUTING: bool = True  # 啟用智能路由
+    AUTO_APPROVE_SIMPLE_QUERIES: bool = True  # 自動批准簡單查詢
+    ENABLE_GREETING_SHORTCUT: bool = True  # 啟用寒暄快速通道
+    ENABLE_CHITCHAT_SHORTCUT: bool = True  # 啟用閒聊快速通道
 
     # Cloudflare Tunnel (如果在此處管理)
     CLOUDFLARE_TUNNEL_URL: str | None = None

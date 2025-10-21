@@ -20,7 +20,7 @@ except ImportError:
 
 from app.models.clustering_models import ClusterInfo, ClusteringJobStatus, ClusterSummary
 from app.models.document_models import Document
-from app.services.vector_db_service import vector_db_service
+from app.services.vector.vector_db_service import vector_db_service
 from app.core.logging_utils import AppLogger, log_event, LogLevel
 from app.crud import crud_documents
 
@@ -500,8 +500,8 @@ class ClusteringService:
             Dict[cluster_idx, cluster_name]: 聚類標籤映射
         """
         try:
-            from app.services.unified_ai_service_simplified import unified_ai_service_simplified, AIRequest, TaskType
-            from app.services.prompt_manager_simplified import prompt_manager_simplified, PromptType
+            from app.services.ai.unified_ai_service_simplified import unified_ai_service_simplified, AIRequest, TaskType
+            from app.services.ai.prompt_manager_simplified import prompt_manager_simplified, PromptType
             import json
             
             # 為每個聚類收集樣本文檔
@@ -554,7 +554,7 @@ class ClusteringService:
             # 1. reload_task_configs 以獲取最新的用戶偏好
             # 2. 獲取提示詞模板
             # 3. 使用用戶設定的 prompt_input_max_length 格式化提示詞
-            from app.services.unified_ai_service_simplified import unified_ai_service_simplified, AIRequest
+            from app.services.ai.unified_ai_service_simplified import unified_ai_service_simplified, AIRequest
             
             # 創建AI請求 - 使用批量聚類標籤任務類型
             ai_request = AIRequest(
@@ -753,7 +753,7 @@ class ClusteringService:
             
             # 使用UnifiedAIService生成標籤
             try:
-                from app.services.unified_ai_service_simplified import unified_ai_service_simplified, AIRequest, TaskType
+                from app.services.ai.unified_ai_service_simplified import unified_ai_service_simplified, AIRequest, TaskType
                 
                 # 準備文檔樣本文本
                 samples_text = "\n\n".join(document_samples)

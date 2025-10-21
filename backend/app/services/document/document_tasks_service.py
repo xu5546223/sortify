@@ -9,13 +9,13 @@ from fastapi import HTTPException, status
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from ..models import Document, DocumentStatus, TokenUsage, AIImageAnalysisOutput, AITextAnalysisOutput
-from ..crud import crud_documents
-from ..core.config import Settings
-from ..services.document_processing_service import DocumentProcessingService, SUPPORTED_IMAGE_TYPES_FOR_AI
-from ..services.unified_ai_service_simplified import AIRequest, TaskType as AIServiceTaskType, unified_ai_service_simplified
-from ..services.unified_ai_config import unified_ai_config
-from ..core.logging_utils import log_event, LogLevel, AppLogger
+from ...models import Document, DocumentStatus, TokenUsage, AIImageAnalysisOutput, AITextAnalysisOutput
+from ...crud import crud_documents
+from ...core.config import Settings
+from .document_processing_service import DocumentProcessingService, SUPPORTED_IMAGE_TYPES_FOR_AI
+from ..ai.unified_ai_service_simplified import AIRequest, TaskType as AIServiceTaskType, unified_ai_service_simplified
+from ..ai.unified_ai_config import unified_ai_config
+from ...core.logging_utils import log_event, LogLevel, AppLogger
 
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
 
@@ -187,7 +187,7 @@ class DocumentTasksService:
                 # 新增: 如果分析成功,進行實體提取和語義豐富化
                 if processing_status == DocumentStatus.ANALYSIS_COMPLETED:
                     try:
-                        from app.services.entity_extraction_service import EntityExtractionService
+                        from app.services.document.entity_extraction_service import EntityExtractionService
                         
                         entity_service = EntityExtractionService()
                         enriched_data = await entity_service.enrich_document(db, document, analysis_data)
@@ -442,7 +442,7 @@ class DocumentTasksService:
                 )
                 
                 # TODO: 當 ClusteringService 實現後,在這裡觸發聚類
-                # from app.services.clustering_service import ClusteringService
+                # from app.services.external.clustering_service import ClusteringService
                 # clustering_service = ClusteringService()
                 # background_tasks.add_task(
                 #     clustering_service.run_clustering_for_user,

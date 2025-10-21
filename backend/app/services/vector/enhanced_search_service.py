@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from app.services.vector_db_service import vector_db_service
-from app.services.embedding_service import embedding_service
+from app.services.vector.vector_db_service import vector_db_service
+from app.services.vector.embedding_service import embedding_service
 from app.core.logging_utils import AppLogger, log_event, LogLevel
 from app.models.vector_models import SemanticSearchResult
 from app.core.config import settings

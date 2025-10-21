@@ -9,10 +9,10 @@ from typing import Optional, Tuple
 import fitz  # PyMuPDF
 from docx import Document as DocxDocument
 
-from ..models.document_models import DocumentStatus
+from ...models.document_models import DocumentStatus
 
-from ..core.logging_utils import log_event, LogLevel # Added
-from ..models.document_models import Document # For type hinting if needed by log_event context, though not directly used now
+from ...core.logging_utils import log_event, LogLevel # Added
+from ...models.document_models import Document # For type hinting if needed by log_event context, though not directly used now
 
 # Setup logger
 logger = logging.getLogger(__name__) # Existing logger can remain for very fine-grained internal logs

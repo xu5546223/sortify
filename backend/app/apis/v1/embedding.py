@@ -6,7 +6,7 @@ import torch
 
 from app.core.security import get_current_active_user
 from app.models.user_models import User
-from app.services.embedding_service import embedding_service
+from app.services.vector.embedding_service import embedding_service
 from app.core.device_config import device_config_manager, DeviceType
 from app.core.logging_utils import AppLogger, log_event # Added log_event
 from app.models.log_models import LogLevel # Added LogLevel

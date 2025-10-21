@@ -73,8 +73,8 @@ class EntityExtractionService:
                     "keyword_count": len(searchable_keywords) if isinstance(searchable_keywords, list) else 0,
                     "content_length": len(key_information.get("content_summary") or ""),
                     "has_vendor": "vendor" in structured_entities if structured_entities else False,
-                    "has_amounts": ("amounts" in structured_entities and len(structured_entities.get("amounts", [])) > 0) if structured_entities else False,
-                    "has_dates": ("dates" in structured_entities and len(structured_entities.get("dates", [])) > 0) if structured_entities else False,
+                    "has_amounts": (structured_entities and "amounts" in structured_entities and structured_entities.get("amounts") and len(structured_entities.get("amounts", [])) > 0) if structured_entities else False,
+                    "has_dates": (structured_entities and "dates" in structured_entities and structured_entities.get("dates") and len(structured_entities.get("dates", [])) > 0) if structured_entities else False,
                     "content_type": ai_analysis_output.get("content_type") or "unknown"
                 }
             }

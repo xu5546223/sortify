@@ -14,7 +14,7 @@ from app.models.user_models import UserInDB
 from app.models.clustering_models import ClusteringJobStatus, ClusterSummary
 from app.models.document_models import Document
 from app.models.response_models import BasicResponse
-from app.services.clustering_service import ClusteringService
+from app.services.external.clustering_service import ClusteringService
 
 router = APIRouter()
 
@@ -446,6 +446,90 @@ async def delete_cluster(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"刪除聚類失敗: {str(e)}"
+        )
+
+
+@router.delete("/clusters", response_model=BasicResponse, summary="刪除所有聚類")
+async def delete_all_clusters(
+    request: Request,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db)
+):
+    """
+    刪除當前用戶的所有聚類，並將所有文檔重置為待分類狀態
+    
+    注意: 這是破壞性操作，會刪除所有聚類數據，但不會刪除文檔本身
+    
+    Returns:
+        BasicResponse: 操作結果
+    """
+    request_id = request.state.request_id if hasattr(request.state, 'request_id') else None
+    
+    try:
+        # 獲取當前用戶的所有聚類數量
+        clusters_count = await db["clusters"].count_documents({
+            "owner_id": current_user.id
+        })
+        
+        if clusters_count == 0:
+            return BasicResponse(
+                success=True,
+                message="沒有聚類需要刪除"
+            )
+        
+        # 刪除所有聚類
+        delete_result = await db["clusters"].delete_many({
+            "owner_id": current_user.id
+        })
+        
+        # 將所有文檔重置為 pending（待分類）
+        # 用戶手動刪除所有聚類，表示要完全重置分類狀態
+        # 所有文檔歸到"待分類"，包括之前因為數量不足而被標記為 excluded 的文檔
+        # 這樣用戶可以完全重新開始分類流程
+        update_result = await db["documents"].update_many(
+            {
+                "owner_id": current_user.id,
+                "clustering_status": {"$in": ["clustered", "excluded"]}
+            },
+            {
+                "$set": {
+                    "clustering_status": "pending",
+                    "cluster_info": None
+                }
+            }
+        )
+        
+        await log_event(
+            db=db,
+            level=LogLevel.INFO,
+            message=f"用戶 {current_user.username} 刪除所有聚類",
+            source="api.clustering.delete_all",
+            user_id=str(current_user.id),
+            request_id=request_id,
+            details={
+                "clusters_deleted": delete_result.deleted_count,
+                "documents_reset": update_result.modified_count
+            }
+        )
+        
+        return BasicResponse(
+            success=True,
+            message=f"已刪除 {delete_result.deleted_count} 個聚類，{update_result.modified_count} 個文檔已重置為待分類狀態"
+        )
+        
+    except Exception as e:
+        await log_event(
+            db=db,
+            level=LogLevel.ERROR,
+            message=f"刪除所有聚類失敗: {str(e)}",
+            source="api.clustering.delete_all.error",
+            user_id=str(current_user.id),
+            request_id=request_id,
+            details={"error": str(e)}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"刪除所有聚類失敗: {str(e)}"
         )
 
 

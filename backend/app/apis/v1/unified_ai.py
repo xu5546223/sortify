@@ -9,8 +9,8 @@ from app.core.security import get_current_active_user
 from app.core.logging_utils import AppLogger
 # 切換到簡化版本的模型和服務
 from app.models.ai_models_simplified import AIPromptRequest, TokenUsage
-from app.services.unified_ai_service_simplified import unified_ai_service_simplified, AIRequest, TaskType
-from app.services.prompt_manager_simplified import PromptType
+from app.services.ai.unified_ai_service_simplified import unified_ai_service_simplified, AIRequest, TaskType
+from app.services.ai.prompt_manager_simplified import PromptType
 from app.services.enhanced_ai_qa_service import enhanced_ai_qa_service
 from app.models.vector_models import AIQARequest, AIQAResponse
 from fastapi import Request # Added
@@ -230,12 +230,13 @@ async def ai_question_answer(
     )
 
     try:
-        # logger.info(f"用戶 {current_user.username} 收到AI問答請求: {request.question[:100]}（簡化版）") # Replaced
-        
-        response = await enhanced_ai_qa_service.process_qa_request(
-            db=db, 
+        # 使用智能路由處理(如果啟用)
+        # 會根據問題意圖自動選擇最優處理策略
+        response = await enhanced_ai_qa_service.process_qa_request_intelligent(
+            db=db,
             request=request_data,
-            user_id=current_user.id
+            user_id=current_user.id,
+            request_id=request_id_val
         )
         
         # logger.info(f"用戶 {current_user.username} AI問答處理完成（簡化版），Token使用: {response.tokens_used}") # Replaced
@@ -361,7 +362,7 @@ async def list_available_models(
         details={"task_type_filter": task_type}
     )
     try:
-        from app.services.unified_ai_config import unified_ai_config, TaskType as UnifiedTaskType # Alias to avoid conflict
+        from app.services.ai.unified_ai_config import unified_ai_config, TaskType as UnifiedTaskType # Alias to avoid conflict
         
         task_type_enum_val: Optional[UnifiedTaskType] = None # Use aliased TaskType
         if task_type:
@@ -412,7 +413,7 @@ async def list_available_prompts(
         source="api.unified_ai.list_prompts", user_id=str(current_user.id)
     )
     try:
-        from app.services.prompt_manager_simplified import prompt_manager_simplified, PromptType as SimplifiedPromptType # Alias
+        from app.services.ai.prompt_manager_simplified import prompt_manager_simplified, PromptType as SimplifiedPromptType # Alias
         
         prompts = {}
         for prompt_type_enum_val in SimplifiedPromptType: # Use aliased PromptType
@@ -506,4 +507,139 @@ async def ai_system_status(
             "success": False,
             "version": "simplified",
             "error_message": f"System status check failed: {str(e)}"
-        } 
+        }
+
+# === 新增: 問題分類端點 ===
+@router.post("/qa/classify")
+async def classify_question_only(
+    fastapi_request: Request,
+    question: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db)
+):
+    """
+    僅分類問題意圖,不執行後續流程
+    用於前端預先了解問題類型和建議策略
+    """
+    request_id_val = fastapi_request.state.request_id if hasattr(fastapi_request.state, 'request_id') else None
+    
+    await log_event(
+        db=db, level=LogLevel.INFO,
+        message=f"Question classification request from user {current_user.username}.",
+        source="api.unified_ai.classify_question", 
+        user_id=str(current_user.id), 
+        request_id=request_id_val,
+        details={"question_length": len(question)}
+    )
+    
+    try:
+        from app.services.qa_workflow.question_classifier_service import question_classifier_service
+        
+        classification = await question_classifier_service.classify_question(
+            question=question,
+            conversation_history=None,
+            has_cached_documents=False,
+            db=db,
+            user_id=str(current_user.id)
+        )
+        
+        await log_event(
+            db=db, level=LogLevel.INFO,
+            message=f"Question classified as {classification.intent.value}.",
+            source="api.unified_ai.classify_question",
+            user_id=str(current_user.id),
+            request_id=request_id_val,
+            details={
+                "intent": classification.intent.value,
+                "confidence": classification.confidence,
+                "strategy": classification.suggested_strategy
+            }
+        )
+        
+        return {
+            "success": True,
+            "classification": classification.model_dump(),
+            "estimated_api_calls": classification.estimated_api_calls,
+            "estimated_processing_time": classification.estimated_api_calls * 2  # 秒
+        }
+        
+    except Exception as e:
+        await log_event(
+            db=db, level=LogLevel.ERROR,
+            message=f"Question classification failed: {str(e)}",
+            source="api.unified_ai.classify_question_error",
+            user_id=str(current_user.id),
+            request_id=request_id_val,
+            details={"error": str(e)}
+        )
+        raise HTTPException(status_code=500, detail=f"問題分類失敗: {str(e)}")
+
+# === 新增: 工作流配置端點 ===
+@router.get("/qa/config")
+async def get_qa_config(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db)
+):
+    """
+    獲取問答系統配置
+    """
+    try:
+        from app.services.enhanced_ai_qa_service import enhanced_ai_qa_service
+        from app.services.qa_workflow.question_classifier_service import question_classifier_service
+        
+        return {
+            "success": True,
+            "config": {
+                "intelligent_routing_enabled": enhanced_ai_qa_service.enable_intelligent_routing,
+                "classifier_enabled": question_classifier_service.config.enabled,
+                "classifier_model": question_classifier_service.config.model,
+                "confidence_threshold": question_classifier_service.config.confidence_threshold,
+                "hybrid_search_enabled": enhanced_ai_qa_service.enable_hybrid_search_for_aiqa
+            }
+        }
+    except Exception as e:
+        logger.error(f"獲取配置失敗: {e}", exc_info=True)
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@router.put("/qa/config")
+async def update_qa_config(
+    config_data: dict,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db)
+):
+    """
+    更新問答系統配置 (需要管理員權限)
+    """
+    try:
+        from app.services.enhanced_ai_qa_service import enhanced_ai_qa_service
+        from app.services.qa_workflow.question_classifier_service import question_classifier_service
+        
+        # 更新配置
+        if "intelligent_routing_enabled" in config_data:
+            enhanced_ai_qa_service.enable_intelligent_routing = config_data["intelligent_routing_enabled"]
+        
+        if "classifier_enabled" in config_data:
+            question_classifier_service.config.enabled = config_data["classifier_enabled"]
+        
+        if "confidence_threshold" in config_data:
+            question_classifier_service.config.confidence_threshold = config_data["confidence_threshold"]
+        
+        await log_event(
+            db=db, level=LogLevel.INFO,
+            message=f"QA config updated by {current_user.username}.",
+            source="api.unified_ai.update_qa_config",
+            user_id=str(current_user.id),
+            details={"updates": config_data}
+        )
+        
+        return {
+            "success": True,
+            "message": "配置更新成功"
+        }
+        
+    except Exception as e:
+        logger.error(f"更新配置失敗: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"更新配置失敗: {str(e)}")

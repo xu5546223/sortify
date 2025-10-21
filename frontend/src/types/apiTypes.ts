@@ -370,6 +370,13 @@ export interface AIQARequestUnified extends AIRequest {
   
   // AI 輸出控制參數（從全域設定中獲取，但也可以在請求中覆蓋）
   ensure_chinese_output?: boolean; // 確保中文輸出
+  
+  // 工作流控制參數
+  skip_classification?: boolean; // 跳過問題分類
+  workflow_action?: 'approve_search' | 'skip_search' | 'approve_detail_query' | 'skip_detail_query' | 'confirm_documents'; // 工作流操作 ⭐ 新增兩個
+  force_strategy?: string; // 強制使用特定策略
+  workflow_step?: string; // 當前工作流步驟
+  document_ids?: string[]; // 指定文檔ID列表
 }
 
 export interface QueryRewriteRequest extends AIRequest {
@@ -515,8 +522,14 @@ export interface AIQAResponse { // Content for AIResponse<AIQAResponse>
   query_rewrite_result?: QueryRewriteResult | null;
   semantic_search_contexts?: SemanticContextDocument[] | null;
   llm_context_documents?: LLMContextDocument[] | null;
-  detailed_document_data_from_ai_query?: Record<string, any> | null; // 從 AI 生成的查詢中獲取的詳細數據
+  detailed_document_data_from_ai_query?: any[] | null; // 從 AI 生成的查詢中獲取的詳細數據（數組格式）
   detailed_query_reasoning?: string | null; // AI 為何以及如何生成詳細查詢的原因
+  // 新增:工作流相關欄位
+  classification?: any; // 問題分類結果
+  workflow_state?: any; // 工作流狀態
+  next_action?: string; // 下一步操作
+  pending_approval?: string; // 等待批准的類型
+  error_message?: string; // 錯誤信息
   session_id?: string | null;
   created_at: string;
 }

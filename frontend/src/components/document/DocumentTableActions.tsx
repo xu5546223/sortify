@@ -46,20 +46,35 @@ const DocumentTableActions: React.FC<DocumentTableActionsProps> = ({
     return status === 'uploaded' || status === 'processing_error';
   };
 
-  // 計算下拉菜單應該向上還是向下展開
+  // 計算下拉菜單的位置（使用 fixed 定位）
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
+  
   useEffect(() => {
     if (isOpen && buttonRef.current) {
       const buttonRect = buttonRef.current.getBoundingClientRect();
       const viewportHeight = window.innerHeight;
       const spaceBelow = viewportHeight - buttonRect.bottom;
-      const spaceAbove = buttonRect.top;
       const dropdownHeight = 300; // 預估菜單高度
 
-      // 如果下方空間不足且上方空間更多，則向上展開
-      if (spaceBelow < dropdownHeight && spaceAbove > spaceBelow) {
+      // 計算菜單位置
+      if (spaceBelow < dropdownHeight && buttonRect.top > dropdownHeight) {
+        // 向上展開
         setDropdownPosition('top');
+        setMenuStyle({
+          position: 'fixed',
+          top: buttonRect.top - dropdownHeight + 'px',
+          right: (window.innerWidth - buttonRect.right) + 'px',
+          zIndex: 9999
+        });
       } else {
+        // 向下展開
         setDropdownPosition('bottom');
+        setMenuStyle({
+          position: 'fixed',
+          top: buttonRect.bottom + 8 + 'px',
+          right: (window.innerWidth - buttonRect.right) + 'px',
+          zIndex: 9999
+        });
       }
     }
   }, [isOpen]);
@@ -116,7 +131,7 @@ const DocumentTableActions: React.FC<DocumentTableActionsProps> = ({
   };
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative">
       {/* 三個點按鈕 */}
       <button
         ref={buttonRef}
@@ -131,12 +146,12 @@ const DocumentTableActions: React.FC<DocumentTableActionsProps> = ({
         <MoreOutlined className="text-lg" />
       </button>
 
-      {/* 下拉菜單 */}
+      {/* 下拉菜單 - 使用 fixed 定位確保不被裁剪 */}
       {isOpen && (
         <div 
-          className={`absolute right-0 w-48 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-50 py-1 ${
-            dropdownPosition === 'top' ? 'bottom-full mb-2' : 'top-full mt-2'
-          }`}
+          ref={dropdownRef}
+          className="w-48 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 py-1"
+          style={menuStyle}
         >
           {/* 詳情 */}
           <button

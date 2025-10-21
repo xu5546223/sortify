@@ -800,7 +800,10 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
                 }
                 if (header.key === 'actions') {
                   return (
-                    <TableCell key={`${header.key}-${doc.id}`} className={header.className || tableCellRenderers.actions?.cellClassName}>
+                    <TableCell 
+                      key={`${header.key}-${doc.id}`} 
+                      className={`relative overflow-visible ${header.className || tableCellRenderers.actions?.cellClassName || ''}`}
+                    >
                       <DocumentTableActions 
                         document={doc}
                         isProcessing={isProcessing[doc.id] || false}

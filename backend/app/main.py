@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI):
         
         # 連接到 Redis
         try:
-            from .services.conversation_cache_service import conversation_cache_service
+            from .services.cache.conversation_cache_service import conversation_cache_service
             await conversation_cache_service.connect()
             std_logger.info("Redis 連接已建立")
         except Exception as e:
@@ -118,7 +118,7 @@ async def lifespan(app: FastAPI):
         
         # 關閉 Redis 連接
         try:
-            from .services.conversation_cache_service import conversation_cache_service
+            from .services.cache.conversation_cache_service import conversation_cache_service
             await conversation_cache_service.disconnect()
             std_logger.info("Redis 連接已關閉")
         except Exception as e:
@@ -126,7 +126,7 @@ async def lifespan(app: FastAPI):
         
         # 關閉向量資料庫連接
         try:
-            from .services.vector_db_service import vector_db_service
+            from .services.vector.vector_db_service import vector_db_service
             vector_db_service.close_connection()
             std_logger.info("向量資料庫連接已關閉")
         except Exception as e:
@@ -303,7 +303,9 @@ app.include_router(clustering_api_v1.router, prefix="/api/v1/clustering", tags=[
 # 註冊新的對話路由
 app.include_router(conversations_api_v1.router, prefix="/api/v1", tags=["v1 - Conversations"])
 
-# 註冊新的緩存分析路由
+# 註冊QA統計分析路由
+from .apis.v1 import qa_analytics as qa_analytics_api_v1
+app.include_router(qa_analytics_api_v1.router, prefix="/api/v1/qa/analytics", tags=["v1 - QA Analytics"])
 
 
 

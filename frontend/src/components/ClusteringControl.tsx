@@ -4,17 +4,20 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { Modal } from 'antd';
 import { ClusteringJobStatus } from '../types/apiTypes';
 import { 
   triggerClustering, 
-  getClusteringStatus
+  getClusteringStatus,
+  deleteAllClusters
 } from '../services/clusteringService';
 import { 
   ThunderboltOutlined, 
   ClockCircleOutlined, 
   CheckCircleOutlined, 
   ExclamationCircleOutlined,
-  ReloadOutlined
+  ReloadOutlined,
+  DeleteOutlined
 } from '@ant-design/icons';
 
 interface ClusteringControlProps {
@@ -26,6 +29,7 @@ const ClusteringControl: React.FC<ClusteringControlProps> = ({
 }) => {
   const [jobStatus, setJobStatus] = useState<ClusteringJobStatus | null>(null);
   const [isTriggering, setIsTriggering] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showStatus, setShowStatus] = useState(false);
 
@@ -89,6 +93,62 @@ const ClusteringControl: React.FC<ClusteringControlProps> = ({
     setTimeout(() => clearInterval(pollInterval), 300000);
   };
 
+  // 刪除所有聚類
+  const handleDeleteAllClusters = () => {
+    Modal.confirm({
+      title: '🗑️ 確認刪除所有分類？',
+      content: (
+        <div className="space-y-2">
+          <p>此操作會：</p>
+          <ul className="list-disc list-inside text-sm text-gray-600 dark:text-gray-400">
+            <li>刪除所有現有的分類</li>
+            <li>將所有文檔（包括「未分類」）重置為「待分類」狀態</li>
+            <li>清除所有聚類數據</li>
+          </ul>
+          <p className="text-blue-600 dark:text-blue-400 text-sm mt-2">
+            💡 重置後可以重新執行智能分類
+          </p>
+          <p className="text-red-600 dark:text-red-400 font-semibold mt-3">
+            ⚠️ 這是破壞性操作，無法撤銷！
+          </p>
+        </div>
+      ),
+      okText: '確認刪除',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setIsDeleting(true);
+        setError(null);
+        try {
+          const result = await deleteAllClusters();
+          setJobStatus(null);
+          setShowStatus(false);
+          
+          // 通知父組件刷新
+          if (onClusteringComplete) {
+            onClusteringComplete();
+          }
+          
+          // 顯示成功消息
+          Modal.success({
+            title: '✅ 刪除成功',
+            content: result.message
+          });
+        } catch (err: any) {
+          console.error('刪除所有聚類失敗:', err);
+          setError(err.response?.data?.detail || '刪除所有聚類失敗');
+          
+          Modal.error({
+            title: '❌ 刪除失敗',
+            content: err.response?.data?.detail || '刪除所有聚類失敗'
+          });
+        } finally {
+          setIsDeleting(false);
+        }
+      }
+    });
+  };
+
   useEffect(() => {
     fetchStatus();
   }, []);
@@ -135,15 +195,28 @@ const ClusteringControl: React.FC<ClusteringControlProps> = ({
 
   return (
     <div className="space-y-3">
-      {/* 觸發按鈕 */}
-      <button
-        onClick={handleTriggerClustering}
-        disabled={isTriggering || jobStatus?.status === 'running'}
-        className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:from-gray-400 disabled:to-gray-500 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg"
-      >
-        <ThunderboltOutlined className="text-lg" />
-        <span>{isTriggering ? '啟動中...' : '執行智能分類'}</span>
-      </button>
+      {/* 按鈕組 */}
+      <div className="space-y-2">
+        {/* 執行分類按鈕 */}
+        <button
+          onClick={handleTriggerClustering}
+          disabled={isTriggering || jobStatus?.status === 'running'}
+          className="w-full flex items-center justify-center space-x-2 px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:from-gray-400 disabled:to-gray-500 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg"
+        >
+          <ThunderboltOutlined className="text-lg" />
+          <span>{isTriggering ? '啟動中...' : '執行智能分類'}</span>
+        </button>
+
+        {/* 刪除所有分類按鈕 */}
+        <button
+          onClick={handleDeleteAllClusters}
+          disabled={isDeleting || isTriggering || jobStatus?.status === 'running'}
+          className="w-full flex items-center justify-center space-x-2 px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 disabled:bg-gray-100 disabled:text-gray-400 dark:disabled:bg-gray-800 rounded-lg transition-all duration-200 border border-red-200 dark:border-red-800"
+        >
+          <DeleteOutlined className="text-lg" />
+          <span>{isDeleting ? '刪除中...' : '刪除所有分類'}</span>
+        </button>
+      </div>
 
       {/* 錯誤提示 */}
       {error && (

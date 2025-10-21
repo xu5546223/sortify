@@ -17,6 +17,8 @@ class PromptType(Enum):
     DOCUMENT_SELECTION_FOR_QUERY = "document_selection_for_query"
     CLUSTER_LABEL_GENERATION = "cluster_label_generation"  # 單個聚類標籤生成
     BATCH_CLUSTER_LABEL_GENERATION = "batch_cluster_label_generation"  # 批量聚類標籤生成
+    QUESTION_INTENT_CLASSIFICATION = "question_intent_classification"  # 問題意圖分類
+    GENERATE_CLARIFICATION_QUESTION = "generate_clarification_question"  # 生成澄清問題
 
 @dataclass
 class PromptTemplate:
@@ -402,9 +404,10 @@ MIME類型: {{image_mime_type}}
 2.  **完整性**：盡可能提供詳細和完整的回答。
 3.  **條理性**：答案應該結構清晰，易於理解。
 4.  **引用**：如果適用，簡要說明答案來源於哪些文檔或文檔的哪些部分。 (這部分可以包含在 "answer" 文本中)
-5.  **無法回答時**：如果提供的文檔內容不足以回答問題，請在 "answer" 字段中明確說明，例如：\"根據提供的文檔，我無法找到關於 [問題關鍵點] 的確切信息。\"
-6.  **語氣**：保持專業和友好的語調。
-7.  **JSON格式**：確保輸出是單個、完整且語法正確的JSON對象。JSON的鍵名和字符串值必須用雙引號括起來。''',
+5.  **文檔編號理解**：文檔上下文中的標題如"文檔5 (xxx.png) 的詳細數據"表示這是對話中提到的第5個文檔，請直接使用這個編號來回答用戶。
+6.  **無法回答時**：如果提供的文檔內容不足以回答問題，請在 "answer" 字段中明確說明，例如：\"根據提供的文檔，我無法找到關於 [問題關鍵點] 的確切信息。\"
+7.  **語氣**：保持專業和友好的語調。
+8.  **JSON格式**：確保輸出是單個、完整且語法正確的JSON對象。JSON的鍵名和字符串值必須用雙引號括起來。''',
             user_prompt_template='''問題：<user_question>{user_question}</user_question>
 
 查詢分析（來自先前的步驟）：<intent_analysis_result>{intent_analysis}</intent_analysis_result>
@@ -616,6 +619,398 @@ MIME類型: {{image_mime_type}}
             variables=["cluster_count", "clusters_data"],
             description="批量為多個文檔聚類生成智能標籤名稱(一次AI調用)"
         )
+        
+        # 問題意圖分類 (使用 Gemini 2.0 Flash 快速分類)
+        self._prompts[PromptType.QUESTION_INTENT_CLASSIFICATION] = PromptTemplate(
+            prompt_type=PromptType.QUESTION_INTENT_CLASSIFICATION,
+            system_prompt='''你是問題意圖分類專家,負責快速準確地識別用戶問題的意圖類型。
+
+=== 分類類型定義 ===
+
+1. **greeting** (寒暄問候)
+   - 例: "你好", "嗨", "早安", "Hello"
+   - 特徵: 簡短問候語,無實質內容需求
+
+2. **chitchat** (閒聊對話)
+   - 例: "你今天好嗎?", "天氣真好", "你會做什麼?"
+   - 特徵: 非工作相關的隨意對話
+
+3. **clarification_needed** (需要澄清)
+   - 例: "那個文檔", "財務相關數據", "有沒有關於XX的內容", "公司的", "之前提到的"
+   - 特徵: 
+     * 指代不明確（缺少具體主題）
+     * 範圍過大（"財務數據"可能是報表、明細、分析等）
+     * 缺少時間範圍、具體對象等關鍵信息
+     * 使用"有沒有"、"是否有"等詢問存在性（未明確說明要查什麼）
+   - **判斷標準**: 
+     * 如果無法確定用戶具體想找什麼類型的文檔 → clarification_needed
+     * 如果問題可以有多種理解方式 → clarification_needed
+   - **有對話歷史時**: 
+     * ✅ 正確: 對話中提過"電費帳單"，用戶問"所有月份" → document_search（明確引用）
+     * ❌ 錯誤: 對話中提過"電費帳單"，用戶問"有財務數據嗎" → document_search（主題完全不同，仍需澄清）              
+
+4. **simple_factual** (簡單事實查詢)
+   - 例: "什麼是資料庫?", "Python是什麼?", "如何定義AI?"
+   - 特徵: 尋求簡單定義或概念解釋,通用知識,無需查找特定文檔
+   - **重要擴展**: 如果對話歷史中已經包含了答案,也屬於 simple_factual
+     * 例: AI剛回答了發票詳情(含金額79元)，用戶問"花了多少錢" → simple_factual
+     * 理由: 答案已在歷史中,只需從歷史提取,不需要重新搜索
+     * 判斷標準: 檢查歷史中是否已包含用戶所問的信息
+
+5. **document_search** (文檔搜索)
+   - 例: "幫我找財務報表", "有關於專案X的文檔嗎?", "上個月的會議記錄"
+   - 特徵: 明確需要查找特定文檔或資料，**但不確定在哪個文檔中**
+   - **重要判斷**: 只有在對話歷史中**沒有**相關文檔時才需要搜索
+     * ✅ 對話中沒提過"會議記錄" → 用戶問"會議記錄" → document_search
+     * ❌ 對話中剛找到了發票文檔 → 用戶問"金額多少" → document_detail_query (已知文檔)
+
+6. **document_detail_query** (文檔詳細查詢) ⭐ 新增
+   - 例: "這張發票花了多少錢", "合約的甲方是誰", "會議是哪一天", "文檔五的詳細內容"
+   - 特徵: 
+     * 對話歷史中**已經提到或找到**特定文檔
+     * 用戶詢問該文檔中的**具體詳細信息**（金額、日期、人名、數量等）
+     * 需要精確數據，不是概要
+   - **判斷標準**:
+     * 歷史中有特定文檔（剛搜索過、剛分析過）或緩存文檔列表中有文檔
+     * 問題包含：
+       - 數字詢問："多少"、"幾個"、"百分之幾"
+       - 時間詢問："什麼時候"、"哪一天"、"幾點"
+       - 人物詢問："誰"、"哪位"
+       - 詳細詢問："具體"、"詳細"、"明細"、"內容"
+     * 使用指代詞："這張"、"這份"、"該"、"這個"
+     * 明確引用文檔編號："文檔一"、"文檔五"、"第3個文檔"
+   - **重要提示**:
+     * **requires_context 必須設為 true**（需要載入緩存的文檔ID）
+     * **requires_documents 必須設為 true**
+     * **必須識別目標文檔ID**：從緩存文檔列表中找到用戶提到的文檔，填入 target_document_ids
+   - **文檔識別方法**:
+     * **明確編號**: "文檔五" → 查找 reference_number=5 的文檔，取其 document_id
+     * **編號引用**: "第一個文檔" → 查找 reference_number=1 的文檔
+     * **歷史引用**: "那張罰單" → 從對話歷史中找到提到的罰單文檔，從緩存列表匹配
+     * **內容特徵匹配** ⭐: "南投的罰單" → 從文檔摘要中找到包含"南投"的文檔
+     * **屬性匹配**: "2024年的發票" → 從摘要中匹配包含2024年份的文檔
+     * **多文檔匹配**: 如果用戶提到多個特徵，返回所有匹配的文檔ID列表
+   - **範例**:
+     * 歷史:找到發票文檔 → 問:"這張發票花了多少錢" → document_detail_query, target_document_ids=["發票ID"], requires_context=true ✅
+     * 歷史:找到合約文檔 → 問:"甲方是誰" → document_detail_query, target_document_ids=["合約ID"], requires_context=true ✅
+     * 歷史:AI總結了5個罰單 → 問:"文檔五的詳細內容" → document_detail_query, target_document_ids=["第5個罰單ID"], requires_context=true ✅
+     * 緩存:文檔1(南投罰單),文檔2(台北罰單) → 問:"南投的罰單詳細資訊" → document_detail_query, target_document_ids=["文檔1的ID"], reasoning="摘要包含南投" ✅ ⭐
+     * 緩存:文檔1(2023發票),文檔2(2024發票) → 問:"2024年的發票金額" → document_detail_query, target_document_ids=["文檔2的ID"], reasoning="摘要包含2024" ✅ ⭐
+
+7. **complex_analysis** (複雜分析)
+   - 例: "比較過去三個月的銷售趨勢", "分析專案成本與收益", "總結所有技術文檔的關鍵點"
+   - 特徵: 需要**多文檔**整合、深度分析、比較或總結
+   - **與 document_detail_query 的區別**:
+     * document_detail_query: 單個/少數已知文檔的精確數據提取
+     * complex_analysis: 多個文檔的整合、比較、趨勢分析
+
+=== 分析策略 ===
+
+1. **優先檢查對話歷史**: 如果有對話歷史，先理解上下文
+   - 用戶可能使用代詞("它"、"這個"、"所有"、"這兩張")引用之前提到的主題
+   - 用戶可能在逐步細化需求（從模糊到具體）
+   - 連續的澄清回答後,用戶通常會提供更具體的信息
+   - **關鍵判斷**: 如果AI剛回答了某個信息,用戶又問同一信息的細節 → simple_factual
+     * 例: AI回答"發票79元+68元" → 用戶:"總共多少" → simple_factual (直接從歷史計算)
+     * 例: AI回答"會議3月5日" → 用戶:"什麼時候" → simple_factual (歷史已有答案)
+   
+2. **對話延續判斷（關鍵！）**:
+   - **如果上一輪AI提出了澄清問題**（如"您想了解哪方面的XX？"、"您具體想查詢XX還是XX？"）
+   - **當前用戶的回答大概率是在回答澄清**，應該結合理解:
+     * AI澄清: "您具體想查詢哪方面的財務數據？" 
+     * 用戶: "公司的" 
+     * **理解為**: "公司的財務數據" ✅
+     * **意圖**: document_search（查詢公司的財務數據）
+     * **置信度**: 0.80-0.85（從澄清上下文能明確理解）
+   - **判斷方法**: 
+     1. 檢查上一輪AI回答是否包含 "💡"、"您想"、"請問"、"哪方面"、"具體"等澄清關鍵詞
+     2. 如果是，當前用戶回答應視為對澄清的補充
+     3. 將用戶回答與澄清問題的主題結合理解
+
+3. **關鍵詞識別**: 
+   - 寒暄: "你好", "嗨", "Hi", "Hello", "謝謝"
+   - **模糊指標**（需要澄清）: 
+     * "有沒有"、"有無"、"是否有" → 只問存在性，未說明要找什麼
+     * 單個詞或短語: "財務"、"公司的"、"那個"
+     * 過於籠統: "XX相關"、"XX方面"、"關於XX"
+   - 簡單: "什麼是", "如何", "為何", "定義"
+   - 文檔: "找", "查", "文檔", "資料", "報表", "帳單", **具體主題+動作**
+   - 複雜: "比較", "分析", "總結", "趨勢", "評估"
+
+4. **具體性判斷**:
+   - 無歷史時: 問題越模糊越需要澄清
+   - 有歷史時: 結合歷史判斷,能理解就不需要澄清
+
+=== 處理策略建議 ===
+
+- greeting/chitchat: "direct_answer" - 直接友好回答,無需查文檔
+- clarification_needed: "ask_clarification" - 生成澄清問題
+- simple_factual: "quick_answer" - 從歷史或通用知識快速回答
+- document_search: "standard_search" - 標準文檔檢索流程
+- document_detail_query: "mongodb_detail_query" - 對已知文檔執行MongoDB詳細查詢 ⭐
+- complex_analysis: "full_rag" - 完整 RAG 分析流程（多文檔整合）
+
+=== 輸出JSON格式 (嚴格遵守!) ===
+
+**重要**: 必須返回有效的JSON格式,不要包含任何markdown標記或額外文字。
+
+```json
+{{
+  "intent": "分類類型",
+  "confidence": 0.85,
+  "reasoning": "分類理由",
+  "requires_documents": false,
+  "requires_context": false,
+  "suggested_strategy": "處理策略",
+  "query_complexity": "simple",
+  "estimated_api_calls": 1,
+  "clarification_question": null,
+  "suggested_responses": null,
+  "target_document_ids": null,
+  "target_document_reasoning": null
+}}
+```
+
+**注意事項**:
+- intent 必須是以下之一: greeting, chitchat, clarification_needed, simple_factual, document_search, document_detail_query, complex_analysis
+- confidence 必須是 0.0-1.0 之間的數字
+- reasoning 中不要包含引號或換行符
+- 如果 intent 不是 clarification_needed,則 clarification_question 和 suggested_responses 必須為 null
+
+**如果 intent 是 clarification_needed**,請額外提供:
+- `clarification_question`: 要問用戶的澄清問題
+- `suggested_responses`: 2-3個建議的回答選項
+
+**如果 intent 是 document_detail_query**,請額外提供:
+- `target_document_ids`: 用戶想查詢的文檔ID列表（從緩存文檔列表中匹配）
+- `target_document_reasoning`: 如何識別這些文檔的推理過程
+
+**文檔ID識別規則**:
+1. **明確編號引用**: "文檔X"、"第X個文檔"時，從緩存文檔列表中找到對應的 reference_number
+2. **指代詞引用**: "這張XX"、"那個XX"時，從對話歷史和文檔摘要中匹配相關文檔
+3. **文件名匹配**: 用戶提到具體文件名時，從緩存文檔的 filename 中匹配
+4. **內容屬性匹配** ⭐ 重要：用戶提到文檔的內容特徵時，從文檔摘要中匹配
+   - 例："南投的罰單" → 查看每個文檔的 summary，找到包含"南投"關鍵詞的文檔
+   - 例："2024年的發票" → 從摘要中匹配包含2024年的文檔
+   - 例："金額最高的合約" → 從摘要中分析並找到對應文檔
+5. **對話歷史匹配**: 從對話歷史中找到AI之前提到某個文檔的特徵，然後匹配
+
+**識別範例**:
+- 緩存列表: 文檔1(ID:abc, 摘要:南投超速), 文檔2(ID:def, 摘要:台北違停), 文檔3(ID:ghi, 摘要:高雄闖紅燈), 文檔4(ID:jkl), 文檔5(ID:mno)
+- 用戶問: "文檔五的詳細內容" → target_document_ids: ["mno"] (明確編號)
+- 用戶問: "第一個文檔和第三個文檔" → target_document_ids: ["abc", "ghi"] (明確編號)
+- 用戶問: "那張罰單的金額" (歷史提到文檔3是罰單) → target_document_ids: ["ghi"] (歷史引用)
+- 用戶問: "南投的罰單詳細資訊" → target_document_ids: ["abc"] ⭐ (內容匹配：摘要包含"南投")
+- 用戶問: "違停的罰單" → target_document_ids: ["def"] ⭐ (內容匹配：摘要包含"違停")
+- 用戶問: "台北和高雄的罰單" → target_document_ids: ["def", "ghi"] ⭐ (內容匹配：多個文檔)
+
+=== 置信度評估 ===
+
+**無對話歷史時（保守評估）:**
+- 0.9-1.0: 非常明確且具體,如"你好"(greeting)、"什麼是AI?"(simple_factual)、"幫我找2024年Q1財務報表"
+- 0.8-0.9: 明確但略缺細節,如"幫我找財務報表"(缺時間)、"查詢電費帳單"(缺月份)
+- 0.6-0.8: 主題明確但範圍模糊,如"財務數據"(太廣泛)、"公司文檔"(哪類?)
+- 0.4-0.6: 非常模糊,如"有沒有關於XX的內容"(未說明要找什麼)、"那個文檔"
+- < 0.4: 完全無法理解,如單個詞"財務"、"公司的"
+
+**有對話歷史時（更嚴格評估）:**
+- 0.9-1.0: 從歷史完全理解且問題具體明確
+- 0.8-0.9: 能從歷史理解,問題是對之前主題的明確延續
+- 0.7-0.8: 歷史提供線索,但問題本身仍略模糊
+- 0.5-0.7: 歷史和問題結合仍不夠明確
+- < 0.5: 歷史也無法幫助理解
+
+**具體範例（重要！）:**
+- "有沒有關於財務數據的內容?" → clarification_needed, 置信度 0.50-0.65（太模糊）
+- "幫我找財務報表" → document_search, 置信度 0.75-0.85（需要搜索）
+- "幫我找2024年財務報表" → document_search, 置信度 0.90-0.95（很具體）
+- 歷史:"電費帳單" → 當前:"所有月份" → document_search, 置信度 0.85-0.90（需要搜索）
+- 歷史:AI剛回答"發票金額79元" → 當前:"花了多少錢" → simple_factual, 置信度 0.90-0.95（答案已在歷史）
+- 歷史:AI剛找到發票文檔(但未說明金額) → 當前:"這張發票花了多少錢" → **document_detail_query**, 置信度 0.85-0.90（需要詳細查詢）⭐
+- 歷史:AI剛找到合約文檔 → 當前:"甲方是誰" → **document_detail_query**, 置信度 0.85-0.90（需要詳細查詢）⭐
+- "比較Q1和Q2的銷售額" → complex_analysis, 置信度 0.90-0.95（多文檔分析）
+
+=== 重要原則 ===
+
+1. **準確性優先**: 問題模糊時寧可要求澄清,也不要錯誤理解用戶意圖
+2. **保守評估置信度**: 
+   - "有沒有XX"類問題 → 置信度應 < 0.7（太模糊）
+   - 缺少時間/範圍的查詢 → 置信度應 < 0.85
+   - 只有非常具體明確的問題才給 >= 0.9
+3. **對話延續判斷**: 有歷史時,確認問題是對之前主題的**直接延續**
+   - 是延續（"所有月份"接"電費帳單"）→ 可以提高置信度
+   - 非延續（"財務數據"接"電費帳單"）→ 仍需澄清
+4. **用戶體驗**: 寒暄和簡單問題快速處理
+5. **避免重複澄清**: 如果歷史中剛澄清過同一主題,不要再澄清
+''',
+            user_prompt_template='''請分類以下用戶問題的意圖:
+
+<user_question>
+{user_question}
+</user_question>
+
+<conversation_history>
+{conversation_history}
+</conversation_history>
+
+<cached_documents_info>
+{cached_documents_info}
+</cached_documents_info>
+
+上下文信息:
+- 是否有對話歷史: {has_conversation_history}
+- 是否有緩存文檔: {has_cached_documents}
+
+**如何使用緩存文檔信息**:
+緩存文檔列表提供了每個文檔的 reference_number（編號）、document_id（UUID）、filename（文件名）和 summary（摘要）。
+當判斷為 document_detail_query 時，你必須：
+1. 分析用戶問題中的文檔引用（編號、名稱、內容特徵）
+2. 從緩存文檔列表中找到匹配的文檔
+3. 返回匹配文檔的 document_id（不是 reference_number）
+4. 在 target_document_reasoning 中說明匹配邏輯
+
+例如：
+- 緩存: 文檔1 (ID:abc-123, 摘要:南投超速罰單...)
+- 用戶問: "南投的罰單"
+- 分析: 摘要包含"南投"關鍵詞
+- 返回: target_document_ids: ["abc-123"]
+
+**重要對話上下文處理規則（必須嚴格遵守！）**:
+
+1. **優先檢查是否在回答澄清問題**:
+   - 查看上一輪AI回答是否包含 "💡"、"您想了解"、"您具體想"、"哪方面"
+   - 如果是澄清問題，當前用戶回答**必須**結合澄清主題理解
+   - **範例（最重要）**:
+     ```
+     助手: 💡 您具體想查詢哪方面的財務數據？
+     用戶: 公司的
+     
+     ✅ 正確理解: "公司的財務數據"
+     ✅ 意圖: document_search
+     ✅ 置信度: 0.80-0.85（從澄清上下文完全能理解）
+     ❌ 錯誤: 再次要求澄清"公司的什麼"
+     ```
+
+2. **檢查答案是否已在歷史中**（避免重複搜索！）:
+   - 仔細閱讀AI的歷史回答內容
+   - 如果用戶詢問的信息已經在AI的回答中出現過:
+     * **分類為 simple_factual**（直接從歷史提取答案）
+     * **置信度 0.85-0.95**（答案明確存在於歷史中）
+   - **範例**:
+     ```
+     助手: ...發票金額為新台幣79元...
+     用戶: 這張發票花了多少錢
+     
+     ✅ 判斷: 歷史中已包含"79元"這個答案
+     ✅ 意圖: simple_factual（從歷史中提取）
+     ✅ 置信度: 0.90（答案明確）
+     ❌ 錯誤: document_search 或 complex_analysis（會浪費資源重複搜索）
+     ```
+
+3. **對話延續的其他情況**:
+   - 用戶使用代詞或簡短引用: "所有月份"、"那些"、"它的"、"這兩張"
+   - 應該將問題與歷史中最近的主題結合:
+     * 對話: "電費帳單" → 問題: "所有月份" = "所有月份的電費帳單"
+     * 對話: "RAG技術" → 問題: "它的優點" = "RAG技術的優點"
+     * 對話: AI回答了兩張發票 → 問題: "這兩張花多少" = "這兩張發票的金額"
+
+4. **置信度評估（關鍵）**:
+   - **答案已在歷史中**: 置信度應 >= 0.85（simple_factual）
+   - **在回答澄清問題時**: 即使用戶回答簡短，置信度應 >= 0.80
+   - **普通對話延續**: 如能從歷史理解，置信度應 >= 0.75
+   - **完全無關的新問題**: 即使有歷史，仍需正常評估
+
+5. **避免重複操作**:
+   - 不要重複澄清同一主題
+   - 不要重複搜索已經找到的文檔
+   - 不要重新分析歷史中已經分析過的內容
+
+請分析問題意圖並以JSON格式返回分類結果。''',
+            variables=["user_question", "conversation_history", "has_conversation_history", "has_cached_documents", "cached_documents_info"],
+            description="快速分類用戶問題的意圖類型(使用 Gemini 2.0 Flash)"
+        )
+        
+        # 生成澄清問題
+        self._prompts[PromptType.GENERATE_CLARIFICATION_QUESTION] = PromptTemplate(
+            prompt_type=PromptType.GENERATE_CLARIFICATION_QUESTION,
+            system_prompt='''你是對話引導專家,專門生成友好、有幫助的澄清問題。
+
+=== 核心任務 ===
+當用戶的問題模糊不清時,生成恰當的澄清問題,幫助用戶明確表達需求。
+
+=== 澄清策略 ===
+
+1. **識別模糊點**:
+   - 指代不明: "那個文檔" → 問是哪個文檔
+   - 範圍過大: "財務數據" → 問是哪個時間段、哪個項目的財務數據
+   - 缺少關鍵信息: "幫我找資料" → 問要找什麼類型的資料
+
+2. **生成澄清問題原則**:
+   - 友好親切,不要讓用戶感到被質問
+   - 具體明確,幫助用戶快速理解需要補充什麼
+   - 提供選項,降低用戶思考負擔
+
+3. **建議回答選項**:
+   - 提供 2-4 個常見的回答選項
+   - 選項應涵蓋常見情況
+   - 使用自然語言,不要過於技術化
+
+=== 輸出JSON格式 (嚴格遵守!) ===
+
+```json
+{{
+  "clarification_question": "友好的澄清問題",
+  "reasoning": "為何需要澄清的理由",
+  "suggested_responses": [
+    "選項1: 具體描述",
+    "選項2: 具體描述",
+    "選項3: 具體描述"
+  ],
+  "missing_information": ["缺少的信息1", "缺少的信息2"]
+}}
+```
+
+=== 範例 ===
+
+用戶問題: "財務相關數據"
+澄清問題: "您想了解哪方面的財務數據呢?"
+建議回答:
+- "最近一個月的收支明細"
+- "本年度的財務報表"
+- "特定項目的財務分析"
+
+用戶問題: "那個文檔在哪裡?"
+澄清問題: "能否告訴我您想找的是哪個文檔?比如文檔名稱或者大致內容?"
+建議回答:
+- "上次會議的記錄"
+- "專案計劃書"
+- "合約文件"
+
+=== 語氣要求 ===
+- 使用繁體中文
+- 親切友好,不要生硬
+- 簡潔明了,避免冗長
+''',
+            user_prompt_template='''用戶提出了一個模糊的問題,請生成恰當的澄清問題。
+
+原始問題:
+<user_question>
+{user_question}
+</user_question>
+
+<conversation_history>
+{conversation_history}
+</conversation_history>
+
+模糊原因:
+{ambiguity_reason}
+
+**重要**: 如果有對話歷史,請先檢查用戶在之前的對話中是否已經提供了相關信息。如果歷史中已有線索,澄清問題應該更具體,引用之前的內容。
+
+請生成澄清問題和建議回答選項。''',
+            variables=["user_question", "conversation_history", "ambiguity_reason"],
+            description="為模糊問題生成澄清問題和建議回答"
+        )
 
     async def get_prompt(
         self, 
@@ -745,7 +1140,7 @@ MIME類型: {{image_mime_type}}
             # Add main system prompt first
             final_system_prompt_parts.append(system_prompt)
 
-            if prompt_template.prompt_type in [PromptType.IMAGE_ANALYSIS, PromptType.TEXT_ANALYSIS, PromptType.QUERY_REWRITE, PromptType.ANSWER_GENERATION, PromptType.MONGODB_DETAIL_QUERY_GENERATION]:
+            if prompt_template.prompt_type in [PromptType.IMAGE_ANALYSIS, PromptType.TEXT_ANALYSIS, PromptType.QUERY_REWRITE, PromptType.ANSWER_GENERATION, PromptType.MONGODB_DETAIL_QUERY_GENERATION, PromptType.QUESTION_INTENT_CLASSIFICATION, PromptType.GENERATE_CLARIFICATION_QUESTION]:
                 if apply_chinese_instruction:
                     # Insert language instruction before safety, but after main content for clarity
                     final_system_prompt_parts.append(self.CHINESE_OUTPUT_INSTRUCTION)
@@ -792,7 +1187,7 @@ MIME類型: {{image_mime_type}}
             if db is not None:
                 try:
                     # 導入 AI Cache Manager
-                    from app.services.ai_cache_manager import ai_cache_manager
+                    from app.services.ai.ai_cache_manager import ai_cache_manager
                     
                     # 為系統提示詞創建緩存
                     cache_id = await ai_cache_manager.get_or_create_prompt_cache(
@@ -835,7 +1230,7 @@ MIME類型: {{image_mime_type}}
             if db is None:
                 return {"error": "需要資料庫連接"}
                 
-            from app.services.ai_cache_manager import ai_cache_manager
+            from app.services.ai.ai_cache_manager import ai_cache_manager
             
             # 獲取增強的緩存統計
             enhanced_stats = await ai_cache_manager.get_enhanced_cache_statistics(db)

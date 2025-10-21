@@ -14,7 +14,7 @@ import logging
 from cachetools import LRUCache, TTLCache
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.logging_utils import log_event, LogLevel
-from app.services.google_context_cache_service import (
+from app.services.cache.google_context_cache_service import (
     google_context_cache_service,
     ContextCacheConfig,
     ContextCacheType as GoogleContextCacheType,
@@ -302,7 +302,7 @@ class AICacheManager:
                 self.google_context_cache_service.is_available()):
                 
                 # 創建 Google Context Cache
-                from app.services.google_context_cache_service import ContextCacheConfig, ContextCacheType
+                from app.services.cache.google_context_cache_service import ContextCacheConfig, ContextCacheType
                 
                 config = ContextCacheConfig(
                     cache_type=ContextCacheType.SYSTEM_PROMPT,

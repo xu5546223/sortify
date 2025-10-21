@@ -131,6 +131,53 @@ export const conversationService = {
       console.error('API: 移除緩存文檔失敗:', error);
       throw error;
     }
+  },
+
+  /**
+   * 僅分類問題(不執行後續流程)
+   */
+  classifyQuestion: async (question: string): Promise<any> => {
+    console.log('API: 分類問題...', { question: question.substring(0, 50) });
+    try {
+      const response = await apiClient.post('/unified-ai/qa/classify', null, {
+        params: { question }
+      });
+      console.log('API: 問題分類成功:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('API: 問題分類失敗:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * 獲取QA工作流配置
+   */
+  getQAConfig: async (): Promise<any> => {
+    console.log('API: 獲取QA配置...');
+    try {
+      const response = await apiClient.get('/unified-ai/qa/config');
+      console.log('API: QA配置獲取成功:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('API: 獲取QA配置失敗:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * 更新QA工作流配置
+   */
+  updateQAConfig: async (config: any): Promise<any> => {
+    console.log('API: 更新QA配置...', { config });
+    try {
+      const response = await apiClient.put('/unified-ai/qa/config', config);
+      console.log('API: QA配置更新成功');
+      return response.data;
+    } catch (error) {
+      console.error('API: 更新QA配置失敗:', error);
+      throw error;
+    }
   }
 };
 

@@ -2,13 +2,13 @@ from typing import Optional, Dict, Any, List
 import json
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.logging_utils import AppLogger, log_event, LogLevel # Added
-from app.services.unified_ai_service_simplified import unified_ai_service_simplified, AIResponse as UnifiedAIResponse # Alias
-from app.services.embedding_service import embedding_service # Assuming async methods
-from app.services.vector_db_service import vector_db_service
+from app.services.ai.unified_ai_service_simplified import unified_ai_service_simplified, AIResponse as UnifiedAIResponse # Alias
+from app.services.vector.embedding_service import embedding_service # Assuming async methods
+from app.services.vector.vector_db_service import vector_db_service
 from app.models.vector_models import SemanticSummary, VectorRecord
 from app.models.ai_models_simplified import AIPromptRequest
 from app.models.document_models import Document, VectorStatus
-from app.services.prompt_manager_simplified import prompt_manager_simplified, PromptType
+from app.services.ai.prompt_manager_simplified import prompt_manager_simplified, PromptType
 from app.crud.crud_documents import update_document_vector_status
 from app.core.config import settings
 import logging

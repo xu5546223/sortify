@@ -13,7 +13,8 @@ import {
   Card,
   Button,
   Collapse,
-  Modal
+  Modal,
+  Drawer
 } from 'antd';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -33,6 +34,7 @@ import {
   QuestionCircleOutlined,
   DeleteOutlined,
   CloseCircleOutlined,
+  BarChartOutlined,
 } from '@ant-design/icons';
 import type {
   AIQAResponse,
@@ -52,6 +54,10 @@ import { DocumentTypeIcon } from '../components/document';
 import AIQADataPanel from '../components/AIQADataPanel';
 import conversationService from '../services/conversationService';
 import type { Conversation } from '../types/conversation';
+import QAAnalyticsPanel from '../components/QAAnalyticsPanel';
+import QAWorkflowDisplay from '../components/QAWorkflowDisplay';
+import type { WorkflowState } from '../types/qaWorkflow';
+import '../styles/qaWorkflow.css';
 
 const { Text, Title, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -73,10 +79,14 @@ interface QASession {
   queryRewriteResult?: QueryRewriteResult | null;
   llmContextDocuments?: LLMContextDocument[] | null;
   semanticSearchContexts?: SemanticContextDocument[] | null;
-  detailedDocumentDataFromAiQuery?: Record<string, any> | null;
+  detailedDocumentDataFromAiQuery?: any[] | null;
   detailedQueryReasoning?: string | null;
   sessionId?: string;
   usedSettings?: AIQASettingsConfig;
+  // 新增:工作流相關
+  classification?: any;
+  workflowState?: any;
+  nextAction?: string;
 }
 
 // Markdown 渲染組件
@@ -234,6 +244,26 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
   // 文件內容查看模態框狀態
   const [viewingDocument, setViewingDocument] = useState<Document | null>(null);
   const [isLoadingDocumentContent, setIsLoadingDocumentContent] = useState(false);
+  
+  // 統計面板狀態
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  
+  // 澄清輸入狀態
+  const [clarificationInput, setClarificationInput] = useState('');
+  
+  // 工作流狀態管理
+  const [pendingWorkflow, setPendingWorkflow] = useState<{
+    request: AIQARequestUnified;
+    response: AIQAResponse;
+  } | null>(null);
+  
+  // 檢查是否有待處理的澄清問題
+  const hasPendingClarification = qaHistory.length > 0 && 
+    qaHistory[0].classification?.intent === 'clarification_needed' &&
+    qaHistory[0].nextAction === 'provide_clarification';
+  
+  // 檢查是否有待處理的搜索批准
+  const hasPendingSearchApproval = pendingWorkflow?.response?.workflow_state?.current_step === 'awaiting_search_approval';
 
   // 示例問題
   const exampleQuestions = [
@@ -287,8 +317,10 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
   };
 
   // AI 問答處理
-  const handleAskQuestion = async () => {
-    if (!question.trim()) {
+  const handleAskQuestion = async (customQuestion?: string) => {
+    const questionToAsk = customQuestion || question.trim();
+    
+    if (!questionToAsk.trim()) {
       showPCMessage('請輸入問題', 'error');
       return;
     }
@@ -305,10 +337,12 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
       let conversationId = currentConversationId;
       if (!conversationId) {
         try {
-          const newConversation = await conversationService.createConversation(question.trim());
+          const newConversation = await conversationService.createConversation(questionToAsk);
           conversationId = newConversation.id;
           setCurrentConversationId(conversationId);
-          await loadConversations(); // 重新載入對話列表
+          
+          // 優化: 只將新對話添加到列表,而不是重新載入所有對話
+          setConversations(prev => [newConversation, ...prev]);
         } catch (error) {
           console.error('創建對話失敗:', error);
           showPCMessage('創建對話失敗，但將繼續處理問題', 'info');
@@ -316,7 +350,7 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
       }
       
       const request: AIQARequestUnified = {
-        question: question.trim(),
+        question: questionToAsk,
         session_id: currentSessionId || undefined,
         conversation_id: conversationId || undefined,
         // 使用用戶設定的參數
@@ -345,9 +379,70 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
       
       const responseContent = unifiedResponse.content;
 
+      // 🔍 調試：查看後端返回的完整workflow_state
+      if (responseContent.workflow_state) {
+        console.log('📥 收到的 workflow_state:', JSON.stringify(responseContent.workflow_state, null, 2));
+      }
+      
+      // 檢查是否需要工作流交互(批准、澄清等)
+      const needsInteraction = responseContent.workflow_state?.current_step === 'awaiting_search_approval' ||
+                               responseContent.workflow_state?.current_step === 'awaiting_detail_query_approval' ||  // ⭐ 新增
+                               responseContent.workflow_state?.current_step === 'need_clarification';
+      
+      console.log('🔍 needsInteraction檢查:', {
+        current_step: responseContent.workflow_state?.current_step,
+        needsInteraction: needsInteraction
+      });
+      
+      if (needsInteraction) {
+        // 轉換蛇形命名為駝峰命名（後端用current_step，前端用currentStep）
+        const normalizedWorkflowState = {
+          ...responseContent.workflow_state,
+          currentStep: responseContent.workflow_state.current_step,
+          clarificationQuestion: responseContent.workflow_state.clarification_question,
+          suggestedResponses: responseContent.workflow_state.suggested_responses,
+          // 詳細查詢相關
+          targetDocuments: responseContent.workflow_state.target_documents,
+          documentNames: responseContent.workflow_state.document_names,
+          queryType: responseContent.workflow_state.query_type
+        };
+        
+        // 保存待處理的工作流狀態
+        setPendingWorkflow({
+          request: request,
+          response: {
+            ...responseContent,
+            workflow_state: normalizedWorkflowState
+          }
+        });
+        
+        console.log('✅ 設置待處理工作流:', normalizedWorkflowState);
+        
+        // 重要：需要在歷史中顯示用戶問題，這樣用戶才知道自己問了什麼
+        // 但只添加用戶問題，不添加澄清回答（避免重複顯示）
+        const interactionSession: QASession = {
+          id: `qa_${Date.now()}`,
+          question: questionToAsk,
+          answer: '', // 暫時不顯示答案（工作流UI會處理）
+          timestamp: new Date(),
+          sourceDocuments: [],
+          tokensUsed: 0,
+          processingTime: 0,
+          classification: responseContent.classification,
+          workflowState: normalizedWorkflowState,
+          nextAction: responseContent.next_action
+        };
+        
+        setQAHistory(prev => [interactionSession, ...prev]);
+        setQuestion('');
+        setIsAsking(false);
+        return; // 等待用戶交互
+      }
+
+      // 正常完成的響應,添加到歷史
       const newSession: QASession = {
         id: `qa_${Date.now()}`,
-        question: question.trim(),
+        question: questionToAsk,
         answer: responseContent.answer,
         timestamp: new Date(),
         sourceDocuments: responseContent.source_documents,
@@ -360,16 +455,27 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
         detailedDocumentDataFromAiQuery: responseContent.detailed_document_data_from_ai_query || null,
         detailedQueryReasoning: responseContent.detailed_query_reasoning || null,
         sessionId: responseContent.session_id || undefined,
-        usedSettings: { ...aiQASettings }
+        usedSettings: { ...aiQASettings },
+        classification: responseContent.classification,
+        workflowState: responseContent.workflow_state,
+        nextAction: responseContent.next_action
       };
 
       setQAHistory(prev => [newSession, ...prev]);
       setCurrentSessionId(responseContent.session_id || null);
       setQuestion('');
+      setPendingWorkflow(null); // 清除待處理狀態
       
-      // 更新對話列表（對話已在後端更新）
+      // 優化: 只更新當前對話的時間戳,不重新載入所有對話
       if (conversationId) {
-        await loadConversations();
+        setConversations(prev => 
+          prev.map(conv => 
+            conv.id === conversationId
+              ? { ...conv, updated_at: new Date().toISOString(), message_count: (conv.message_count || 0) + 2 }
+              : conv
+          )
+        );
+        // 注意: cached_documents 會在切換對話時從後端載入,無需每次都重新載入所有對話
       }
       
       showPCMessage(`問答完成，使用了 ${responseContent.tokens_used} 個 token`, 'success');
@@ -385,6 +491,249 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
   // 使用示例問題
   const handleExampleQuestion = (exampleQuestion: string) => {
     setQuestion(exampleQuestion);
+  };
+
+  // 處理搜索批准
+  const handleApproveSearch = async () => {
+    if (!pendingWorkflow) {
+      console.error('沒有待處理的工作流');
+      return;
+    }
+
+    try {
+      setIsAsking(true);
+      
+      // 創建新請求,帶上批准動作
+      const approvedRequest: AIQARequestUnified = {
+        ...pendingWorkflow.request,
+        workflow_action: 'approve_search'
+      };
+
+      const unifiedResponse: AIResponse<AIQAResponse> = await askAIQuestionUnified(approvedRequest);
+      
+      if (!unifiedResponse.success || !unifiedResponse.content) {
+        showPCMessage('批准後處理失敗', 'error');
+        return;
+      }
+
+      const responseContent = unifiedResponse.content;
+
+      // 添加完整回答到歷史
+      const newSession: QASession = {
+        id: `qa_${Date.now()}`,
+        question: pendingWorkflow.request.question,
+        answer: responseContent.answer,
+        timestamp: new Date(),
+        sourceDocuments: responseContent.source_documents,
+        tokensUsed: responseContent.tokens_used,
+        processingTime: responseContent.processing_time,
+        confidenceScore: responseContent.confidence_score || undefined,
+        queryRewriteResult: responseContent.query_rewrite_result || null,
+        llmContextDocuments: responseContent.llm_context_documents || null,
+        semanticSearchContexts: responseContent.semantic_search_contexts || null,
+        classification: responseContent.classification,
+        workflowState: responseContent.workflow_state,
+        usedSettings: { ...aiQASettings }
+      };
+
+      setQAHistory(prev => [newSession, ...prev]);
+      setPendingWorkflow(null);
+      showPCMessage('搜索完成', 'success');
+      
+    } catch (error) {
+      console.error('批准搜索失敗:', error);
+      showPCMessage('批准搜索失敗', 'error');
+    } finally {
+      setIsAsking(false);
+    }
+  };
+
+  // 處理跳過搜索
+  const handleSkipSearch = async () => {
+    if (!pendingWorkflow) {
+      console.error('沒有待處理的工作流');
+      return;
+    }
+
+    try {
+      setIsAsking(true);
+      
+      // 創建新請求,帶上跳過動作
+      const skipRequest: AIQARequestUnified = {
+        ...pendingWorkflow.request,
+        workflow_action: 'skip_search'
+      };
+
+      const unifiedResponse: AIResponse<AIQAResponse> = await askAIQuestionUnified(skipRequest);
+      
+      if (!unifiedResponse.success || !unifiedResponse.content) {
+        showPCMessage('跳過搜索失敗', 'error');
+        return;
+      }
+
+      const responseContent = unifiedResponse.content;
+
+      // 添加通用知識回答到歷史
+      const newSession: QASession = {
+        id: `qa_${Date.now()}`,
+        question: pendingWorkflow.request.question,
+        answer: responseContent.answer,
+        timestamp: new Date(),
+        sourceDocuments: [],
+        tokensUsed: responseContent.tokens_used,
+        processingTime: responseContent.processing_time,
+        confidenceScore: responseContent.confidence_score || undefined,
+        classification: responseContent.classification,
+        workflowState: responseContent.workflow_state,
+        usedSettings: { ...aiQASettings }
+      };
+
+      setQAHistory(prev => [newSession, ...prev]);
+      setPendingWorkflow(null);
+      showPCMessage('已使用通用知識回答', 'info');
+      
+    } catch (error) {
+      console.error('跳過搜索失敗:', error);
+      showPCMessage('跳過搜索失敗', 'error');
+    } finally {
+      setIsAsking(false);
+    }
+  };
+
+  // 處理澄清回答(直接提交為新問題,利用對話歷史自動路由)
+  const handleSubmitClarification = async (clarificationText: string) => {
+    if (!clarificationText.trim()) {
+      showPCMessage('請輸入澄清信息', 'error');
+      return;
+    }
+
+    // 清除待處理工作流（澄清完成）
+    setPendingWorkflow(null);
+    
+    // 直接作為新問題提交,系統會自動看到對話歷史並重新分類
+    await handleAskQuestion(clarificationText);
+    setClarificationInput('');
+  };
+
+  // 處理快速回答選項
+  const handleQuickResponse = async (option: string) => {
+    // 清除待處理工作流
+    setPendingWorkflow(null);
+    
+    // 直接作為新問題提交
+    await handleAskQuestion(option);
+  };
+
+  // 處理詳細查詢批准 ⭐ 新增
+  const handleApproveDetailQuery = async () => {
+    if (!pendingWorkflow) {
+      console.error('沒有待處理的工作流');
+      return;
+    }
+
+    try {
+      setIsAsking(true);
+      
+      const approvedRequest: AIQARequestUnified = {
+        ...pendingWorkflow.request,
+        workflow_action: 'approve_detail_query'
+      };
+
+      const unifiedResponse: AIResponse<AIQAResponse> = await askAIQuestionUnified(approvedRequest);
+      
+      if (!unifiedResponse.success || !unifiedResponse.content) {
+        showPCMessage('詳細查詢失敗', 'error');
+        return;
+      }
+
+      const responseContent = unifiedResponse.content;
+
+      // 🔍 調試：檢查是否有詳細查詢數據
+      if (responseContent.detailed_document_data_from_ai_query) {
+        console.log('✅ 收到詳細查詢數據:', responseContent.detailed_document_data_from_ai_query);
+      } else {
+        console.log('⚠️ 沒有詳細查詢數據');
+      }
+
+      const newSession: QASession = {
+        id: `qa_${Date.now()}`,
+        question: pendingWorkflow.request.question,
+        answer: responseContent.answer,
+        timestamp: new Date(),
+        sourceDocuments: responseContent.source_documents,
+        tokensUsed: responseContent.tokens_used,
+        processingTime: responseContent.processing_time,
+        confidenceScore: responseContent.confidence_score || undefined,
+        queryRewriteResult: responseContent.query_rewrite_result || null,
+        llmContextDocuments: responseContent.llm_context_documents || null,
+        semanticSearchContexts: responseContent.semantic_search_contexts || null,
+        detailedDocumentDataFromAiQuery: responseContent.detailed_document_data_from_ai_query || null,
+        detailedQueryReasoning: responseContent.detailed_query_reasoning || null,
+        classification: responseContent.classification,
+        workflowState: responseContent.workflow_state,
+        usedSettings: { ...aiQASettings }
+      };
+
+      setQAHistory(prev => [newSession, ...prev]);
+      setPendingWorkflow(null);
+      showPCMessage('詳細查詢完成', 'success');
+      
+    } catch (error) {
+      console.error('批准詳細查詢失敗:', error);
+      showPCMessage('批准詳細查詢失敗', 'error');
+    } finally {
+      setIsAsking(false);
+    }
+  };
+
+  // 處理跳過詳細查詢 ⭐ 新增
+  const handleSkipDetailQuery = async () => {
+    if (!pendingWorkflow) {
+      console.error('沒有待處理的工作流');
+      return;
+    }
+
+    try {
+      setIsAsking(true);
+      
+      const skipRequest: AIQARequestUnified = {
+        ...pendingWorkflow.request,
+        workflow_action: 'skip_detail_query',
+        use_ai_detailed_query: false  // 明確關閉詳細查詢
+      };
+
+      const unifiedResponse: AIResponse<AIQAResponse> = await askAIQuestionUnified(skipRequest);
+      
+      if (!unifiedResponse.success || !unifiedResponse.content) {
+        showPCMessage('跳過查詢失敗', 'error');
+        return;
+      }
+
+      const responseContent = unifiedResponse.content;
+
+      const newSession: QASession = {
+        id: `qa_${Date.now()}`,
+        question: pendingWorkflow.request.question,
+        answer: responseContent.answer,
+        timestamp: new Date(),
+        sourceDocuments: responseContent.source_documents || [],
+        tokensUsed: responseContent.tokens_used,
+        processingTime: responseContent.processing_time,
+        classification: responseContent.classification,
+        workflowState: responseContent.workflow_state,
+        usedSettings: { ...aiQASettings }
+      };
+
+      setQAHistory(prev => [newSession, ...prev]);
+      setPendingWorkflow(null);
+      showPCMessage('已使用摘要回答', 'info');
+      
+    } catch (error) {
+      console.error('跳過詳細查詢失敗:', error);
+      showPCMessage('跳過詳細查詢失敗', 'error');
+    } finally {
+      setIsAsking(false);
+    }
   };
 
   // 新建對話
@@ -712,6 +1061,17 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
                 size="small"
               />
             </Tooltip>
+            
+            <Tooltip title="統計分析">
+              <Button
+                type="text"
+                icon={<BarChartOutlined />}
+                onClick={() => setShowAnalytics(true)}
+                size="small"
+              >
+                統計
+              </Button>
+            </Tooltip>
           </div>
         </div>
 
@@ -778,12 +1138,47 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
                       <div className="flex items-start">
                         <RobotOutlined className="text-blue-500 mr-2 mt-1 text-lg" />
                         <div className="flex-1">
-                          <MarkdownRenderer content={session.answer} />
+                          {/* 顯示意圖標籤 */}
+                          {session.classification && (
+                            <Tag 
+                              color={
+                                session.classification.intent === 'greeting' ? 'green' :
+                                session.classification.intent === 'clarification_needed' ? 'orange' :
+                                session.classification.intent === 'simple_factual' ? 'blue' :
+                                session.classification.intent === 'document_search' ? 'purple' :
+                                session.classification.intent === 'complex_analysis' ? 'red' : 'default'
+                              }
+                              style={{ marginBottom: 8 }}
+                            >
+                              {session.classification.intent === 'greeting' && '寒暄問候'}
+                              {session.classification.intent === 'clarification_needed' && '需要澄清'}
+                              {session.classification.intent === 'simple_factual' && '簡單查詢'}
+                              {session.classification.intent === 'document_search' && '文檔搜索'}
+                              {session.classification.intent === 'complex_analysis' && '複雜分析'}
+                            </Tag>
+                          )}
+                          
+                          {/* 只顯示答案，澄清交互由底部工作流UI處理 */}
+                          {session.answer && <MarkdownRenderer content={session.answer} />}
+                          
+                          {/* 如果是等待交互的狀態，顯示提示 */}
+                          {!session.answer && session.workflowState && (
+                            <Text type="secondary" style={{ fontStyle: 'italic', fontSize: '13px' }}>
+                              ⏳ 等待您的回應...
+                            </Text>
+                          )}
 
-                          {/* 時間戳 */}
-                          <Text type="secondary" className="text-xs block mt-3">
-                            {session.timestamp.toLocaleString('zh-TW')}
-                          </Text>
+                          {/* 時間戳和性能指標 */}
+                          <div className="flex items-center justify-between mt-3">
+                            <Text type="secondary" className="text-xs">
+                              {session.timestamp.toLocaleString('zh-TW')}
+                            </Text>
+                            {session.workflowState?.api_calls && (
+                              <Tag color="blue" style={{ fontSize: 11, marginLeft: 8 }}>
+                                {session.workflowState.api_calls} 次API
+                              </Tag>
+                            )}
+                          </div>
                         </div>
                                     </div>
                                       </div>
@@ -918,35 +1313,53 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
         {/* 底部輸入區域 */}
         <div className="border-t border-gray-200 bg-white p-4">
           <div className="max-w-4xl mx-auto">
-            {/* 輸入框 */}
-            <div className="flex items-end gap-2">
-              <div className="flex-1">
-                <TextArea
-                  placeholder="請輸入您想要問的問題... (Ctrl+Enter 發送)"
-                  value={question}
-                  onChange={(e) => setQuestion(e.target.value)}
-                  rows={3}
-                  onPressEnter={(e) => {
-                    if (e.ctrlKey || e.metaKey) {
-                      handleAskQuestion();
-                    }
-                  }}
-                  className="resize-none"
-                  disabled={!vectorStats?.total_vectors}
+            {/* 工作流交互UI - 全寬布局 */}
+            {pendingWorkflow && pendingWorkflow.response.workflow_state && (
+              <div style={{ marginBottom: 16, maxWidth: '100%' }}>
+                <QAWorkflowDisplay
+                  workflowState={pendingWorkflow.response.workflow_state as WorkflowState}
+                  onApproveSearch={handleApproveSearch}
+                  onSkipSearch={handleSkipSearch}
+                  onApproveDetailQuery={handleApproveDetailQuery}
+                  onSkipDetailQuery={handleSkipDetailQuery}
+                  onSubmitClarification={handleSubmitClarification}
+                  onQuickResponse={handleQuickResponse}
+                  isSearching={isAsking}
                 />
-      </div>
-              <Button 
-                type="primary"
-                size="large"
-                icon={<SendOutlined />}
-                onClick={handleAskQuestion}
-                loading={isAsking}
-                disabled={!question.trim() || !vectorStats?.total_vectors}
-                className="h-[72px]"
-              >
-                發送
-              </Button>
-            </div>
+              </div>
+            )}
+            
+            {/* 只在有待處理工作流時隱藏主輸入框 */}
+            {!pendingWorkflow && (
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <TextArea
+                    placeholder="請輸入您想要問的問題... (Ctrl+Enter 發送)"
+                    value={question}
+                    onChange={(e) => setQuestion(e.target.value)}
+                    rows={3}
+                    onPressEnter={(e) => {
+                      if (e.ctrlKey || e.metaKey) {
+                        handleAskQuestion();
+                      }
+                    }}
+                    className="resize-none"
+                    disabled={!vectorStats?.total_vectors || isAsking}
+                  />
+                </div>
+                <Button 
+                  type="primary"
+                  size="large"
+                  icon={<SendOutlined />}
+                  onClick={() => handleAskQuestion()}
+                  loading={isAsking}
+                  disabled={!question.trim() || !vectorStats?.total_vectors || isAsking}
+                  className="h-[72px]"
+                >
+                  發送
+                </Button>
+              </div>
+            )}
 
             {/* 狀態提示 */}
             <div className="mt-2 flex items-center justify-between">
@@ -1095,6 +1508,22 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
           </div>
         ) : null}
       </Modal>
+
+      {/* 統計分析面板 Drawer */}
+      <Drawer
+        title={
+          <Space>
+            <BarChartOutlined />
+            <span>AI問答統計分析</span>
+          </Space>
+        }
+        placement="right"
+        width={800}
+        onClose={() => setShowAnalytics(false)}
+        open={showAnalytics}
+      >
+        <QAAnalyticsPanel />
+      </Drawer>
     </div>
   );
 };

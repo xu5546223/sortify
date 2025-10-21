@@ -195,6 +195,8 @@ class TaskType(Enum):
     DOCUMENT_SELECTION_FOR_QUERY = "document_selection_for_query"
     CLUSTER_LABEL_GENERATION = "cluster_label_generation"  # 單個聚類標籤生成
     BATCH_CLUSTER_LABELS = "batch_cluster_labels"  # 批量聚類標籤生成
+    QUESTION_INTENT_CLASSIFICATION = "question_intent_classification"  # 問題意圖分類
+    GENERATE_CLARIFICATION_QUESTION = "generate_clarification_question"  # 生成澄清問題
 
 @dataclass
 class AIModelConfig:
@@ -367,6 +369,40 @@ class UnifiedAIConfig:
             ),
             timeout_seconds=30,
             retry_attempts=3
+        )
+        
+        # Configuration for Question Intent Classification (使用 Gemini 2.0 Flash for speed)
+        flash_models = ["gemini-2.0-flash-exp", "gemini-2.0-flash", "gemini-2.5-flash-preview-05-20"]
+        available_flash = [m for m in flash_models if m in self._models]
+        self._task_configs[TaskType.QUESTION_INTENT_CLASSIFICATION] = TaskConfig(
+            task_type=TaskType.QUESTION_INTENT_CLASSIFICATION,
+            preferred_models=available_flash if available_flash else get_preferred_models_for_task_init(False),
+            generation_params=GenerationParams(
+                temperature=0.1, # Very low temperature for consistent classification
+                top_p=0.9,
+                top_k=20,
+                max_output_tokens=512, # 增加輸出長度,避免JSON被截斷
+                response_mime_type="application/json",
+                safety_settings=common_safety_settings
+            ),
+            timeout_seconds=15, # 稍微增加超時時間
+            retry_attempts=2
+        )
+        
+        # Configuration for Generate Clarification Question
+        self._task_configs[TaskType.GENERATE_CLARIFICATION_QUESTION] = TaskConfig(
+            task_type=TaskType.GENERATE_CLARIFICATION_QUESTION,
+            preferred_models=available_flash if available_flash else get_preferred_models_for_task_init(False),
+            generation_params=GenerationParams(
+                temperature=0.7, # Higher temperature for more natural language
+                top_p=settings.AI_TOP_P,
+                top_k=settings.AI_TOP_K,
+                max_output_tokens=512, # 增加輸出長度,確保完整的澄清問題和選項
+                response_mime_type="application/json",
+                safety_settings=common_safety_settings
+            ),
+            timeout_seconds=15,
+            retry_attempts=2
         )
     
     def _is_model_suitable_for_task(self, model_config: AIModelConfig, task_type: TaskType) -> bool:

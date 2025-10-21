@@ -4,7 +4,8 @@ from typing import Optional, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from ..models.log_models import LogLevel, LogEntryCreate
-from ..crud import crud_logs
+# 延遲導入 crud_logs 以避免循環導入
+# from ..crud import crud_logs
 from urllib.parse import urlparse # Added for MONGODB_URL masking
 # 考慮加入標準庫的 logging，用於備份日誌或記錄 logging_utils 本身的錯誤
 import logging
@@ -190,6 +191,8 @@ async def log_event(
         details=masked_details # Use masked details
     )
     try:
+        # 延遲導入以避免循環導入
+        from ..crud import crud_logs
         await crud_logs.create_log_entry(db, log_data)
     except Exception as e:
         # 如果資料庫日誌記錄失敗，使用標準 logger 記錄到控制台/檔案作為備援

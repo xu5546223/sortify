@@ -12,7 +12,7 @@ from ..models.system_models import (
     TestDBConnectionResponse
 )
 from ..core.config import settings as app_env_settings
-from ..services.unified_ai_config import save_ai_api_key_to_env
+from ..services.ai.unified_ai_config import save_ai_api_key_to_env
 from typing import Optional, Dict, Any
 import logging
 from dotenv import set_key, find_dotenv, load_dotenv
@@ -274,7 +274,7 @@ async def update_system_settings(db: AsyncIOMotorDatabase, settings_to_update: U
     # 如果AI服務設定有更新，重新載入AI任務配置
     if "ai_service" in update_payload_for_db and db_update_successful:
         try:
-            from app.services.unified_ai_config import unified_ai_config
+            from app.services.ai.unified_ai_config import unified_ai_config
             logger.info("🔄 準備重新載入AI任務配置...")
             reload_success = await unified_ai_config.reload_task_configs(db_manager.get_database())
             if reload_success:

@@ -7,8 +7,8 @@ import logging
 from typing import Optional
 from fastapi import BackgroundTasks
 
-from app.services.embedding_service import embedding_service
-from app.services.vector_db_service import vector_db_service
+from app.services.vector.embedding_service import embedding_service
+from app.services.vector.vector_db_service import vector_db_service
 from app.core.logging_utils import AppLogger
 
 logger = AppLogger(__name__, level=logging.INFO).get_logger()

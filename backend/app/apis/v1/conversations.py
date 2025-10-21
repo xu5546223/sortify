@@ -16,7 +16,7 @@ from app.models.conversation_models import (
     ConversationMessage
 )
 from app.crud import crud_conversations
-from app.services.conversation_cache_service import conversation_cache_service
+from app.services.cache.conversation_cache_service import conversation_cache_service
 from app.core.logging_utils import log_event, LogLevel
 
 router = APIRouter()
@@ -219,7 +219,7 @@ async def remove_cached_document(
             raise HTTPException(status_code=404, detail="對話不存在或文檔未在緩存中")
         
         # 使 Redis 緩存失效
-        from app.services.conversation_cache_service import conversation_cache_service
+        from app.services.cache.conversation_cache_service import conversation_cache_service
         await conversation_cache_service.invalidate_conversation(
             user_id=current_user.id,
             conversation_id=conversation_id

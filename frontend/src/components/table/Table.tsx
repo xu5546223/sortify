@@ -39,7 +39,7 @@ const Table: React.FC<TableProps> = ({
   isSelectAllDisabled = false,
   sortConfig,
 }) => {
-  const defaultTableClass = 'w-full table-fixed divide-y divide-gray-200 shadow-md rounded-lg overflow-hidden';
+  const defaultTableClass = 'w-full table-fixed divide-y divide-gray-200 shadow-md rounded-lg';
   const defaultTheadClass = 'bg-surface-100';
   const defaultThBaseClass = 'px-6 py-3 text-left text-xs font-medium text-surface-700 uppercase tracking-wider';
   const defaultTbodyClass = 'bg-surface-50 divide-y divide-surface-200';

@@ -1,0 +1,438 @@
+/**
+ * QA工作流UI樣式
+ * 類似 Cursor 的漸進式交互設計
+ */
+
+/* 工作流容器 */
+.qa-workflow-display {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* 流程步驟指示器 */
+.processing-timeline {
+  margin-bottom: 24px;
+  padding: 16px;
+  background: linear-gradient(to right, #f0f2f5, #ffffff);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+/* 分類結果卡片 */
+.classification-result-card {
+  margin-bottom: 16px;
+  border-left: 4px solid #1890ff;
+  animation: slideInRight 0.3s ease-out;
+  background: linear-gradient(to right, #e6f7ff, #ffffff);
+}
+
+.classification-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+
+.classification-header svg {
+  font-size: 18px;
+}
+
+.next-action {
+  padding: 12px;
+  background: rgba(24, 144, 255, 0.05);
+  border-radius: 4px;
+  margin-top: 12px;
+}
+
+.next-action svg {
+  margin-right: 6px;
+}
+
+/* 批准卡片 (類似 Cursor 的確認框) - 全寬布局 */
+.approval-card {
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 2px solid #1890ff !important;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.15);
+  animation: slideInUp 0.3s ease-out;
+  background: #ffffff;
+  width: 100%;
+  max-width: none;
+}
+
+.approval-card .ant-card-body {
+  padding: 24px !important;
+  width: 100%;
+}
+
+.approval-card.search-approval {
+  border-color: #1890ff;
+}
+
+.approval-card.answer-approval {
+  border-color: #52c41a;
+}
+
+.approval-header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.approval-header .ant-avatar {
+  flex-shrink: 0;
+}
+
+.approval-content {
+  flex: 1;
+}
+
+.approval-content strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 15px;
+}
+
+.approval-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.approval-actions .ant-space {
+  width: 100%;
+  justify-content: center;
+}
+
+/* 澄清問題卡片 - 優化布局，無留白 */
+.clarification-card {
+  background: linear-gradient(135deg, #fffbe6 0%, #ffffff 100%);
+  border: 2px solid #ffd666 !important;
+  border-radius: 12px;
+  margin: 0 !important;
+  padding: 0 !important;
+  animation: slideInUp 0.3s ease-out;
+  box-shadow: 0 4px 12px rgba(250, 173, 20, 0.15);
+  width: 100%;
+  max-width: none;
+}
+
+.clarification-card .ant-card-body {
+  padding: 24px !important;
+  width: 100%;
+}
+
+/* 澄清卡片內的按鈕樣式 */
+.clarification-card .ant-btn {
+  transition: all 0.2s ease;
+}
+
+.clarification-card .ant-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.clarification-card .ant-btn-primary {
+  background: #fa8c16;
+  border-color: #fa8c16;
+}
+
+.clarification-card .ant-btn-primary:hover:not(:disabled) {
+  background: #d46b08;
+  border-color: #d46b08;
+}
+
+/* TextArea 樣式 */
+.clarification-card textarea {
+  border-radius: 8px !important;
+  border-color: #ffd666 !important;
+}
+
+.clarification-card textarea:focus {
+  border-color: #fa8c16 !important;
+  box-shadow: 0 0 0 2px rgba(250, 140, 22, 0.1) !important;
+}
+
+/* 文檔列表卡片 */
+.documents-found-card {
+  margin: 16px 0;
+  animation: slideInUp 0.4s ease-out;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+}
+
+.documents-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 16px;
+  background: linear-gradient(to right, #f6ffed, #ffffff);
+  border-bottom: 1px solid #d9d9d9;
+}
+
+.documents-header svg {
+  flex-shrink: 0;
+}
+
+.documents-header strong {
+  font-size: 16px;
+}
+
+.documents-found-card .ant-list {
+  padding: 0 16px;
+}
+
+.documents-found-card .ant-list-item {
+  padding: 12px 0;
+}
+
+.documents-found-card .ant-alert {
+  margin: 16px;
+}
+
+/* 生成中動畫 */
+.generating-card {
+  text-align: center;
+  padding: 40px 32px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 8px;
+  animation: fadeIn 0.4s ease-out;
+  box-shadow: 0 8px 16px rgba(102, 126, 234, 0.3);
+}
+
+.generating-card .anticon {
+  color: white;
+}
+
+.generating-card .ant-typography {
+  color: white;
+  margin-top: 16px;
+}
+
+.generating-card .ant-progress-line {
+  margin-top: 24px;
+}
+
+.generating-card .ant-progress-bg {
+  background: white !important;
+}
+
+/* 快速回答標記 */
+.fast-answer-tag {
+  margin-left: 8px;
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* 步驟狀態指示器 */
+.step-status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.step-status-indicator.processing {
+  background: #e6f7ff;
+  color: #1890ff;
+  border: 1px solid #91d5ff;
+}
+
+.step-status-indicator.completed {
+  background: #f6ffed;
+  color: #52c41a;
+  border: 1px solid #b7eb8f;
+}
+
+.step-status-indicator.waiting {
+  background: #f5f5f5;
+  color: #8c8c8c;
+  border: 1px solid #d9d9d9;
+}
+
+.step-status-indicator.skipped {
+  background: #fff7e6;
+  color: #faad14;
+  border: 1px solid #ffd591;
+}
+
+/* 工作流進度條 */
+.workflow-progress {
+  margin-bottom: 24px;
+}
+
+.workflow-progress .ant-steps-item-icon {
+  width: 36px;
+  height: 36px;
+  line-height: 36px;
+}
+
+/* 動畫效果 */
+@keyframes slideInRight {
+  from {
+    transform: translateX(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideInUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -1000px 0;
+  }
+  100% {
+    background-position: 1000px 0;
+  }
+}
+
+/* 載入中的閃爍效果 */
+.loading-shimmer {
+  background: linear-gradient(
+    to right,
+    #f0f0f0 0%,
+    #e8e8e8 20%,
+    #f0f0f0 40%,
+    #f0f0f0 100%
+  );
+  background-size: 1000px 100%;
+  animation: shimmer 2s infinite;
+}
+
+/* 響應式設計 */
+@media (max-width: 768px) {
+  .qa-workflow-display {
+    padding: 8px;
+  }
+  
+  .approval-actions .ant-space {
+    flex-direction: column;
+    width: 100%;
+  }
+  
+  .approval-actions .ant-btn {
+    width: 100%;
+  }
+  
+  .documents-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  
+  .clarification-card {
+    padding: 16px;
+  }
+  
+  .custom-clarification {
+    margin-top: 12px;
+  }
+  
+  .suggested-responses .ant-btn {
+    font-size: 12px;
+  }
+}
+
+/* 平板設計 */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .approval-card {
+    padding: 16px;
+  }
+  
+  .clarification-card {
+    padding: 18px;
+  }
+}
+
+/* Hover 效果 */
+.approval-card:hover {
+  box-shadow: 0 6px 16px rgba(24, 144, 255, 0.25);
+  transform: translateY(-2px);
+  transition: all 0.3s ease;
+}
+
+.clarification-card:hover {
+  box-shadow: 0 4px 12px rgba(250, 173, 20, 0.15);
+  transform: translateY(-1px);
+  transition: all 0.3s ease;
+}
+
+.documents-found-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+}
+
+/* 按鈕樣式增強 */
+.approval-actions .ant-btn-primary {
+  height: 40px;
+  font-weight: 500;
+}
+
+.approval-actions .ant-btn:not(.ant-btn-primary) {
+  height: 40px;
+}
+
+.suggested-responses .ant-btn {
+  border-radius: 16px;
+  font-size: 13px;
+}
+
+/* 文檔列表項樣式 */
+.documents-found-card .ant-list-item:hover {
+  background: #fafafa;
+  transition: background 0.2s ease;
+}
+
+.documents-found-card .ant-list-item-meta-avatar {
+  color: #1890ff;
+  font-size: 20px;
+}
+
+/* 提示文本樣式 */
+.approval-actions .ant-typography.ant-typography-secondary {
+  font-size: 12px;
+  display: block;
+  text-align: center;
+  margin-top: 8px;
+}
+

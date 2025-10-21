@@ -113,6 +113,19 @@ export const deleteCluster = async (
 };
 
 /**
+ * 刪除所有聚類
+ * 會將所有文檔重置為待分類狀態，適用於需要完全重新分類的情況
+ * @returns 刪除結果
+ */
+export const deleteAllClusters = async (): Promise<{ 
+  success: boolean; 
+  message: string 
+}> => {
+  const response = await apiClient.delete('/clustering/clusters');
+  return response.data;
+};
+
+/**
  * 獲取結構化的聚類樹（三層結構）
  * @returns 結構化聚類樹
  */
@@ -199,6 +212,7 @@ export default {
   getUserClusters,
   getClusterDocuments,
   deleteCluster,
+  deleteAllClusters,
   getClustersTree,
   getClusteringStatistics,
   pollClusteringStatus,

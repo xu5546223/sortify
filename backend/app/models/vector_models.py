@@ -95,6 +95,12 @@ class AIQARequest(BaseModel):
     
     # AI 輸出控制參數
     ensure_chinese_output: Optional[bool] = Field(None, description="確保AI回答使用中文輸出，如果未指定則使用全域設定")
+    
+    # 新增: 工作流控制參數
+    skip_classification: Optional[bool] = Field(False, description="跳過問題分類,直接使用標準流程")
+    workflow_action: Optional[str] = Field(None, description="工作流操作: approve_search, skip_search, confirm_documents")
+    force_strategy: Optional[str] = Field(None, description="強制使用特定策略: simple, standard, complex")
+    workflow_step: Optional[str] = Field(None, description="當前工作流步驟(用於前端逐步執行)")
 
 class QueryRewriteResult(BaseModel):
     """查詢重寫結果 - 支持智能意圖分析和動態策略路由"""
@@ -136,6 +142,13 @@ class AIQAResponse(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     ai_generated_query_reasoning: Optional[str] = Field(None, description="Reasoning behind the AI-generated MongoDB query for detailed data retrieval.")
     detailed_document_data_from_ai_query: Optional[List[Dict[str, Any]]] = Field(None, description="List of specific data fetched from documents using AI-generated MongoDB queries.")
+    
+    # 新增: 工作流狀態相關欄位
+    classification: Optional[Any] = Field(None, description="問題分類結果")  # QuestionClassification
+    workflow_state: Optional[Dict[str, Any]] = Field(None, description="當前工作流狀態")
+    next_action: Optional[str] = Field(None, description="下一步需要的操作: approve_search, approve_answer, provide_clarification")
+    pending_approval: Optional[str] = Field(None, description="等待批准的類型: search, answer, clarification")
+    error_message: Optional[str] = Field(None, description="錯誤信息(如果有)")
 
 # 新增：用於批量處理請求的模型
 class BatchProcessRequest(BaseModel):

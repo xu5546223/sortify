@@ -24,7 +24,7 @@ interface AIQADataPanelProps {
   tokensUsed?: number;
   processingTime?: number;
   confidenceScore?: number;
-  detailedDocumentDataFromAiQuery?: Record<string, any> | null;
+  detailedDocumentDataFromAiQuery?: any[] | null;
   detailedQueryReasoning?: string | null;
 }
 
@@ -42,11 +42,20 @@ const AIQADataPanel: React.FC<AIQADataPanelProps> = ({
   detailedDocumentDataFromAiQuery,
   detailedQueryReasoning
 }) => {
+  // 🔍 調試：檢查接收到的數據
+  console.log('AIQADataPanel 接收到的數據:', {
+    hasQueryRewrite: !!queryRewriteResult,
+    hasSemanticSearch: semanticSearchContexts?.length || 0,
+    hasLLMContext: llmContextDocuments?.length || 0,
+    hasDetailedData: detailedDocumentDataFromAiQuery?.length || 0,
+    detailedData: detailedDocumentDataFromAiQuery
+  });
+
   // 如果沒有任何數據,顯示空狀態
   const hasData = queryRewriteResult || 
                   (semanticSearchContexts && semanticSearchContexts.length > 0) ||
                   (llmContextDocuments && llmContextDocuments.length > 0) ||
-                  detailedDocumentDataFromAiQuery;
+                  (detailedDocumentDataFromAiQuery && detailedDocumentDataFromAiQuery.length > 0);
 
   if (!hasData) {
     return (
@@ -273,12 +282,15 @@ const AIQADataPanel: React.FC<AIQADataPanelProps> = ({
         )}
 
         {/* AI 詳細查詢結果 */}
-        {detailedDocumentDataFromAiQuery && (
+        {detailedDocumentDataFromAiQuery && detailedDocumentDataFromAiQuery.length > 0 && (
           <Panel
             header={
               <div className="flex items-center space-x-2">
-                <SearchOutlined className="text-indigo-500" />
-                <Text strong className="text-sm">AI 詳細查詢</Text>
+                <FileTextOutlined className="text-indigo-500" />
+                <Text strong className="text-sm">AI 查詢詳細內容</Text>
+                <Tag color="indigo" className="ml-2 text-xs">
+                  {detailedDocumentDataFromAiQuery.length} 個文檔
+                </Tag>
               </div>
             }
             key="ai-detailed-query"
@@ -292,14 +304,68 @@ const AIQADataPanel: React.FC<AIQADataPanelProps> = ({
                   </Paragraph>
                 </div>
               )}
-              <div>
-                <Text strong className="text-xs block mb-2 text-gray-700">查詢到的詳細資料:</Text>
-                <div className="bg-indigo-50 p-3 rounded border border-indigo-200 max-h-64 overflow-y-auto">
-                  <pre className="whitespace-pre-wrap font-mono text-xs text-gray-800">
-                    {JSON.stringify(detailedDocumentDataFromAiQuery, null, 2)}
-                  </pre>
+              
+              {/* 遍歷每個文檔的詳細數據 */}
+              {detailedDocumentDataFromAiQuery.map((docData, index) => (
+                <div key={index} className="border border-indigo-200 rounded-lg overflow-hidden">
+                  {/* 文檔標題 */}
+                  <div className="bg-indigo-100 px-3 py-2 border-b border-indigo-200">
+                    <div className="flex items-center justify-between">
+                      <Text strong className="text-sm text-indigo-700">
+                        文檔 {index + 1}: {docData.filename || '未知文件名'}
+                      </Text>
+                      {docData._id && (
+                        <Text type="secondary" className="text-xs">
+                          ID: {String(docData._id).substring(0, 8)}...
+                        </Text>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* 文檔內容 */}
+                  <div className="bg-white p-3">
+                    {/* 顯示提取的文本（如果有） */}
+                    {docData.extracted_text && (
+                      <div className="mb-3">
+                        <Text strong className="text-xs text-gray-700 block mb-1">文本內容:</Text>
+                        <div className="bg-gray-50 p-2 rounded border border-gray-200 max-h-32 overflow-y-auto">
+                          <Text className="text-xs text-gray-600 whitespace-pre-wrap">
+                            {docData.extracted_text.length > 500 
+                              ? `${docData.extracted_text.substring(0, 500)}...` 
+                              : docData.extracted_text}
+                          </Text>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* 顯示關鍵信息（如果有） */}
+                    {docData.analysis?.ai_analysis_output?.key_information && (
+                      <div className="mb-3">
+                        <Text strong className="text-xs text-gray-700 block mb-2">關鍵信息:</Text>
+                        <div className="bg-indigo-50 p-2 rounded border border-indigo-200">
+                          <pre className="whitespace-pre-wrap font-mono text-xs text-gray-700 mb-0">
+                            {JSON.stringify(docData.analysis.ai_analysis_output.key_information, null, 2)}
+                          </pre>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* 原始數據摺疊 */}
+                    <Collapse ghost size="small">
+                      <Panel 
+                        header={<Text className="text-xs text-gray-500">查看原始數據</Text>}
+                        key="raw-data"
+                      >
+                        <div className="bg-gray-50 p-2 rounded border border-gray-200 max-h-48 overflow-y-auto">
+                          <pre className="whitespace-pre-wrap font-mono text-xs text-gray-600 mb-0">
+                            {JSON.stringify(docData, null, 2)}
+                          </pre>
+                        </div>
+                      </Panel>
+                    </Collapse>
+                  </div>
                 </div>
-              </div>
+              ))}
             </div>
           </Panel>
         )}
