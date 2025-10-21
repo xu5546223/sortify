@@ -14,13 +14,43 @@ Sortify AI Assistant 是一個功能強大的智能文件分析和問答系統�
 
 ## ✨ 主要功能
 
-- 📄 **文件上傳與處理**：支援 PDF、Word、圖片等多種格式文件上傳和文字提取
-- 🤖 **AI 智能分析**：自動分析文件內容，生成摘要、關鍵詞和分類
-- 🔍 **語義搜索**：基於向量資料庫的高效語義搜索，快速找到相關文件
-- 💬 **智能問答**：針對文件內容的 AI 輔助問答系統
-- 📱 **多設備同步**：透過手機和電腦同步存取和管理文件
-- 📊 **數據可視化**：提供文件分析報表和統計圖表
-- 🔐 **用戶認證**：安全的用戶登入和權限管理系統
+### 📄 文件管理
+- **多格式支援**：PDF、Word、Excel、圖片、Markdown 等多種格式
+- **智能分類**：AI 自動分析文件內容並動態生成分類（可重置重新分類）
+- **批量操作**：支援批量上傳、刪除、向量化
+- **Gmail 導入**：直接從 Gmail 導入郵件作為文檔
+
+### 🤖 AI 智能分析
+- **自動文本提取**：從各種格式文件中提取文本內容
+- **結構化分析**：提取關鍵信息（金額、日期、人名、地點等）
+- **動態欄位識別**：AI 自動識別文檔特有的欄位
+- **智能摘要**：生成準確的文檔摘要和關鍵詞
+
+### 💬 智能問答系統
+- **意圖分類**：自動識別問題類型（寒暄、搜索、詳細查詢、複雜分析等）
+- **對話記憶**：支援多輪對話，記住上下文和已查詢的文檔
+- **MongoDB 詳細查詢**：針對已知文檔執行精確數據提取
+- **智能文檔識別**：
+  - 支援編號引用（"文檔五"、"第3個文檔"）
+  - 支援內容匹配（"南投的罰單"、"2024年的發票"）
+  - 支援對話引用（"那張發票"、"這個合約"）
+- **工作流批准**：需要搜索或詳細查詢時請求用戶批准
+
+### 🔍 向量搜索
+- **混合檢索**：結合摘要向量和文本塊向量的 RRF 融合搜索
+- **智能觸發**：根據相似度自動決定是否需要查詢重寫
+- **查詢優化**：AI 自動重寫查詢以提高檢索準確度
+- **語義理解**：支援自然語言查詢和概念匹配
+
+### 📊 數據可視化
+- **儀表板**：系統狀態、文檔統計、活動記錄
+- **問答分析**：查看 AI 處理過程、向量搜索結果、上下文數據
+- **聚類統計**：分類分布、文檔數量、覆蓋率
+
+### 🔐 安全與權限
+- **用戶認證**：JWT Token 認證
+- **文檔隔離**：每個用戶只能訪問自己的文檔
+- **安全日誌**：記錄所有操作和錯誤
 
 ## 🏗️ 系統架構
 
@@ -36,6 +66,38 @@ Sortify AI Assistant 是一個功能強大的智能文件分析和問答系統�
 以下是我們系統的架構圖：
 
 ![系統架構圖](images/SystemArchitecture.jpg)
+
+## 🎯 智能問答系統亮點
+
+### 智能意圖識別
+系統能自動識別7種問題類型，並採用最優策略處理：
+
+1. **寒暄問候** → 直接友好回答
+2. **需要澄清** → 生成澄清問題，提供選項
+3. **簡單事實** → 從對話歷史或通用知識快速回答
+4. **文檔搜索** → 向量搜索相關文檔
+5. **文檔詳細查詢** ⭐ → 對已知文檔執行 MongoDB 精確查詢
+6. **複雜分析** → 完整 RAG 流程，多文檔整合分析
+
+### 智能文檔識別示例
+
+**支援多種引用方式：**
+```
+用戶: "文檔五的詳細內容"
+→ AI 識別：reference_number=5，查詢文檔5
+
+用戶: "南投的罰單詳細資訊"  
+→ AI 識別：從摘要匹配"南投"關鍵詞，查詢對應文檔
+
+用戶: "那張發票花了多少錢"
+→ AI 識別：從對話歷史找到提到的發票文檔
+```
+
+### 工作流批准機制
+需要執行耗時操作時，系統會先請求批准：
+- 📝 顯示將要查詢的文檔
+- ⏱️ 預估處理時間
+- ✅ 用戶可選擇批准或跳過
 
 ## 🚀 快速開始
 
@@ -130,12 +192,16 @@ sortify/
 - **ReDoc**: `http://localhost:8000/redoc`
 
 **主要 API 端點:**
-- `/api/v1/auth/` - 用戶認證
-- `/api/v1/dashboard/` - 儀表板數據
-- `/api/v1/logs/` - 系統日誌
-- `/api/v1/vector-db/` - 向量資料庫操作
-- `/api/v1/unified-ai/` - 統一 AI 服務
-- `/api/v1/embedding/` - 嵌入模型服務
+- `/api/v1/auth/` - 用戶認證（登入、註冊、Token 刷新）
+- `/api/v1/documents/` - 文檔管理（上傳、刪除、更新、查詢）
+- `/api/v1/dashboard/` - 儀表板數據（統計、活動記錄）
+- `/api/v1/logs/` - 系統日誌查詢
+- `/api/v1/vector-db/` - 向量資料庫操作（向量化、搜索、統計）
+- `/api/v1/unified-ai/` - 統一 AI 服務（問答、分析、查詢重寫）
+- `/api/v1/embedding/` - 嵌入模型服務（模型管理、設備配置）
+- `/api/v1/clustering/` - 智能分類（觸發聚類、查詢分類、刪除分類）
+- `/api/v1/conversations/` - 對話管理（創建、查詢、刪除對話）
+- `/api/v1/settings/` - 系統設定（AI 模型配置、參數調整）
 
 ## 🧪 測試
 
@@ -170,13 +236,43 @@ Sortify AI Assistant is a powerful intelligent document analysis and Q&A system 
 
 ## ✨ Key Features
 
-- 📄 **File Upload & Processing**: Support for uploading and text extraction from multiple formats including PDF, Word, images
-- 🤖 **AI Intelligent Analysis**: Automatic analysis of document content, generating summaries, keywords, and classifications
-- 🔍 **Semantic Search**: Efficient semantic search based on vector database to quickly find relevant documents
-- 💬 **Intelligent Q&A**: AI-assisted Q&A system for document content
-- 📱 **Multi-device Sync**: Synchronous access and management of files across mobile and desktop devices
-- 📊 **Data Visualization**: Document analysis reports and statistical charts
-- 🔐 **User Authentication**: Secure user login and permission management system
+### 📄 Document Management
+- **Multi-format Support**: PDF, Word, Excel, Images, Markdown, and more
+- **Intelligent Clustering**: AI automatically analyzes and dynamically generates document categories (can reset and recluster)
+- **Batch Operations**: Support for batch upload, delete, and vectorization
+- **Gmail Import**: Direct import of emails from Gmail as documents
+
+### 🤖 AI Intelligent Analysis
+- **Automatic Text Extraction**: Extract text content from various file formats
+- **Structured Analysis**: Extract key information (amounts, dates, names, locations, etc.)
+- **Dynamic Field Recognition**: AI automatically identifies document-specific fields
+- **Smart Summarization**: Generate accurate document summaries and keywords
+
+### 💬 Intelligent Q&A System
+- **Intent Classification**: Automatically identify question types (greeting, search, detail query, complex analysis, etc.)
+- **Conversation Memory**: Support multi-turn dialogue, remember context and queried documents
+- **MongoDB Detail Query**: Execute precise data extraction for known documents
+- **Smart Document Identification**:
+  - Number references ("document five", "3rd document")
+  - Content matching ("Nantou ticket", "2024 invoice")
+  - Conversation references ("that invoice", "this contract")
+- **Workflow Approval**: Request user approval when search or detail query is needed
+
+### 🔍 Vector Search
+- **Hybrid Retrieval**: RRF fusion search combining summary and chunk vectors
+- **Smart Triggering**: Automatically decide if query rewrite is needed based on similarity scores
+- **Query Optimization**: AI automatically rewrites queries to improve retrieval accuracy
+- **Semantic Understanding**: Support natural language queries and concept matching
+
+### 📊 Data Visualization
+- **Dashboard**: System status, document statistics, activity logs
+- **Q&A Analytics**: View AI processing steps, vector search results, context data
+- **Clustering Statistics**: Category distribution, document counts, coverage rates
+
+### 🔐 Security & Permissions
+- **User Authentication**: JWT Token authentication
+- **Document Isolation**: Users can only access their own documents
+- **Security Logging**: Record all operations and errors
 
 ## 🏗️ System Architecture
 
@@ -192,6 +288,38 @@ Sortify AI Assistant is a powerful intelligent document analysis and Q&A system 
 "Here is our system's architecture diagram:"
 
 ![System Architecture Diagram](images/SystemArchitecture.jpg)
+
+## 🎯 Intelligent Q&A System Highlights
+
+### Smart Intent Recognition
+The system automatically identifies 7 question types and applies optimal strategies:
+
+1. **Greeting** → Direct friendly response
+2. **Clarification Needed** → Generate clarification questions with options
+3. **Simple Factual** → Quick answer from conversation history or general knowledge
+4. **Document Search** → Vector search for relevant documents
+5. **Document Detail Query** ⭐ → Execute precise MongoDB query on known documents
+6. **Complex Analysis** → Full RAG process with multi-document integration
+
+### Smart Document Identification Examples
+
+**Supports multiple reference methods:**
+```
+User: "Detail content of document five"
+→ AI identifies: reference_number=5, queries document 5
+
+User: "Detailed info about Nantou traffic ticket"  
+→ AI identifies: Matches "Nantou" keyword from summary, queries corresponding document
+
+User: "How much did that invoice cost"
+→ AI identifies: Finds invoice document mentioned in conversation history
+```
+
+### Workflow Approval Mechanism
+When time-consuming operations are needed, the system requests approval:
+- 📝 Shows documents to be queried
+- ⏱️ Estimates processing time
+- ✅ Users can approve or skip
 
 ## 🚀 Quick Start
 
@@ -286,12 +414,16 @@ After starting the system, you can access the API documentation at:
 - **ReDoc**: `http://localhost:8000/redoc`
 
 **Main API Endpoints:**
-- `/api/v1/auth/` - User authentication
-- `/api/v1/dashboard/` - Dashboard data
-- `/api/v1/logs/` - System logs
-- `/api/v1/vector-db/` - Vector database operations
-- `/api/v1/unified-ai/` - Unified AI services
-- `/api/v1/embedding/` - Embedding model services
+- `/api/v1/auth/` - User authentication (login, register, token refresh)
+- `/api/v1/documents/` - Document management (upload, delete, update, query)
+- `/api/v1/dashboard/` - Dashboard data (statistics, activity logs)
+- `/api/v1/logs/` - System log queries
+- `/api/v1/vector-db/` - Vector database operations (vectorization, search, statistics)
+- `/api/v1/unified-ai/` - Unified AI services (Q&A, analysis, query rewriting)
+- `/api/v1/embedding/` - Embedding model services (model management, device configuration)
+- `/api/v1/clustering/` - Intelligent clustering (trigger clustering, query clusters, delete clusters)
+- `/api/v1/conversations/` - Conversation management (create, query, delete conversations)
+- `/api/v1/settings/` - System settings (AI model configuration, parameter tuning)
 
 ## 🧪 Testing
 
