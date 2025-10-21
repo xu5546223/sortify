@@ -12,8 +12,10 @@ import {
   DocumentDetailsModal,
   DocumentStatusTag,
   DocumentTableActions,
-  UploadAndFilterControls
+  UploadAndFilterControls,
+  DocumentsWithClustering
 } from '../components';
+import { DocumentTypeIcon } from '../components/document';
 import GmailImporter from '../components/GmailImporter';
 import { HeaderConfig } from '../components/table/Table';
 import type {
@@ -29,7 +31,7 @@ import {
   getDocumentsByIds,
   deleteDocument
 } from '../services/documentService';
-import { formatBytes, formatDate, mapMimeTypeToSimpleType } from '../utils/documentFormatters';
+import { formatBytes, formatDate, formatCompactDate, mapMimeTypeToSimpleType } from '../utils/documentFormatters';
 import { canPreview } from '../utils/documentUtils';
 import PreviewModal from '../components/document/PreviewModal';
 import { SettingsContext, SettingsContextType } from '../contexts/SettingsContext';
@@ -160,6 +162,9 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
   // Gmail 導入對話框狀態
   const [isGmailImporterVisible, setIsGmailImporterVisible] = useState<boolean>(false);
 
+  // 聚類功能狀態
+  const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
+
   const isMounted = useRef(true);
   const hasLoadedInitialData = useRef(false);
   const debouncedSearchTerm = useDebounce(searchTerm, 500);
@@ -254,6 +259,12 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
     }
   };
 
+  // 處理聚類過濾變更
+  const handleClusterFilterChange = useCallback((clusterId: string | null) => {
+    setSelectedClusterId(clusterId);
+    setCurrentPage(1); // 重置到第一頁
+  }, []);
+
   const handleSort = useCallback((key: string) => {
     const sortableKeys = ['filename', 'file_type', 'size', 'created_at', 'updated_at', 'status'] as const;
     type SortableKey = typeof sortableKeys[number];
@@ -284,13 +295,11 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
       render?: (doc: Document) => React.ReactNode; 
     }[] = [
       { key: 'selector', label: '' , sortable: false, className: 'w-10 px-4 py-3' }, 
-      { key: 'filename', label: '名稱', sortable: true, cellClassName: 'truncate max-w-xs'},
-      { key: 'file_type', label: '類型', sortable: true },
-      { key: 'size', label: '大小', sortable: true },
-      { key: 'created_at', label: '上傳時間', sortable: true },
-      { key: 'updated_at', label: '最後修改', sortable: true },
-      { key: 'status', label: '狀態', sortable: true },
-      { key: 'actions', label: '操作', sortable: false, className: 'w-20' },
+      { key: 'filename', label: '名稱', sortable: true, cellClassName: 'truncate', className: 'w-[45%]'},
+      { key: 'file_type', label: '類型 / 大小', sortable: true, className: 'w-[15%]' },
+      { key: 'updated_at', label: '修改時間', sortable: true, className: 'w-[15%]' },
+      { key: 'status', label: '狀態', sortable: true, className: 'w-[12%]' },
+      { key: 'actions', label: '操作', sortable: false, className: 'w-[8%]' },
     ];
     return columnDefinitions.map(colDef => ({
       key: colDef.key as string,
@@ -307,11 +316,46 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
         cellClassName?: string;
         render: (doc: Document) => React.ReactNode;
     }[] = [
-        { key: 'filename', cellClassName: 'truncate max-w-xs', render: (doc) => <span title={doc.filename}>{doc.filename}</span> },
-        { key: 'file_type', render: (doc) => <span title={doc.file_type ?? undefined}>{mapMimeTypeToSimpleType(doc.file_type)}</span> },
-        { key: 'size', render: (doc) => formatBytes(doc.size ?? undefined) },
-        { key: 'created_at', render: (doc) => formatDate(doc.created_at) },
-        { key: 'updated_at', render: (doc) => formatDate(doc.updated_at) },
+        { 
+          key: 'filename', 
+          cellClassName: 'max-w-0', 
+          render: (doc) => (
+            <div className="flex items-center space-x-3 min-w-0 max-w-full">
+              <DocumentTypeIcon 
+                fileType={doc.file_type} 
+                fileName={doc.filename}
+                className="w-10 h-10 flex-shrink-0"
+              />
+              <span 
+                title={doc.filename} 
+                className="truncate block min-w-0 flex-1"
+              >
+                {doc.filename}
+              </span>
+            </div>
+          ) 
+        },
+        { 
+          key: 'file_type', 
+          render: (doc) => (
+            <div className="flex flex-col">
+              <span className="text-sm font-medium" title={doc.file_type ?? undefined}>
+                {mapMimeTypeToSimpleType(doc.file_type)}
+              </span>
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                {formatBytes(doc.size ?? undefined)}
+              </span>
+            </div>
+          ) 
+        },
+        { 
+          key: 'updated_at', 
+          render: (doc) => (
+            <div className="text-sm" title={formatDate(doc.updated_at)}>
+              {formatCompactDate(doc.updated_at)}
+            </div>
+          ) 
+        },
         {
             key: 'status',
             render: (doc) => (
@@ -339,8 +383,8 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
       if (filterStatus !== 'all') {
         apiStatusParam = filterStatus;
       }
-      console.log(`Fetching with activeQuickFilter: ${activeQuickFilter}, filterStatus: ${filterStatus}, apiStatusParam: ${apiStatusParam}`);
-      const data = await getDocuments(debouncedSearchTerm, apiStatusParam, undefined, sortKey , sortConfig?.direction, skip, itemsPerPage);
+      console.log(`Fetching with activeQuickFilter: ${activeQuickFilter}, filterStatus: ${filterStatus}, apiStatusParam: ${apiStatusParam}, clusterId: ${selectedClusterId}`);
+      const data = await getDocuments(debouncedSearchTerm, apiStatusParam, undefined, sortKey , sortConfig?.direction, skip, itemsPerPage, selectedClusterId);
       if (isMounted.current) {
         setDocuments(data.documents);
         setTotalDocuments(data.totalCount);
@@ -356,7 +400,7 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
     }
     if (isMounted.current) { setIsLoading(false); }
     setTimeout(() => { isRequestPending.current = false; }, 300);
-  }, [debouncedSearchTerm, filterStatus, sortConfig, showPCMessage, currentPage, itemsPerPage, activeQuickFilter]);
+  }, [debouncedSearchTerm, filterStatus, sortConfig, showPCMessage, currentPage, itemsPerPage, activeQuickFilter, selectedClusterId]);
 
   useEffect(() => {
     isMounted.current = true;
@@ -675,32 +719,25 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
   }
   
   return (
-    <div className="container mx-auto p-4">
-      <PageHeader title="文件管理" />
-      
-      <UploadAndFilterControls 
-        searchTerm={searchTerm}
-        onSearchChange={(value) => { setSearchTerm(value); setCurrentPage(1); }}
-        filterStatus={filterStatus}
-        onFilterStatusChange={(value) => { setFilterStatus(value); setCurrentPage(1); }}
-        activeQuickFilter={activeQuickFilter}
-        onQuickFilterChange={handleQuickFilterChange}
-        selectedDocumentsCount={selectedDocuments.size}
-        isUploading={isUploading}
-        isDeleting={isDeleting}
-        onUploadClick={triggerFileInput}
-        onDeleteSelected={handleDeleteSelected}
-      />
-
-      {/* Gmail 導入按鈕 */}
-      <div style={{ marginTop: '16px', marginBottom: '16px' }}>
-        <Button 
-          onClick={() => setIsGmailImporterVisible(true)}
-          style={{ marginRight: '8px' }}
-        >
-          📧 讀取 Gmail
-        </Button>
-      </div>
+    <div className="h-screen flex flex-col overflow-hidden">
+      <div className="flex flex-1 overflow-hidden">
+        {/* 主內容區 */}
+        <div className="flex-1 overflow-auto flex flex-col">
+          <div className="container mx-auto p-4">
+            <UploadAndFilterControls 
+            searchTerm={searchTerm}
+            onSearchChange={(value) => { setSearchTerm(value); setCurrentPage(1); }}
+            filterStatus={filterStatus}
+            onFilterStatusChange={(value) => { setFilterStatus(value); setCurrentPage(1); }}
+            activeQuickFilter={activeQuickFilter}
+            onQuickFilterChange={handleQuickFilterChange}
+            selectedDocumentsCount={selectedDocuments.size}
+            isUploading={isUploading}
+            isDeleting={isDeleting}
+            onUploadClick={triggerFileInput}
+            onDeleteSelected={handleDeleteSelected}
+            onGmailImport={() => setIsGmailImporterVisible(true)}
+          />
 
       {/* Gmail 導入對話框 */}
       <GmailImporter
@@ -814,6 +851,16 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
         onClose={handleClosePreview}
         doc={previewDoc}
       />
+          </div>
+        </div>
+
+        {/* 聚類功能整合區 - 右側面板 */}
+        <DocumentsWithClustering
+          onClusterFilterChange={handleClusterFilterChange}
+          currentClusterId={selectedClusterId}
+          onRefreshDocuments={fetchDocumentsData}
+        />
+      </div>
     </div>
   );
 };

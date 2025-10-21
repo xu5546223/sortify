@@ -24,6 +24,7 @@ apiClient.interceptors.request.use(config => {
     '/dashboard/',
     '/logs/',
     '/gmail/',
+    '/clustering/', // 聚類端點需要認證
     '/auth/users/' // 用戶相關端點需要認證
   ];
   

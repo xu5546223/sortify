@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     # MongoDB 相關設定
     MONGODB_URL: str
     DB_NAME: str # 原為 MONGODB_DATABASE，更名以保持一致性
+    
+    # Redis 相關設定（用於對話緩存）
+    REDIS_URL: str = "redis://localhost:6379"
+    REDIS_CONVERSATION_TTL: int = 3600  # 對話緩存 TTL（秒），預設 1 小時
+    REDIS_ENABLED: bool = True  # 是否啟用 Redis 緩存
 
     # 向量資料庫相關設定 (使用 ChromaDB)
     VECTOR_DB_PATH: str = "./data/chromadb"

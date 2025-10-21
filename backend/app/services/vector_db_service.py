@@ -335,10 +335,18 @@ class VectorDatabaseService:
                 logger.warning("集合未初始化，無法獲取文檔樣本")
                 return []
             
-            # 構建查詢條件
-            where_condition = {"owner_id": user_id}
+            # 構建查詢條件 - 使用與 semantic_search 相同的邏輯
+            where_conditions = [{"owner_id": user_id}]
             if vector_type_filter:
-                where_condition["type"] = vector_type_filter
+                where_conditions.append({"type": vector_type_filter})
+            
+            # 根據條件數量構建適當的 where 子句
+            if len(where_conditions) > 1:
+                # 多個條件時使用 $and 操作符
+                where_condition = {"$and": where_conditions}
+            else:
+                # 單個條件直接使用
+                where_condition = where_conditions[0]
             
             # 查詢條件
             query_params = {
@@ -346,11 +354,11 @@ class VectorDatabaseService:
                 "limit": limit
             }
             
-            # 根據是否需要元數據決定包含的欄位
+            # 根據是否需要元數據決定包含的欄位 - 始終包含 embeddings
             if include_metadata:
-                query_params["include"] = ["documents", "metadatas"]
+                query_params["include"] = ["documents", "metadatas", "embeddings"]
             else:
-                query_params["include"] = ["documents"]
+                query_params["include"] = ["documents", "embeddings"]
             
             # 執行查詢
             results = self.collection.get(**query_params)
@@ -363,6 +371,7 @@ class VectorDatabaseService:
                         "vector_id": doc_id,
                         "document_id": results["metadatas"][i].get("document_id", "") if results.get("metadatas") else "",
                         "chunk_text": results["documents"][i] if results.get("documents") else "",
+                        "embedding": results["embeddings"][i] if "embeddings" in results and results["embeddings"] is not None else None,  # 修復: 檢查 key 存在而不是真值
                     }
                     
                     if include_metadata and results.get("metadatas"):

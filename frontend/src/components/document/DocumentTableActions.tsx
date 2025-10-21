@@ -1,7 +1,14 @@
-import React from 'react';
-import { Button } from '../ui'; // Updated import path
-import { Space } from 'antd';
-import type { Document, DocumentStatus } from '../../types/apiTypes'; // Updated import path
+import React, { useState, useRef, useEffect } from 'react';
+import { 
+  MoreOutlined, 
+  EyeOutlined, 
+  SearchOutlined,
+  RedoOutlined,
+  ThunderboltOutlined,
+  DeleteOutlined,
+  LoadingOutlined
+} from '@ant-design/icons';
+import type { Document, DocumentStatus } from '../../types/apiTypes';
 
 interface DocumentTableActionsProps {
   document: Document;
@@ -30,13 +37,53 @@ const DocumentTableActions: React.FC<DocumentTableActionsProps> = ({
   onRetryAnalysis,
   onDelete,
 }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [dropdownPosition, setDropdownPosition] = useState<'bottom' | 'top'>('bottom');
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
   const canStartProcessing = (status: DocumentStatus): boolean => {
-    return status === 'uploaded' || 
-           status === 'processing_error';
+    return status === 'uploaded' || status === 'processing_error';
   };
+
+  // 計算下拉菜單應該向上還是向下展開
+  useEffect(() => {
+    if (isOpen && buttonRef.current) {
+      const buttonRect = buttonRef.current.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+      const spaceBelow = viewportHeight - buttonRect.bottom;
+      const spaceAbove = buttonRect.top;
+      const dropdownHeight = 300; // 預估菜單高度
+
+      // 如果下方空間不足且上方空間更多，則向上展開
+      if (spaceBelow < dropdownHeight && spaceAbove > spaceBelow) {
+        setDropdownPosition('top');
+      } else {
+        setDropdownPosition('bottom');
+      }
+    }
+  }, [isOpen]);
+
+  // 關閉下拉菜單當點擊外部時
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+
+    if (isOpen) {
+      window.document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      window.document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    setIsOpen(false);
     if (window.confirm(`確定要刪除文件 "${document.filename}" 嗎？`)) {
       onDelete(document);
     }
@@ -44,91 +91,152 @@ const DocumentTableActions: React.FC<DocumentTableActionsProps> = ({
 
   const handleRetryAnalysis = (e: React.MouseEvent) => {
     e.stopPropagation();
+    setIsOpen(false);
     if (onRetryAnalysis) {
       onRetryAnalysis(document);
     }
   };
 
+  const handleViewDetails = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsOpen(false);
+    onViewDetails(document);
+  };
+
+  const handlePreview = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsOpen(false);
+    onPreview(document);
+  };
+
+  const handleTriggerProcessing = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsOpen(false);
+    onTriggerProcessing(document.id);
+  };
+
   return (
-    <Space size="small">
-      {/* 詳情按鈕 */}
-      <Button 
-        onClick={() => onViewDetails(document)} 
-        variant="outline" 
-        size="sm"
+    <div className="relative" ref={dropdownRef}>
+      {/* 三個點按鈕 */}
+      <button
+        ref={buttonRef}
+        onClick={(e) => {
+          e.stopPropagation();
+          setIsOpen(!isOpen);
+        }}
         disabled={isLoading || isDeleting}
+        className="p-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        aria-label="操作選單"
       >
-        <i className="fas fa-eye mr-1"></i>詳情
-      </Button>
+        <MoreOutlined className="text-lg" />
+      </button>
 
-      {/* 預覽按鈕 */}
-      {canPreview && (
-        <Button 
-          onClick={() => onPreview(document)} 
-          variant="outline" 
-          size="sm"
-          disabled={isLoading || isDeleting}
+      {/* 下拉菜單 */}
+      {isOpen && (
+        <div 
+          className={`absolute right-0 w-48 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-50 py-1 ${
+            dropdownPosition === 'top' ? 'bottom-full mb-2' : 'top-full mt-2'
+          }`}
         >
-          <i className="fas fa-search-plus mr-1"></i>預覽
-        </Button>
-      )}
+          {/* 詳情 */}
+          <button
+            onClick={handleViewDetails}
+            disabled={isLoading || isDeleting}
+            className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2 transition-colors"
+          >
+            <EyeOutlined className="text-base" />
+            <span>查看詳情</span>
+          </button>
 
-      {/* 重新分析按鈕 - 僅對失敗狀態顯示 */}
-      {canRetryAnalysis && onRetryAnalysis && (
-        <Button 
-          onClick={handleRetryAnalysis}
-          variant="outline" 
-          size="sm"
-          disabled={isProcessing || isLoading || isDeleting}
-          className="border-yellow-500 text-yellow-600 hover:bg-yellow-50"
-        >
-          {isProcessing ? (
-            <>
-              <i className="fas fa-spinner fa-spin mr-1"></i>分析中...
-            </>
-          ) : (
-            <>
-              <i className="fas fa-redo mr-1"></i>重新分析
-            </>
+          {/* 預覽 */}
+          {canPreview && (
+            <button
+              onClick={handlePreview}
+              disabled={isLoading || isDeleting}
+              className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2 transition-colors"
+            >
+              <SearchOutlined className="text-base" />
+              <span>預覽文件</span>
+            </button>
           )}
-        </Button>
-      )}
 
-      {/* 處理/重試按鈕 - 對初始狀態和一般錯誤顯示 */}
-      {canStartProcessing(document.status) && !canRetryAnalysis && (
-        <Button 
-          onClick={() => onTriggerProcessing(document.id)} 
-          variant="secondary" 
-          size="sm"
-          disabled={isProcessing || isLoading || isDeleting}
-        >
-          {isProcessing ? (
-            <>
-              <i className="fas fa-spinner fa-spin mr-1"></i>處理中...
-            </>
-          ) : document.status === 'processing_error' ? (
-            <>
-              <i className="fas fa-redo mr-1"></i>重試處理
-            </>
-          ) : (
-            <>
-              <i className="fas fa-brain mr-1"></i>開始分析
-            </>
+          {/* 分隔線 */}
+          {(canPreview || canRetryAnalysis || canStartProcessing(document.status)) && (
+            <div className="my-1 border-t border-gray-200 dark:border-gray-700"></div>
           )}
-        </Button>
-      )}
 
-      {/* 刪除按鈕 */}
-      <Button 
-        onClick={handleDelete}
-        variant="danger" 
-        size="sm"
-        disabled={isDeleting || isLoading}
-      >
-        <i className="fas fa-trash-alt mr-1"></i>刪除
-      </Button>
-    </Space>
+          {/* 重新分析 */}
+          {canRetryAnalysis && onRetryAnalysis && (
+            <button
+              onClick={handleRetryAnalysis}
+              disabled={isProcessing || isLoading || isDeleting}
+              className="w-full px-4 py-2 text-left text-sm text-yellow-600 dark:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-900/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2 transition-colors"
+            >
+              {isProcessing ? (
+                <>
+                  <LoadingOutlined className="text-base" spin />
+                  <span>分析中...</span>
+                </>
+              ) : (
+                <>
+                  <RedoOutlined className="text-base" />
+                  <span>重新分析</span>
+                </>
+              )}
+            </button>
+          )}
+
+          {/* 開始分析/重試處理 */}
+          {canStartProcessing(document.status) && !canRetryAnalysis && (
+            <button
+              onClick={handleTriggerProcessing}
+              disabled={isProcessing || isLoading || isDeleting}
+              className="w-full px-4 py-2 text-left text-sm text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2 transition-colors"
+            >
+              {isProcessing ? (
+                <>
+                  <LoadingOutlined className="text-base" spin />
+                  <span>處理中...</span>
+                </>
+              ) : document.status === 'processing_error' ? (
+                <>
+                  <RedoOutlined className="text-base" />
+                  <span>重試處理</span>
+                </>
+              ) : (
+                <>
+                  <ThunderboltOutlined className="text-base" />
+                  <span>開始分析</span>
+                </>
+              )}
+            </button>
+          )}
+
+          {/* 分隔線 */}
+          <div className="my-1 border-t border-gray-200 dark:border-gray-700"></div>
+
+          {/* 刪除 */}
+          <button
+            onClick={handleDelete}
+            disabled={isDeleting || isLoading}
+            className="w-full px-4 py-2 text-left text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2 transition-colors"
+          >
+            {isDeleting ? (
+              <>
+                <LoadingOutlined className="text-base" spin />
+                <span>刪除中...</span>
+              </>
+            ) : (
+              <>
+                <DeleteOutlined className="text-base" />
+                <span>刪除文件</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
+    </div>
   );
 };
 
-export default DocumentTableActions; 
+export default DocumentTableActions;

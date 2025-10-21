@@ -15,6 +15,8 @@ class PromptType(Enum):
     ANSWER_GENERATION = "answer_generation"
     MONGODB_DETAIL_QUERY_GENERATION = "mongodb_detail_query_generation"
     DOCUMENT_SELECTION_FOR_QUERY = "document_selection_for_query"
+    CLUSTER_LABEL_GENERATION = "cluster_label_generation"  # 單個聚類標籤生成
+    BATCH_CLUSTER_LABEL_GENERATION = "batch_cluster_label_generation"  # 批量聚類標籤生成
 
 @dataclass
 class PromptTemplate:
@@ -81,6 +83,7 @@ class PromptManagerSimplified:
   }},
   
   "key_information": {{
+    "auto_title": "[為文檔生成一個簡潔標題,6-15字]",
     "content_type": "[詳細分類]",
     "content_summary": "[2-3句核心摘要]",
     "semantic_tags": ["語意標籤1", "語意標籤2"],
@@ -92,6 +95,15 @@ class PromptManagerSimplified:
     "action_items": ["行動項目"] | null,
     "dates_mentioned": ["YYYY-MM-DD"] | null,
     "amounts_mentioned": [{{"type": "類型", "value": 數值, "currency": "幣種"}}] | null,
+    "structured_entities": {{
+      "vendor": "[店家/機構名稱]" | null,
+      "people": ["人名1", "人名2"] | null,
+      "locations": ["地點1", "地點2"] | null,
+      "organizations": ["機構1", "機構2"] | null,
+      "items": [{{"name": "品項名", "quantity": 數量, "price": 價格}}] | null,
+      "amounts": [{{"value": 數值, "currency": "幣別", "context": "說明"}}] | null,
+      "dates": [{{"date": "YYYY-MM-DD", "context": "說明"}}] | null
+    }},
     "document_purpose": "[目的]" | null,
     "note_structure": "[筆記結構]" | null,
     "thinking_patterns": ["思考模式"] | null,
@@ -151,6 +163,7 @@ MIME類型: {{image_mime_type}}
     "confidence_factors": {{"high_confidence": "高信心因素", "uncertainty": "不確定因素"}}
   }},
   "key_information": {{
+    "auto_title": "[為文檔生成一個簡潔標題,6-15字]",
     "content_type": "[詳細分類]",
     "content_summary": "[2-3句核心摘要]",
     "semantic_tags": ["語意標籤1", "語意標籤2"],
@@ -162,6 +175,15 @@ MIME類型: {{image_mime_type}}
     "action_items": ["行動項目"] | null,
     "dates_mentioned": ["YYYY-MM-DD"] | null,
     "amounts_mentioned": [{{"type": "類型", "value": "數值", "currency": "幣種"}}] | null,
+    "structured_entities": {{
+      "vendor": "[店家/機構名稱]" | null,
+      "people": ["人名1", "人名2"] | null,
+      "locations": ["地點1", "地點2"] | null,
+      "organizations": ["機構1", "機構2"] | null,
+      "items": [{{"name": "品項名", "quantity": 數量, "price": 價格}}] | null,
+      "amounts": [{{"value": 數值, "currency": "幣別", "context": "說明"}}] | null,
+      "dates": [{{"date": "YYYY-MM-DD", "context": "說明"}}] | null
+    }},
     "document_purpose": "[目的]" | null,
     "note_structure": "[筆記結構]" | null,
     "thinking_patterns": ["思考模式"] | null,
@@ -455,6 +477,145 @@ MIME類型: {{image_mime_type}}
             variables=["user_question", "document_id", "document_schema_info"],
             description="生成精確的 MongoDB 查詢組件，根據問題智慧選擇相關欄位"
         )
+        
+        # 聚類標籤生成 (單個)
+        self._prompts[PromptType.CLUSTER_LABEL_GENERATION] = PromptTemplate(
+            prompt_type=PromptType.CLUSTER_LABEL_GENERATION,
+            system_prompt='''你是智能文檔分類專家,專門為文檔聚類生成簡潔且準確的標籤名稱。
+
+=== 核心任務 ===
+根據提供的文檔摘要和標題樣本,識別共通主題,並生成一個簡潔、有意義的聚類名稱。
+
+=== 輸出JSON格式 ===
+```json
+{{
+  "cluster_name": "[3-10個字的簡潔名稱]",
+  "cluster_description": "[1-2句話的詳細描述]",
+  "common_themes": ["主題1", "主題2", "主題3"],
+  "suggested_keywords": ["關鍵詞1", "關鍵詞2", "關鍵詞3"],
+  "confidence": 0.85,
+  "reasoning": "[簡要說明為什麼選擇這個名稱]"
+}}
+```
+
+=== 命名原則 ===
+1. **簡潔性**: 3-10個字,一目了然
+2. **代表性**: 能準確代表這組文檔的共通特徵
+3. **具體性**: 避免過於籠統的詞語如"一般文檔"
+4. **可讀性**: 使用自然語言,避免技術術語
+
+=== 命名風格參考 ===
+- 發票類: "發票 · 收據 · 記帳"
+- 合同類: "合約 · 協議文件"
+- 技術類: "技術文檔 · 規格書"
+- 個人類: "個人筆記 · 待辦事項"
+- 財務類: "財務報表 · 帳目"
+- 通知類: "通知 · 公告 · 訊息"
+
+=== 分析策略 ===
+1. 識別高頻關鍵詞和主題
+2. 找出文檔的共同用途或類型
+3. 考慮文檔的來源或機構
+4. 注意日期、金額、地點等實體的模式
+5. 使用「·」分隔多個相關概念
+
+=== 置信度評估 ===
+- 0.8-1.0: 文檔高度相似,主題明確
+- 0.6-0.8: 文檔有明顯共通點
+- 0.4-0.6: 文檔相關性較弱
+- <0.4: 可能是噪聲聚類
+
+''' ,
+            user_prompt_template='''請為以下文檔聚類生成標籤:
+
+樣本數量: {sample_count}
+文檔樣本:
+{document_samples}
+
+請分析這些文檔的共通特徵,生成合適的聚類名稱。''',
+            variables=["sample_count", "document_samples"],
+            description="為文檔聚類生成智能標籤名稱"
+        )
+        
+        # 批量聚類標籤生成 (一次處理多個聚類)
+        self._prompts[PromptType.BATCH_CLUSTER_LABEL_GENERATION] = PromptTemplate(
+            prompt_type=PromptType.BATCH_CLUSTER_LABEL_GENERATION,
+            system_prompt='''你是智能文檔分類專家,專門為多個文檔聚類批量生成簡潔且準確的標籤名稱。
+
+=== 核心任務 ===
+一次性為多個文檔聚類生成標籤。每個聚類都包含一些代表性文檔的摘要和標題。
+請為每個聚類分析共通主題,生成簡潔、有意義的名稱。
+
+=== 輸出JSON格式 (嚴格遵守!) ===
+```json
+{{
+  "labels": [
+    {{
+      "cluster_index": 0,
+      "label": "簡潔名稱"
+    }},
+    {{
+      "cluster_index": 1,
+      "label": "簡潔名稱"
+    }}
+  ]
+}}
+```
+
+**重要**: 
+- 必須包含 `labels` 數組
+- 每個元素必須有 `cluster_index` 和 `label` 兩個字段
+- `cluster_index` 必須與輸入的聚類索引完全對應
+- `label` 長度: 2-8個中文字
+
+=== 命名原則 ===
+1. **簡潔性**: 2-8個字,一目了然
+2. **代表性**: 準確代表該組文檔的共通特徵
+3. **具體性**: 避免"一般文檔"等籠統詞語
+4. **可讀性**: 自然語言,避免技術術語
+5. **差異性**: 不同聚類的標籤應有明顯區別
+
+=== 命名風格參考 ===
+便利店類:
+- "7-11收據"、"全家消費"、"萊爾富發票"
+
+帳單類:
+- "水費帳單"、"電費單據"、"稅費繳納"
+
+食品類:
+- "飲料購買"、"蛋糕甜點"、"早餐消費"
+
+文件類:
+- "合約文件"、"技術規格"、"會議記錄"
+
+=== 分析策略 ===
+1. 快速瀏覽每個聚類的樣本,識別關鍵特徵
+2. 找出最明顯的共通點(商家、類型、主題)
+3. 使用簡潔詞彙概括核心特徵
+4. 確保不同聚類的標籤有明顯區別
+5. 優先使用具體名稱而非抽象概念
+
+''' ,
+            user_prompt_template='''請為以下 {cluster_count} 個文檔聚類各生成一個簡短、描述性的中文標籤。
+
+要求:
+1. 每個標籤長度: 2-8個中文字
+2. 要能準確概括該聚類的共同主題
+3. 使用通俗易懂的詞彙
+
+聚類數據:
+{clusters_data}
+
+請以JSON格式返回,格式嚴格為:
+{{
+  "labels": [
+    {{"cluster_index": 0, "label": "標籤名稱"}},
+    {{"cluster_index": 1, "label": "標籤名稱"}}
+  ]
+}}''',
+            variables=["cluster_count", "clusters_data"],
+            description="批量為多個文檔聚類生成智能標籤名稱(一次AI調用)"
+        )
 
     async def get_prompt(
         self, 
@@ -504,7 +665,7 @@ MIME類型: {{image_mime_type}}
             logger.error(f"從資料庫獲取自定義提示詞失敗: {e}")
             return None
     
-    def _sanitize_input_value(self, value: Any, max_length: int = 4000, context_type: str = "default") -> str:
+    def _sanitize_input_value(self, value: Any, max_length: int = 4000, context_type: str = "default", user_preference_max_length: Optional[int] = None) -> str:
         """清理並截斷輸入值以用於提示詞。"""
         if not isinstance(value, str):
             s_value = str(value)
@@ -519,12 +680,21 @@ MIME類型: {{image_mime_type}}
             # MongoDB Schema 需要更大的容量以保證完整性
             max_length = 8000
         elif context_type == "document_context":
-            # 文件上下文也需要較大容量
-            max_length = 6000
+            # 文件上下文 - 優先使用用戶設定
+            if user_preference_max_length and user_preference_max_length > 0:
+                max_length = user_preference_max_length
+            else:
+                max_length = 6000
         elif context_type == "text_content":
             # 文本內容分析需要更大的容量，使用設定中的限制
             from app.core.config import settings
             max_length = settings.AI_MAX_INPUT_CHARS_TEXT_ANALYSIS
+        elif context_type == "default":
+            # 默認上下文 - 優先使用用戶設定
+            if user_preference_max_length and user_preference_max_length > 0:
+                max_length = user_preference_max_length
+            else:
+                max_length = 4000
         
         # 截斷到最大長度
         if len(s_value) > max_length:
@@ -537,6 +707,7 @@ MIME類型: {{image_mime_type}}
         self, 
         prompt_template: PromptTemplate, 
         apply_chinese_instruction: bool = True,
+        user_prompt_input_max_length: Optional[int] = None,  # 新增: 用戶設定的最大輸入長度
         **kwargs
     ) -> tuple[str, str]:
         """格式化提示詞模板，並對輸入值進行清理。"""
@@ -556,9 +727,15 @@ MIME類型: {{image_mime_type}}
                         context_type = "document_context"
                     elif var == "text_content":
                         context_type = "text_content"
+                    elif var == "clusters_data":  # 聚類數據也使用 document_context 類型
+                        context_type = "document_context"
                     
-                    # 清理和截斷輸入值
-                    sanitized_value = self._sanitize_input_value(kwargs[var], context_type=context_type)
+                    # 清理和截斷輸入值 (傳遞用戶偏好的最大長度)
+                    sanitized_value = self._sanitize_input_value(
+                        kwargs[var], 
+                        context_type=context_type,
+                        user_preference_max_length=user_prompt_input_max_length
+                    )
                     
                     system_prompt = system_prompt.replace(placeholder, sanitized_value)
                     user_prompt = user_prompt.replace(placeholder, sanitized_value)
@@ -588,6 +765,7 @@ MIME類型: {{image_mime_type}}
         db: Optional[AsyncIOMotorDatabase] = None,
         apply_chinese_instruction: bool = True,
         user_id: Optional[str] = None,
+        user_prompt_input_max_length: Optional[int] = None,  # 新增: 用戶設定的最大輸入長度
         **kwargs
     ) -> Tuple[str, str, Optional[str]]:
         """
@@ -600,10 +778,11 @@ MIME類型: {{image_mime_type}}
             - cache_id: Google Context Cache ID（如果使用緩存）
         """
         try:
-            # 首先格式化提示詞
+            # 首先格式化提示詞 (傳遞用戶設定的最大輸入長度)
             system_prompt, user_prompt = self.format_prompt(
                 prompt_template, 
                 apply_chinese_instruction=apply_chinese_instruction,
+                user_prompt_input_max_length=user_prompt_input_max_length,
                 **kwargs
             )
             
@@ -671,7 +850,9 @@ MIME類型: {{image_mime_type}}
                 PromptType.QUERY_REWRITE.value: 1800,   # 查詢重寫中等長度
                 PromptType.ANSWER_GENERATION.value: 1200, # 回答生成相對短
                 PromptType.MONGODB_DETAIL_QUERY_GENERATION.value: 1500,
-                PromptType.DOCUMENT_SELECTION_FOR_QUERY.value: 1600
+                PromptType.DOCUMENT_SELECTION_FOR_QUERY.value: 1600,
+                PromptType.CLUSTER_LABEL_GENERATION.value: 1400,  # 單個聚類標籤生成
+                PromptType.BATCH_CLUSTER_LABEL_GENERATION.value: 1600  # 批量聚類標籤生成
             }
             
             total_estimated_tokens = sum(estimated_prompt_tokens.values())

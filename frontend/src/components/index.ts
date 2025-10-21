@@ -22,4 +22,10 @@ export { default as UploadAndFilterControls } from './document/UploadAndFilterCo
 export { default as LoadingIndicator } from './common/LoadingIndicator';
 export { default as MessageBoxPC } from './common/MessageBoxPC';
 export { default as Sidebar } from './layout/Sidebar';
-export { default as MainLayoutWithSidebar } from './layout/MainLayoutWithSidebar'; 
+export { default as MainLayoutWithSidebar } from './layout/MainLayoutWithSidebar';
+
+// 聚類相關組件
+export { default as ClusterSidebar } from './ClusterSidebar';
+export { default as ClusteringControl } from './ClusteringControl';
+export { default as ClusteringStatsPanel } from './ClusteringStatsPanel';
+export { default as DocumentsWithClustering } from './DocumentsWithClustering'; 

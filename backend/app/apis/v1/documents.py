@@ -237,6 +237,7 @@ async def list_documents(
     status_in: Optional[List[DocumentStatus]] = Query(None, description="根據一個或多個文件狀態列表進行過濾"),
     filename_contains: Optional[str] = Query(None, description="根據文件名包含的文字過濾 (不區分大小寫)"),
     tags_include: Optional[List[str]] = Query(None, description="根據包含的標籤過濾 (傳入一個或多個標籤)"),
+    cluster_id: Optional[str] = Query(None, description="根據聚類ID過濾"),
     sort_by: Optional[str] = Query(None, description="排序欄位 (例如 filename, created_at)"),
     sort_order: Optional[str] = Query("desc", description="排序順序 (asc 或 desc)")
 ):
@@ -247,6 +248,7 @@ async def list_documents(
     - **status_in**: 根據一個或多個文件狀態列表進行過濾。
     - **filename_contains**: 根據文件名包含的文字過濾 (不區分大小寫)。
     - **tags_include**: 根據包含的標籤過濾 (傳入一個或多個標籤)。
+    - **cluster_id**: 根據聚類ID過濾,只返回屬於該聚類的文檔。
     - **sort_by**: 用於排序的欄位名稱。
     - **sort_order**: 排序方向 ('asc' 或 'desc')。
     """
@@ -261,6 +263,7 @@ async def list_documents(
         status_in=status_in,
         filename_contains=filename_contains,
         tags_include=tags_include,
+        cluster_id=cluster_id,
         sort_by=sort_by,
         sort_order=sort_order
     )
@@ -270,7 +273,8 @@ async def list_documents(
         owner_id=current_user.id,
         status_in=status_in,
         filename_contains=filename_contains,
-        tags_include=tags_include
+        tags_include=tags_include,
+        cluster_id=cluster_id
     )
     
     

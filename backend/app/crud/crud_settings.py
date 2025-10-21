@@ -86,7 +86,8 @@ async def get_system_settings(db: AsyncIOMotorDatabase) -> SettingsDataResponse:
     logger.debug(f"Values for AIServiceSettingsStored: provider={stored_ai_settings_from_db.provider}, "
                  f"model={stored_ai_settings_from_db.model}, temp={stored_ai_settings_from_db.temperature}, "
                  f"ensure_chinese={stored_ai_settings_from_db.ensure_chinese_output}, "
-                 f"max_tokens={stored_ai_settings_from_db.max_output_tokens}")
+                 f"max_tokens={stored_ai_settings_from_db.max_output_tokens}, "
+                 f"prompt_input_max_length={stored_ai_settings_from_db.prompt_input_max_length}")
 
     ai_service_response = AIServiceSettingsStored(
         provider=stored_ai_settings_from_db.provider,
@@ -94,7 +95,8 @@ async def get_system_settings(db: AsyncIOMotorDatabase) -> SettingsDataResponse:
         temperature=stored_ai_settings_from_db.temperature,
         is_api_key_configured=is_api_key_configured_in_env,
         ensure_chinese_output=stored_ai_settings_from_db.ensure_chinese_output,
-        max_output_tokens=stored_ai_settings_from_db.max_output_tokens
+        max_output_tokens=stored_ai_settings_from_db.max_output_tokens,
+        prompt_input_max_length=stored_ai_settings_from_db.prompt_input_max_length
     )
 
     # 新增日誌：檢查 Pydantic 的序列化結果
@@ -155,7 +157,11 @@ async def update_system_settings(db: AsyncIOMotorDatabase, settings_to_update: U
         if ai_service_input.temperature is not None: db_ai_service_data_to_store["temperature"] = ai_service_input.temperature
         if ai_service_input.ensure_chinese_output is not None: db_ai_service_data_to_store["ensure_chinese_output"] = ai_service_input.ensure_chinese_output
         if ai_service_input.max_output_tokens is not None: db_ai_service_data_to_store["max_output_tokens"] = ai_service_input.max_output_tokens
+        if ai_service_input.prompt_input_max_length is not None: 
+            db_ai_service_data_to_store["prompt_input_max_length"] = ai_service_input.prompt_input_max_length
+            logger.info(f"🔧 設置 prompt_input_max_length: {ai_service_input.prompt_input_max_length}")
         
+        logger.info(f"準備保存到DB的 ai_service 數據: {db_ai_service_data_to_store}")
         update_payload_for_db["ai_service"] = db_ai_service_data_to_store
 
     if settings_to_update.database: # database 包含 uri 和 dbName，主要用於更新 .env
@@ -236,9 +242,13 @@ async def update_system_settings(db: AsyncIOMotorDatabase, settings_to_update: U
                         if "temperature" in update_for_ai and update_for_ai["temperature"] is not None: existing_ai_db.temperature = update_for_ai["temperature"]
                         if "ensure_chinese_output" in update_for_ai and update_for_ai["ensure_chinese_output"] is not None: existing_ai_db.ensure_chinese_output = update_for_ai["ensure_chinese_output"]
                         if "max_output_tokens" in update_for_ai and update_for_ai["max_output_tokens"] is not None: existing_ai_db.max_output_tokens = update_for_ai["max_output_tokens"]
+                        if "prompt_input_max_length" in update_for_ai and update_for_ai["prompt_input_max_length"] is not None: 
+                            existing_ai_db.prompt_input_max_length = update_for_ai["prompt_input_max_length"]
+                            logger.info(f"✅ 更新 prompt_input_max_length 到現有DB配置: {update_for_ai['prompt_input_max_length']}")
                         
                         # 假設 StoredAISettings.model_dump() 自然不會包含 force_stable_model
                         final_ai_payload = existing_ai_db.model_dump()
+                        logger.info(f"合併後的最終 ai_service payload: {final_ai_payload}")
                         update_payload_for_db["ai_service"] = final_ai_payload
                     
                     await actual_db_instance.system_config.find_one_and_update(
@@ -265,13 +275,17 @@ async def update_system_settings(db: AsyncIOMotorDatabase, settings_to_update: U
     if "ai_service" in update_payload_for_db and db_update_successful:
         try:
             from app.services.unified_ai_config import unified_ai_config
+            logger.info("🔄 準備重新載入AI任務配置...")
             reload_success = await unified_ai_config.reload_task_configs(db_manager.get_database())
             if reload_success:
-                logger.info("AI任務配置已重新載入以應用新的模型偏好設定")
+                logger.info("✅ AI任務配置已重新載入以應用新的模型偏好設定")
+                logger.info(f"當前 _user_global_ai_preferences: {unified_ai_config._user_global_ai_preferences}")
             else:
-                logger.warning("AI任務配置重新載入失敗")
+                logger.warning("❌ AI任務配置重新載入失敗")
         except Exception as e:
-            logger.error(f"重新載入AI任務配置時發生錯誤: {e}")
+            logger.error(f"重新載入AI任務配置時發生錯誤: {e}", exc_info=True)
+    else:
+        logger.info(f"跳過AI配置重新載入: ai_service在payload中={('ai_service' in update_payload_for_db)}, db_update_successful={db_update_successful}")
 
     if env_vars_changed and db_update_attempted and not db_update_successful:
         logger.warning("成功更新 .env 中的設定，但資料庫中的對應設定更新失敗或被跳過。")

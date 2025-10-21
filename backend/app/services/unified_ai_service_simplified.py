@@ -175,6 +175,10 @@ class UnifiedAIServiceSimplified:
             prompt_type = PromptType.MONGODB_DETAIL_QUERY_GENERATION
         elif request.task_type == TaskType.DOCUMENT_SELECTION_FOR_QUERY:
             prompt_type = PromptType.DOCUMENT_SELECTION_FOR_QUERY
+        elif request.task_type == TaskType.CLUSTER_LABEL_GENERATION:
+            prompt_type = PromptType.CLUSTER_LABEL_GENERATION
+        elif request.task_type == TaskType.BATCH_CLUSTER_LABELS:
+            prompt_type = PromptType.BATCH_CLUSTER_LABEL_GENERATION
         else:
             logger.error(f"未知的任務類型: {request.task_type}")
             return AIResponse(success=False, task_type=request.task_type, error_message=f"未知的任務類型: {request.task_type}", processing_time_seconds=time.time() - start_time)
@@ -192,6 +196,10 @@ class UnifiedAIServiceSimplified:
         
         ensure_chinese = unified_ai_config._user_global_ai_preferences.get("ensure_chinese_output", True)
         logger.info(f"根據用戶設定，ensure_chinese: {ensure_chinese} for task {request.task_type}")
+        
+        # 獲取用戶設定的輸入提示詞最大長度
+        user_prompt_input_max_length = unified_ai_config._user_global_ai_preferences.get("prompt_input_max_length", 6000)
+        logger.debug(f"使用用戶設定的 prompt_input_max_length: {user_prompt_input_max_length} for task {request.task_type}")
 
         prompt_template_object = await prompt_manager_simplified.get_prompt(prompt_type, db)
         
@@ -202,6 +210,7 @@ class UnifiedAIServiceSimplified:
         formatted_system_prompt, formatted_user_prompt = prompt_manager_simplified.format_prompt(
             prompt_template_object, 
             apply_chinese_instruction=ensure_chinese,
+            user_prompt_input_max_length=user_prompt_input_max_length,
             **prompt_params
         )
         
@@ -286,6 +295,12 @@ class UnifiedAIServiceSimplified:
                     parsed_output = AIMongoDBQueryDetailOutput.model_validate_json(output_text)
                 elif request.task_type == TaskType.DOCUMENT_SELECTION_FOR_QUERY:
                     parsed_output = AIDocumentSelectionOutput.model_validate_json(output_text)
+                elif request.task_type == TaskType.CLUSTER_LABEL_GENERATION:
+                    from app.models.ai_models_simplified import AIClusterLabelOutput
+                    parsed_output = AIClusterLabelOutput.model_validate_json(output_text)
+                elif request.task_type == TaskType.BATCH_CLUSTER_LABELS:
+                    from app.models.ai_models_simplified import AIBatchClusterLabelsOutput
+                    parsed_output = AIBatchClusterLabelsOutput.model_validate_json(output_text)
                 else: 
                     logger.warning(f"任務類型 {request.task_type} 沒有特定的解析邏輯。輸出將是原始文本。")
                     parsed_output = output_text
@@ -626,7 +641,9 @@ class UnifiedAIServiceSimplified:
                 TaskType.ANSWER_GENERATION: PromptType.ANSWER_GENERATION,
                 TaskType.QUERY_REWRITE: PromptType.QUERY_REWRITE,
                 TaskType.MONGODB_DETAIL_QUERY_GENERATION: PromptType.MONGODB_DETAIL_QUERY_GENERATION,
-                TaskType.DOCUMENT_SELECTION_FOR_QUERY: PromptType.DOCUMENT_SELECTION_FOR_QUERY
+                TaskType.DOCUMENT_SELECTION_FOR_QUERY: PromptType.DOCUMENT_SELECTION_FOR_QUERY,
+                TaskType.CLUSTER_LABEL_GENERATION: PromptType.CLUSTER_LABEL_GENERATION,
+                TaskType.BATCH_CLUSTER_LABELS: PromptType.BATCH_CLUSTER_LABEL_GENERATION
             }
             
             prompt_type = prompt_type_mapping.get(task_type)

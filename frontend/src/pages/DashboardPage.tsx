@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { useNavigate, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 
 // 簡易樣式
 const styles: { [key: string]: React.CSSProperties } = {
@@ -9,9 +9,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily: 'Arial, sans-serif',
   },
   header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     marginBottom: '30px',
   },
   title: {
@@ -43,16 +40,6 @@ const styles: { [key: string]: React.CSSProperties } = {
   infoValue: {
     color: '#777',
   },
-  logoutButton: {
-    padding: '10px 20px',
-    fontSize: '16px',
-    color: 'white',
-    backgroundColor: '#dc3545',
-    border: 'none',
-    borderRadius: '5px',
-    cursor: 'pointer',
-    transition: 'background-color 0.3s',
-  },
   linkButton: {
     display: 'inline-block',
     padding: '10px 15px',
@@ -69,13 +56,7 @@ const styles: { [key: string]: React.CSSProperties } = {
 };
 
 const DashboardPage: React.FC = () => {
-  const { currentUser, logout } = useAuth();
-  const navigate = useNavigate();
-
-  const handleLogout = () => {
-    logout();
-    navigate('/auth/login'); // 登出後導向到登入頁面
-  };
+  const { currentUser } = useAuth();
 
   if (!currentUser) {
     return <p>載入中...</p>; // 或者重新導向到登入頁面
@@ -85,14 +66,6 @@ const DashboardPage: React.FC = () => {
     <div style={styles.pageContainer}>
       <div style={styles.header}>
         <h1 style={styles.title}>儀表板</h1>
-        <button 
-          onClick={handleLogout} 
-          style={styles.logoutButton}
-          onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#c82333')}
-          onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#dc3545')}
-        >
-          登出
-        </button>
       </div>
 
       <div style={styles.card}>

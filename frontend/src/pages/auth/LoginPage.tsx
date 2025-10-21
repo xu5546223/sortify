@@ -22,7 +22,7 @@ const LoginPage: React.FC = () => {
     setError(null);
 
     if (!email || !password) {
-      setError('請輸入電子郵件和密碼。');
+      setError('請輸入用戶名和密碼。');
       return;
     }
 
@@ -34,7 +34,7 @@ const LoginPage: React.FC = () => {
       if (axiosError.response?.data?.detail) {
         setError(axiosError.response.data.detail);
       } else {
-        setError('登入失敗，請檢查您的電子郵件和密碼。');
+        setError('登入失敗，請檢查您的用戶名和密碼。');
       }
       console.error('Login page error:', err);
     }
@@ -122,20 +122,20 @@ const LoginPage: React.FC = () => {
           <form onSubmit={handleSubmit}>
             {error && <div className="error-message">{error}</div>}
 
-            {/* 電子郵件輸入框 */}
+            {/* 用戶名輸入框 */}
             <div className="form-group">
-              <label htmlFor="email" className="form-label">電子郵件</label>
+              <label htmlFor="email" className="form-label">用戶名</label>
               <div className="input-wrapper">
-                <span className="input-icon">✉️</span>
+                <span className="input-icon">👤</span>
                 <input
-                  type="email"
+                  type="text"
                   id="email"
                   className="form-input"
-                  placeholder="請輸入電子郵件地址"
+                  placeholder="請輸入用戶名或用戶ID"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  autoComplete="email"
+                  autoComplete="username"
                 />
               </div>
             </div>

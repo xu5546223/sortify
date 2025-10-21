@@ -193,6 +193,8 @@ class TaskType(Enum):
     ANSWER_GENERATION = "answer_generation"
     MONGODB_DETAIL_QUERY_GENERATION = "mongodb_detail_query_generation"
     DOCUMENT_SELECTION_FOR_QUERY = "document_selection_for_query"
+    CLUSTER_LABEL_GENERATION = "cluster_label_generation"  # 單個聚類標籤生成
+    BATCH_CLUSTER_LABELS = "batch_cluster_labels"  # 批量聚類標籤生成
 
 @dataclass
 class AIModelConfig:
@@ -241,7 +243,8 @@ class UnifiedAIConfig:
         self._user_global_ai_preferences: Dict[str, Any] = {
             "model": None,
             "ensure_chinese_output": True,
-            "max_output_tokens": None
+            "max_output_tokens": None,
+            "prompt_input_max_length": 6000  # 默認輸入提示詞最大長度
         }
         self._initialize_default_configs()
     
@@ -349,6 +352,22 @@ class UnifiedAIConfig:
             timeout_seconds=25,
             retry_attempts=2
         )
+        
+        # Configuration for Cluster Label Generation
+        self._task_configs[TaskType.CLUSTER_LABEL_GENERATION] = TaskConfig(
+            task_type=TaskType.CLUSTER_LABEL_GENERATION,
+            preferred_models=get_preferred_models_for_task_init(False), # Does not require image support
+            generation_params=GenerationParams(
+                temperature=0.5, # Medium temperature for creative but consistent naming
+                top_p=settings.AI_TOP_P,
+                top_k=settings.AI_TOP_K,
+                max_output_tokens=512, # Max tokens for cluster label and description
+                response_mime_type="application/json",
+                safety_settings=common_safety_settings
+            ),
+            timeout_seconds=30,
+            retry_attempts=3
+        )
     
     def _is_model_suitable_for_task(self, model_config: AIModelConfig, task_type: TaskType) -> bool:
         """檢查模型是否適合指定任務"""
@@ -356,11 +375,12 @@ class UnifiedAIConfig:
         return True
     
     async def _get_user_model_preference(self, db: AsyncIOMotorDatabase) -> Dict[str, Any]:
-        """從資料庫獲取用戶全局AI偏好 (模型, ensure_chinese, max_output_tokens)"""
+        """從資料庫獲取用戶全局AI偏好 (模型, ensure_chinese, max_output_tokens, prompt_input_max_length)"""
         default_prefs = {
             "model": settings.DEFAULT_AI_MODEL,
             "ensure_chinese_output": True,
-            "max_output_tokens": settings.AI_MAX_OUTPUT_TOKENS
+            "max_output_tokens": settings.AI_MAX_OUTPUT_TOKENS,
+            "prompt_input_max_length": 6000
         }
         try:
             config_doc = await db.system_config.find_one({"_id": "main_system_settings"})
@@ -370,6 +390,7 @@ class UnifiedAIConfig:
                 raw_model_pref = ai_settings_db.get("model")
                 ensure_chinese_pref = ai_settings_db.get("ensure_chinese_output", default_prefs["ensure_chinese_output"])
                 max_tokens_pref = ai_settings_db.get("max_output_tokens")
+                prompt_input_max_length_pref = ai_settings_db.get("prompt_input_max_length")
                 
                 processed_model_pref = default_prefs["model"]
                 if isinstance(raw_model_pref, str) and raw_model_pref != 'None': processed_model_pref = raw_model_pref
@@ -379,11 +400,12 @@ class UnifiedAIConfig:
                 user_prefs = {
                     "model": processed_model_pref,
                     "ensure_chinese_output": ensure_chinese_pref,
-                    "max_output_tokens": int(max_tokens_pref) if max_tokens_pref is not None else default_prefs["max_output_tokens"]
+                    "max_output_tokens": int(max_tokens_pref) if max_tokens_pref is not None else default_prefs["max_output_tokens"],
+                    "prompt_input_max_length": int(prompt_input_max_length_pref) if prompt_input_max_length_pref is not None else default_prefs["prompt_input_max_length"]
                 }
                 logger.info(f"從資料庫加載的用戶AI偏好 (無穩定模式): {user_prefs}")
                 return user_prefs
-            else: logger.info("資料庫中未找到AI服務設定，將使用全局預設AI偏好 (無穩定模式)。"); return default_prefs
+            else: logger.info("資料庫中未找到AI服務設定,將使用全局預設AI偏好 (無穩定模式)。"); return default_prefs
         except Exception as e: logger.error(f"獲取用戶模型偏好失敗: {e}"); return default_prefs
     
     def get_generation_config(self, task_type: TaskType, custom_params: Optional[Dict[str, Any]] = None) -> genai.types.GenerationConfigDict:
@@ -497,7 +519,8 @@ class UnifiedAIConfig:
                 self._user_global_ai_preferences = {
                     "model": settings.DEFAULT_AI_MODEL,
                     "ensure_chinese_output": True,
-                    "max_output_tokens": settings.AI_MAX_OUTPUT_TOKENS
+                    "max_output_tokens": settings.AI_MAX_OUTPUT_TOKENS,
+                    "prompt_input_max_length": 6000
                 }
 
             user_preferred_model_from_db = self._user_global_ai_preferences.get("model")

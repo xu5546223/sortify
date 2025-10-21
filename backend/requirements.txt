@@ -108,6 +108,7 @@ pydeck==0.9.0
 Pygments==2.19.1
 pymongo==4.12.1
 PyMuPDF>=1.23.0
+redis>=5.0.0
 pyparsing==3.2.3
 PyPika==0.48.9
 pyproject_hooks==1.2.0
@@ -151,7 +152,7 @@ toml==0.10.2
 #torch==2.7.0 please use your own torch version when using cuda
 tornado>=6.5
 tqdm==4.67.1
-transformers==4.52.3
+transformers==4.35.3
 typer>=0.15.4
 types-requests>=2.32.0.20240521
 typing_extensions>=4.12.2

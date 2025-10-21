@@ -1,54 +1,38 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import {
-  PageHeader
-} from '../components';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Alert,
   Space,
-  Modal,
   List,
-  Row,
-  Col,
   Spin,
   Empty,
-  message,
   Tooltip,
   Input,
   Typography,
-  Divider,
   Tag,
-  Badge,
   Steps,
-  Progress,
-  Tabs,
   Card,
-  Statistic,
   Button,
   Collapse,
-  Switch
+  Modal
 } from 'antd';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   RobotOutlined,
-  SearchOutlined,
   SendOutlined,
-  HistoryOutlined,
   BulbOutlined,
   FileTextOutlined,
   ClockCircleOutlined,
   ThunderboltOutlined,
-  ReloadOutlined,
+  PlusOutlined,
   ClearOutlined,
-  QuestionCircleOutlined,
   CheckCircleOutlined,
-  EyeOutlined,
-  InfoCircleOutlined,
   UserOutlined,
   RetweetOutlined,
-  SlidersOutlined,
-  ApartmentOutlined,
-  SettingOutlined,
+  EditOutlined,
+  QuestionCircleOutlined,
+  DeleteOutlined,
+  CloseCircleOutlined,
 } from '@ant-design/icons';
 import type {
   AIQAResponse,
@@ -62,13 +46,15 @@ import type {
 } from '../types/apiTypes';
 import { askAIQuestionUnified } from '../services/unifiedAIService';
 import { getVectorDatabaseStats } from '../services/vectorDBService';
-import { getDocumentsByIds } from '../services/documentService';
-import SemanticSearchInterface from '../components/SemanticSearchInterface';
-import AIQASettings, { AIQASettingsConfig, defaultAIQASettings } from '../components/settings/AIQASettings';
+import { getDocumentsByIds, getDocumentById } from '../services/documentService';
+import AIQASettings, { AIQASettingsConfig, defaultAIQASettings, AIQAPresetModes } from '../components/settings/AIQASettings';
+import { DocumentTypeIcon } from '../components/document';
+import AIQADataPanel from '../components/AIQADataPanel';
+import conversationService from '../services/conversationService';
+import type { Conversation } from '../types/conversation';
 
 const { Text, Title, Paragraph } = Typography;
 const { TextArea } = Input;
-const { TabPane } = Tabs;
 const { Panel } = Collapse;
 
 interface AIQAPageProps {
@@ -209,100 +195,6 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
   );
 };
 
-// 參考文件顯示組件
-const SourceDocumentsDisplay: React.FC<{ documents: string[] }> = ({ documents }) => {
-  const [documentNames, setDocumentNames] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    const fetchDocumentNames = async () => {
-      if (!documents || documents.length === 0) return;
-      
-      setLoading(true);
-      try {
-        const documentsData = await getDocumentsByIds(documents);
-        const nameMap: Record<string, string> = {};
-        
-        documentsData.forEach((doc: Document) => {
-          nameMap[doc.id] = doc.filename;
-        });
-        
-        // 對於沒有找到的文件，使用ID作為顯示名稱
-        documents.forEach(docId => {
-          if (!nameMap[docId]) {
-            nameMap[docId] = `文件 ${docId.substring(0, 8)}...`;
-          }
-        });
-        
-        setDocumentNames(nameMap);
-      } catch (error) {
-        console.error('獲取文件名稱失敗:', error);
-        // 如果獲取失敗，使用文件ID的縮短版本
-        const fallbackMap: Record<string, string> = {};
-        documents.forEach(docId => {
-          fallbackMap[docId] = `文件 ${docId.substring(0, 8)}...`;
-        });
-        setDocumentNames(fallbackMap);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchDocumentNames();
-  }, [documents]);
-
-  if (!documents || documents.length === 0) return null;
-  
-  return (
-    <Card 
-      size="small" 
-      title={
-        <span style={{ color: '#1890ff' }}>
-          <FileTextOutlined style={{ marginRight: '0.5em' }} />
-          參考文件 ({documents.length} 個)
-        </span>
-      }
-      style={{ 
-        marginTop: '1em',
-        border: '2px solid #e6f7ff',
-        backgroundColor: '#f6ffed'
-      }}
-      headStyle={{
-        backgroundColor: '#e6f7ff',
-        borderBottom: '1px solid #91d5ff'
-      }}
-    >
-      {loading ? (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1em' }}>
-          <Spin size="small" />
-          <span style={{ marginLeft: '0.5em' }}>載入文件名稱...</span>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5em' }}>
-          {documents.map((docId, index) => (
-            <Tooltip key={index} title={`文件ID: ${docId}`}>
-              <Tag 
-                color="blue" 
-                icon={<FileTextOutlined />}
-                style={{ 
-                  marginBottom: '0.5em',
-                  fontSize: '0.85em',
-                  padding: '0.3em 0.6em',
-                  maxWidth: '200px',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap'
-                }}
-              >
-                {documentNames[docId] || `文件 ${docId.substring(0, 8)}...`}
-              </Tag>
-            </Tooltip>
-          ))}
-        </div>
-      )}
-    </Card>
-  );
-};
 
 const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
   // 狀態管理
@@ -314,6 +206,11 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
   const [isAsking, setIsAsking] = useState(false);
   const [qaHistory, setQAHistory] = useState<QASession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  
+  // 對話管理狀態
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+  const [loadingConversations, setLoadingConversations] = useState(false);
   
   // 新增：AI 問答設定狀態
   const [aiQASettings, setAIQASettings] = useState<AIQASettingsConfig>(() => {
@@ -330,8 +227,13 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
   });
   
   // UI 狀態
-  const [activeTab, setActiveTab] = useState('qa');
-  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [referenceDocuments, setReferenceDocuments] = useState<Record<string, Document>>({});
+  
+  // 文件內容查看模態框狀態
+  const [viewingDocument, setViewingDocument] = useState<Document | null>(null);
+  const [isLoadingDocumentContent, setIsLoadingDocumentContent] = useState(false);
 
   // 示例問題
   const exampleQuestions = [
@@ -343,19 +245,34 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
     "有什麼需要注意的風險或問題嗎？"
   ];
 
+  // 載入對話列表
+  const loadConversations = useCallback(async () => {
+    try {
+      setLoadingConversations(true);
+      const response = await conversationService.listConversations(0, 50);
+      setConversations(response.conversations);
+    } catch (error) {
+      console.error('載入對話列表失敗:', error);
+      showPCMessage('載入對話列表失敗', 'error');
+    } finally {
+      setLoadingConversations(false);
+    }
+  }, [showPCMessage]);
+
   // 載入初始數據
   const loadData = useCallback(async () => {
     try {
       setIsLoading(true);
       const stats = await getVectorDatabaseStats();
       setVectorStats(stats);
+      await loadConversations();
     } catch (error) {
       console.error('載入 AI 問答頁面數據失敗:', error);
       showPCMessage('載入數據失敗', 'error');
     } finally {
       setIsLoading(false);
     }
-  }, [showPCMessage]);
+  }, [showPCMessage, loadConversations]);
 
   // 保存設定到 localStorage
   const handleSettingsChange = (newSettings: AIQASettingsConfig) => {
@@ -383,9 +300,25 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
 
     try {
       setIsAsking(true);
+      
+      // 如果沒有當前對話，先創建一個新對話
+      let conversationId = currentConversationId;
+      if (!conversationId) {
+        try {
+          const newConversation = await conversationService.createConversation(question.trim());
+          conversationId = newConversation.id;
+          setCurrentConversationId(conversationId);
+          await loadConversations(); // 重新載入對話列表
+        } catch (error) {
+          console.error('創建對話失敗:', error);
+          showPCMessage('創建對話失敗，但將繼續處理問題', 'info');
+        }
+      }
+      
       const request: AIQARequestUnified = {
         question: question.trim(),
         session_id: currentSessionId || undefined,
+        conversation_id: conversationId || undefined,
         // 使用用戶設定的參數
         use_semantic_search: aiQASettings.use_semantic_search,
         use_structured_filter: aiQASettings.use_structured_filter,
@@ -434,6 +367,11 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
       setCurrentSessionId(responseContent.session_id || null);
       setQuestion('');
       
+      // 更新對話列表（對話已在後端更新）
+      if (conversationId) {
+        await loadConversations();
+      }
+      
       showPCMessage(`問答完成，使用了 ${responseContent.tokens_used} 個 token`, 'success');
     } catch (error) {
       console.error('AI 問答失敗:', error);
@@ -449,16 +387,122 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
     setQuestion(exampleQuestion);
   };
 
-  // 新建會話
-  const startNewSession = () => {
+  // 新建對話
+  const startNewConversation = async () => {
+    setCurrentConversationId(null);
     setCurrentSessionId(null);
-    showPCMessage('已開始新的對話會話', 'info');
+    setQAHistory([]);
+    showPCMessage('請輸入問題以開始新對話', 'info');
+  };
+  
+  // 切換對話
+  const switchConversation = async (conversationId: string) => {
+    try {
+      setCurrentConversationId(conversationId);
+      setQAHistory([]); // 清空當前顯示
+      
+      // 載入對話的消息歷史
+      const conversationDetail = await conversationService.getConversation(conversationId);
+      
+      console.log('載入對話詳情:', {
+        id: conversationDetail.id,
+        messageCount: conversationDetail.messages.length,
+        cachedDocuments: conversationDetail.cached_documents
+      });
+      
+      // 將消息轉換為 QASession 格式顯示
+      const sessions: QASession[] = [];
+      const cachedDocs = conversationDetail.cached_documents || [];
+      
+      for (let i = 0; i < conversationDetail.messages.length; i += 2) {
+        const userMsg = conversationDetail.messages[i];
+        const assistantMsg = conversationDetail.messages[i + 1];
+        
+        if (userMsg && assistantMsg && userMsg.role === 'user' && assistantMsg.role === 'assistant') {
+          sessions.push({
+            id: `qa_${i}`,
+            question: userMsg.content,
+            answer: assistantMsg.content,
+            timestamp: new Date(assistantMsg.timestamp),
+            sourceDocuments: cachedDocs,  // 使用緩存的文檔ID
+            tokensUsed: assistantMsg.tokens_used || 0,
+            processingTime: 0,
+          });
+        }
+      }
+      
+      setQAHistory(sessions.reverse());
+      showPCMessage(`已切換對話 (${cachedDocs.length} 個緩存文檔)`, 'success');
+    } catch (error) {
+      console.error('切換對話失敗:', error);
+      showPCMessage('切換對話失敗', 'error');
+    }
+  };
+  
+  // 刪除對話
+  const handleDeleteConversation = async (conversationId: string) => {
+    Modal.confirm({
+      title: '確認刪除對話？',
+      content: '刪除後無法恢復',
+      okText: '確認刪除',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await conversationService.deleteConversation(conversationId);
+          await loadConversations();
+          
+          // 如果刪除的是當前對話，清空狀態
+          if (conversationId === currentConversationId) {
+            setCurrentConversationId(null);
+            setQAHistory([]);
+          }
+          
+          showPCMessage('對話已刪除', 'success');
+        } catch (error) {
+          console.error('刪除對話失敗:', error);
+          showPCMessage('刪除對話失敗', 'error');
+        }
+      },
+    });
+  };
+  
+  // 從緩存中移除文檔
+  const handleRemoveCachedDocument = async (documentId: string, event: React.MouseEvent) => {
+    event.stopPropagation(); // 防止觸發查看文檔
+    
+    if (!currentConversationId) {
+      showPCMessage('請先選擇一個對話', 'error');
+      return;
+    }
+    
+    Modal.confirm({
+      title: '確認移除此文檔？',
+      content: '移除後，下次提問時將不會優先使用此文檔',
+      okText: '確認移除',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await conversationService.removeCachedDocument(currentConversationId, documentId);
+          
+          // 更新 QA 歷史，移除文檔
+          setQAHistory(prev => prev.map(session => ({
+            ...session,
+            sourceDocuments: session.sourceDocuments.filter(id => id !== documentId)
+          })));
+          
+          showPCMessage('文檔已從緩存中移除', 'success');
+        } catch (error) {
+          console.error('移除緩存文檔失敗:', error);
+          showPCMessage('移除緩存文檔失敗', 'error');
+        }
+      }
+    });
   };
 
-  // 清除 QA 歷史
+  // 清除當前顯示的 QA 歷史（不刪除對話）
   const clearQAHistory = () => {
     setQAHistory([]);
-    showPCMessage('已清除問答歷史記錄', 'info');
+    showPCMessage('已清除當前顯示', 'info');
   };
   
   // 組件掛載時載入數據
@@ -466,428 +510,47 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
     loadData();
   }, [loadData]);
 
-  // 渲染統計卡片
-  const renderStatsCards = () => (
-    <Row gutter={[16, 16]} className="mb-6">
-      <Col xs={12} sm={6}>
-        <Card className="text-center">
-          <Statistic
-            title="可用向量"
-            value={vectorStats?.total_vectors || 0}
-            prefix={<FileTextOutlined />}
-            valueStyle={{ color: vectorStats?.total_vectors ? '#3f8600' : '#cf1322' }}
-          />
-        </Card>
-      </Col>
-      <Col xs={12} sm={6}>
-        <Card className="text-center">
-          <Statistic
-            title="問答記錄"
-            value={qaHistory.length}
-            prefix={<RobotOutlined />}
-            valueStyle={{ color: '#1890ff' }}
-          />
-        </Card>
-      </Col>
-      <Col xs={12} sm={6}>
-        <Card className="text-center">
-          <Statistic
-            title="搜索調用" 
-            value={"N/A"}
-            prefix={<SearchOutlined />}
-            valueStyle={{ color: '#722ed1' }}
-          />
-        </Card>
-      </Col>
-      <Col xs={12} sm={6}>
-        <Card className="text-center">
-          <Statistic
-            title="模型設備"
-            value={vectorStats?.embedding_model.device?.toUpperCase() || 'N/A'}
-            prefix={<ThunderboltOutlined />}
-            valueStyle={{ 
-              color: vectorStats?.embedding_model.device === 'cuda' ? '#52c41a' : '#faad14' 
-            }}
-          />
-        </Card>
-      </Col>
-    </Row>
-  );
+  // 自動滾動到底部
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
-  // 渲染 AI 問答介面
-  const renderQAInterface = () => (
-    <div className="space-y-6">
-      {/* AI 問答參數設定 */}
-      <AIQASettings
-        settings={aiQASettings}
-        onChange={handleSettingsChange}
-        onReset={handleSettingsReset}
-      />
+  useEffect(() => {
+    scrollToBottom();
+  }, [qaHistory]);
 
-      {/* 問題輸入區域 */}
-      <Card title="AI 智能問答" extra={
-        <Space>
-          <Button
-            onClick={startNewSession}
-            icon={<ReloadOutlined />}
-          >
-            新對話
-          </Button>
-          <Button
-            onClick={() => setShowHistoryModal(true)}
-            icon={<HistoryOutlined />}
-          >
-            歷史記錄
-          </Button>
-        </Space>
-      }>
-        <div className="space-y-4">
-          <TextArea
-            placeholder="請輸入您想要問的問題..."
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            rows={3}
-            onPressEnter={(e) => {
-              if (e.ctrlKey || e.metaKey) {
-                handleAskQuestion();
-              }
-            }}
-          />
-          
-          <div className="flex justify-between items-center">
-            <Space>
-              <Text type="secondary" className="hidden sm:inline">按 Ctrl+Enter 發送</Text>
-              <Text type="secondary" className="text-xs">
-                當前模式: <Tag color={aiQASettings.use_ai_detailed_query ? 'green' : 'default'}>
-                  {aiQASettings.use_ai_detailed_query ? '詳細查詢' : '快速查詢'}
-                </Tag>
-              </Text>
-            </Space>
-            <Space>
-              <Button
-                onClick={handleAskQuestion}
-                loading={isAsking}
-                icon={<SendOutlined />}
-                disabled={!question.trim() || !vectorStats?.total_vectors}
-              >
-                提問
-              </Button>
-            </Space>
-          </div>
+  // 獲取參考文檔的詳細信息
+  useEffect(() => {
+    const fetchReferenceDocuments = async () => {
+      if (qaHistory.length > 0 && qaHistory[0].sourceDocuments && qaHistory[0].sourceDocuments.length > 0) {
+        try {
+          const docs = await getDocumentsByIds(qaHistory[0].sourceDocuments);
+          const docsMap: Record<string, Document> = {};
+          docs.forEach((doc: Document) => {
+            docsMap[doc.id] = doc;
+          });
+          setReferenceDocuments(docsMap);
+        } catch (error) {
+          console.error('獲取參考文檔失敗:', error);
+        }
+      }
+    };
+    fetchReferenceDocuments();
+  }, [qaHistory]);
 
-          {(!vectorStats || vectorStats.total_vectors === 0) && (
-            <Alert
-              message="向量數據庫為空"
-              description="請先在向量數據庫管理頁面中向量化一些文檔，然後回來進行問答。"
-              type="warning"
-              showIcon
-              className="ai-qa-alert"
-            />
-          )}
-        </div>
-      </Card>
-
-      {/* 示例問題 */}
-      <Card title="示例問題" size="small">
-        <div className="flex flex-wrap gap-2">
-          {exampleQuestions.map((example, index) => (
-            <Tag
-              key={index}
-              className="cursor-pointer mb-2"
-              onClick={() => handleExampleQuestion(example)}
-              icon={<BulbOutlined />}
-            >
-              {example}
-            </Tag>
-          ))}
-        </div>
-      </Card>
-
-      {/* 問答歷史 */}
-      {qaHistory.length > 0 && (
-        <Card 
-          title="最近的問答記錄" 
-          extra={
-            <Button 
-              onClick={clearQAHistory} 
-              icon={<ClearOutlined />}
-              danger
-            >
-              清除歷史
-            </Button>
-          }
-        >
-          <List
-            dataSource={qaHistory.slice(0, 3)}
-            renderItem={(session) => (
-              <List.Item>
-                <List.Item.Meta
-                  avatar={<RobotOutlined className="text-lg text-blue-500" />}
-                  title={
-                    <div className="flex justify-between items-start">
-                      <Text strong className="text-sm">{session.question}</Text>
-                      <div className="flex items-center space-x-2 text-xs">
-                        <Tag color="blue" className="text-xs">
-                          {session.tokensUsed} tokens
-                        </Tag>
-                        <Tag color="green" className="text-xs">
-                          {session.processingTime.toFixed(2)}s
-                        </Tag>
-                        {session.confidenceScore && (
-                          <Tag color="purple" className="text-xs">
-                            {(session.confidenceScore * 100).toFixed(0)}%
-                          </Tag>
-                        )}
-                      </div>
-                    </div>
-                  }
-                  description={
-                    <div className="mt-2">
-                      <div className="text-sm mb-2">
-                        <MarkdownRenderer content={session.answer} />
-                      </div>
-                      <SourceDocumentsDisplay documents={session.sourceDocuments} />
-                      <Collapse ghost size="small" className="mb-2">
-                        {session.detailedDocumentDataFromAiQuery && (
-                          <Panel
-                            header="AI 詳細查詢結果"
-                            key="detailed-query"
-                            extra={<Tooltip title="AI 為了回答問題，對特定文檔進行了深入查詢，並獲取了以下精確信息。"><ApartmentOutlined style={{color: '#8A2BE2'}} /></Tooltip>}
-                          >
-                            <div className="space-y-2">
-                              {session.detailedQueryReasoning && (
-                                <div>
-                                  <Text strong>AI 查詢原因:</Text>
-                                  <Paragraph className="mt-1 p-2 bg-surface-100 rounded text-sm">
-                                    {session.detailedQueryReasoning}
-                                  </Paragraph>
-                                </div>
-                              )}
-                              <div>
-                                <Text strong>查詢到的詳細資料:</Text>
-                                <div className="mt-1 p-2 bg-surface-100 rounded text-xs max-h-48 overflow-y-auto">
-                                  <pre className="whitespace-pre-wrap font-mono">{JSON.stringify(session.detailedDocumentDataFromAiQuery, null, 2)}</pre>
-                                </div>
-                              </div>
-                            </div>
-                          </Panel>
-                        )}
-                        {session.queryRewriteResult && (
-                          <Panel 
-                            header="查詢重寫過程" 
-                            key="query-rewrite"
-                            extra={<Tooltip title="AI如何理解並優化您的問題"><InfoCircleOutlined style={{color: '#1890ff'}} /></Tooltip>}
-                          >
-                            {/* 新增：顯示AI分析結果 */}
-                            {(session.queryRewriteResult.reasoning || 
-                              session.queryRewriteResult.query_granularity || 
-                              session.queryRewriteResult.search_strategy_suggestion) && (
-                              <div className="mb-4 p-3 bg-blue-50 rounded-lg border-l-4 border-blue-400">
-                                <div className="space-y-2">
-                                  {session.queryRewriteResult.reasoning && (
-                                    <div>
-                                      <Text strong style={{color: '#1890ff'}}>🧠 AI分析推理：</Text>
-                                      <div className="mt-1 text-sm text-gray-700">
-                                        {session.queryRewriteResult.reasoning}
-                                      </div>
-                                    </div>
-                                  )}
-                                  <div className="flex flex-wrap gap-2">
-                                    {session.queryRewriteResult.query_granularity && (
-                                      <div>
-                                        <Text strong style={{color: '#52c41a'}}>📊 問題粒度：</Text>
-                                        <Tag color={
-                                          session.queryRewriteResult.query_granularity === 'thematic' ? 'blue' :
-                                          session.queryRewriteResult.query_granularity === 'detailed' ? 'green' : 'orange'
-                                        }>
-                                          {session.queryRewriteResult.query_granularity === 'thematic' ? '主題級' :
-                                           session.queryRewriteResult.query_granularity === 'detailed' ? '細節級' : '不確定'}
-                                        </Tag>
-                                      </div>
-                                    )}
-                                    {session.queryRewriteResult.search_strategy_suggestion && (
-                                      <div>
-                                        <Text strong style={{color: '#722ed1'}}>🎯 建議策略：</Text>
-                                        <Tag color={
-                                          session.queryRewriteResult.search_strategy_suggestion === 'summary_only' ? 'cyan' :
-                                          session.queryRewriteResult.search_strategy_suggestion === 'rrf_fusion' ? 'purple' : 'magenta'
-                                        }>
-                                          {session.queryRewriteResult.search_strategy_suggestion === 'summary_only' ? '摘要專用' :
-                                           session.queryRewriteResult.search_strategy_suggestion === 'rrf_fusion' ? 'RRF融合' : '關鍵詞增強RRF'}
-                                        </Tag>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                            
-                            <Steps direction="vertical" size="small" current={session.queryRewriteResult.rewritten_queries.length}>
-                              <Steps.Step 
-                                title="原始問題" 
-                                description={session.queryRewriteResult.original_query} 
-                                icon={<UserOutlined />} 
-                              />
-                              {session.queryRewriteResult.rewritten_queries.map((rq, idx) => (
-                                <Steps.Step 
-                                  key={`rewrite-${idx}`} 
-                                  title={`重寫查詢 ${idx + 1}`} 
-                                  description={rq} 
-                                  icon={<RetweetOutlined />} 
-                                />
-                              ))}
-                              {session.queryRewriteResult.intent_analysis && (
-                                <Steps.Step 
-                                  title="意圖分析" 
-                                  description={session.queryRewriteResult.intent_analysis} 
-                                  icon={<BulbOutlined />} 
-                                />
-                              )}
-                              {session.queryRewriteResult.extracted_parameters && 
-                               Object.keys(session.queryRewriteResult.extracted_parameters).length > 0 && (
-                                <Steps.Step 
-                                  title="提取參數" 
-                                  icon={<SlidersOutlined />}
-                                  description={
-                                    <List
-                                      size="small"
-                                      dataSource={Object.entries(session.queryRewriteResult.extracted_parameters)}
-                                      renderItem={([key, value]) => (
-                                        <List.Item>
-                                          <Text strong style={{fontSize: '0.8em'}}>{key}: </Text>
-                                          <Text style={{fontSize: '0.8em'}}>{JSON.stringify(value)}</Text>
-                                        </List.Item>
-                                      )}
-                                    />
-                                  }
-                                />
-                              )}
-                            </Steps>
-                          </Panel>
-                        )}
-                        {session.semanticSearchContexts && session.semanticSearchContexts.length > 0 && (
-                          <Panel 
-                            header={`向量搜索初步結果 (${session.semanticSearchContexts.length} 個)`} 
-                            key="semantic-search-context"
-                            extra={<Tooltip title="向量數據庫返回的直接匹配結果"><SearchOutlined style={{color: '#faad14'}} /></Tooltip>}
-                          >
-                            <List
-                              dataSource={session.semanticSearchContexts}
-                              renderItem={(doc, index) => (
-                                <List.Item>
-                                  <List.Item.Meta
-                                    title={<Text strong style={{fontSize: '0.9em'}}>{`匹配 ${index + 1}: ${doc.document_id} (相似度: ${(doc.similarity_score * 100).toFixed(1)}%)`}</Text>}
-                                    description={<Paragraph ellipsis={{ rows: 2, expandable: true, symbol: '展開' }} style={{fontSize: '0.85em'}}>{doc.summary_or_chunk_text}</Paragraph>}
-                                  />
-                                </List.Item>
-                              )}
-                            />
-                          </Panel>
-                        )}
-                        {session.llmContextDocuments && session.llmContextDocuments.length > 0 && (
-                          <Panel 
-                            header={`LLM 使用的上下文 (${session.llmContextDocuments.length} 個片段)`} 
-                            key="llm-context"
-                            extra={<Tooltip title="AI回答時實際參考的文檔片段"><FileTextOutlined style={{color: '#52c41a'}} /></Tooltip>}
-                          >
-                            <List
-                              dataSource={session.llmContextDocuments}
-                              renderItem={(doc, index) => (
-                                <List.Item>
-                                  <List.Item.Meta
-                                    title={<Text strong style={{fontSize: '0.9em'}}>{`片段 ${index + 1}: ${doc.document_id} (來源: ${doc.source_type})`}</Text>}
-                                    description={<Paragraph ellipsis={{ rows: 2, expandable: true, symbol: '展開' }} style={{fontSize: '0.85em'}}>{doc.content_used}</Paragraph>}
-                                  />
-                                </List.Item>
-                              )}
-                            />
-                          </Panel>
-                        )}
-                        {session.usedSettings && (
-                          <Panel 
-                            header="使用的參數設定" 
-                            key="used-settings"
-                            extra={<Tooltip title="本次查詢使用的具體參數設定"><SettingOutlined style={{color: '#52c41a'}} /></Tooltip>}
-                          >
-                            <Row gutter={[16, 8]}>
-                              <Col xs={12} sm={6}>
-                                <Text strong>詳細查詢:</Text><br />
-                                <Tag color={session.usedSettings.use_ai_detailed_query ? 'green' : 'default'}>
-                                  {session.usedSettings.use_ai_detailed_query ? '啟用' : '禁用'}
-                                </Tag>
-                              </Col>
-                              <Col xs={12} sm={6}>
-                                <Text strong>上下文數量:</Text><br />
-                                <Tag color="blue">{session.usedSettings.context_limit}</Tag>
-                              </Col>
-                              <Col xs={12} sm={6}>
-                                <Text strong>相似度閾值:</Text><br />
-                                <Tag color="purple">{(session.usedSettings.similarity_threshold * 100).toFixed(0)}%</Tag>
-                              </Col>
-                              <Col xs={12} sm={6}>
-                                <Text strong>查詢重寫數:</Text><br />
-                                <Tag color="orange">{session.usedSettings.query_rewrite_count}</Tag>
-                              </Col>
-                              <Col xs={12} sm={6}>
-                                <Text strong>候選文件數:</Text><br />
-                                <Tag color="cyan">{session.usedSettings.max_documents_for_selection}</Tag>
-                              </Col>
-                              <Col xs={12} sm={6}>
-                                <Text strong>AI選擇限制:</Text><br />
-                                <Tag color="magenta">{session.usedSettings.ai_selection_limit}</Tag>
-                              </Col>
-                              <Col xs={12} sm={6}>
-                                <Text strong>詳細文本長度:</Text><br />
-                                <Tag color="gold">{(session.usedSettings.detailed_text_max_length / 1000).toFixed(1)}K</Tag>
-                              </Col>
-                              <Col xs={12} sm={6}>
-                                <Text strong>查詢擴展:</Text><br />
-                                <Tag color={session.usedSettings.enable_query_expansion ? 'green' : 'default'}>
-                                  {session.usedSettings.enable_query_expansion ? '啟用' : '禁用'}
-                                </Tag>
-                              </Col>
-                              {session.usedSettings.prompt_input_max_length && (
-                                <Col xs={12} sm={6}>
-                                  <Text strong>提示詞輸入限制:</Text><br />
-                                  <Tag color="volcano">{(session.usedSettings.prompt_input_max_length / 1000).toFixed(1)}K</Tag>
-                                </Col>
-                              )}
-                            </Row>
-                          </Panel>
-                        )}
-                      </Collapse>
-
-
-                      <Text type="secondary" className="text-xs">
-                        {session.timestamp.toLocaleString('zh-TW')}
-                      </Text>
-                    </div>
-                  }
-                />
-              </List.Item>
-            )}
-          />
-          {qaHistory.length > 3 && (
-            <div className="text-center mt-4">
-              <Button 
-                onClick={() => setShowHistoryModal(true)}
-                icon={<HistoryOutlined />}
-              >
-                查看全部 {qaHistory.length} 條記錄
-              </Button>
-            </div>
-          )}
-        </Card>
-      )}
-    </div>
-  );
-
-  // 渲染語義搜索介面
-  const renderSearchInterface = () => (
-    <SemanticSearchInterface
-      showPCMessage={showPCMessage}
-    />
-  );
+  // 處理點擊文件卡片查看內容
+  const handleViewDocument = async (docId: string) => {
+    setIsLoadingDocumentContent(true);
+    try {
+      const doc = await getDocumentById(docId);
+      setViewingDocument(doc);
+    } catch (error) {
+      console.error('獲取文件內容失敗:', error);
+      showPCMessage('無法載入文件內容', 'error');
+    } finally {
+      setIsLoadingDocumentContent(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -897,292 +560,540 @@ const AIQAPage: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
     );
   }
 
+  // 應用預設模式
+  const applyPresetMode = (mode: keyof typeof AIQAPresetModes) => {
+    handleSettingsChange(AIQAPresetModes[mode].settings);
+  };
+
+  // 獲取當前模式
+  const getCurrentMode = (): keyof typeof AIQAPresetModes => {
+    const settingsStr = JSON.stringify(aiQASettings);
+    if (settingsStr === JSON.stringify(AIQAPresetModes.low.settings)) return 'low';
+    if (settingsStr === JSON.stringify(AIQAPresetModes.high.settings)) return 'high';
+    return 'medium';
+  };
+
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex justify-between items-center mb-6">
-        <PageHeader title="AI 智能問答與知識探索" />
-        <Space>
+    <div className="h-screen flex overflow-hidden bg-gray-50">
+      {/* 左側：完整的歷史對話側邊欄 */}
+      <div className="w-64 bg-white border-r border-gray-200 flex flex-col">
+        {/* 標題區 */}
+        <div className="p-4 border-b border-gray-200">
+          <div className="flex items-center space-x-2 mb-3">
+            <RobotOutlined className="text-xl text-blue-500" />
+            <Title level={5} className="mb-0">AI 智能助手</Title>
+          </div>
+          
+          {/* 新對話按鈕 */}
           <Button
-            onClick={loadData}
-            icon={<ReloadOutlined />}
-            loading={isLoading}
+            type="default"
+            block
+            icon={<PlusOutlined />}
+            onClick={startNewConversation}
+            className="flex items-center justify-center"
           >
-            刷新數據
+            新的對話
           </Button>
-        </Space>
+        </div>
+
+        {/* 對話列表 */}
+        <div className="flex-1 overflow-y-auto">
+          {loadingConversations ? (
+            <div className="flex items-center justify-center py-8">
+              <Spin size="small" />
+            </div>
+          ) : conversations.length > 0 ? (
+            <div className="p-2">
+              {conversations.map((conversation) => (
+                <div
+                  key={conversation.id}
+                  className={`px-3 py-3 mb-1 cursor-pointer rounded-lg hover:bg-gray-100 transition-colors group ${
+                    conversation.id === currentConversationId ? 'bg-blue-50 border border-blue-200' : 'border border-transparent'
+                  }`}
+                  onClick={() => switchConversation(conversation.id)}
+                >
+                  <div className="flex items-start space-x-2">
+                    <EditOutlined className="text-gray-400 mt-1 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-gray-900 truncate font-medium">
+                        {conversation.title}
+                      </div>
+                      <div className="flex items-center justify-between mt-1">
+                        <Text type="secondary" className="text-xs">
+                          {conversation.message_count} 條消息
+                        </Text>
+                        <Text type="secondary" className="text-xs">
+                          {new Date(conversation.updated_at).toLocaleDateString('zh-TW', { 
+                            month: 'numeric', 
+                            day: 'numeric' 
+                          })}
+                        </Text>
+                      </div>
+                    </div>
+                    <Button
+                      type="text"
+                      size="small"
+                      danger
+                      icon={<ClearOutlined />}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteConversation(conversation.id);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description="暫無對話記錄"
+              className="mt-8"
+            />
+          )}
+        </div>
+
+        {/* 底部信息 */}
+        <div className="p-3 border-t border-gray-200">
+          <Button
+            block
+            icon={<ClearOutlined />}
+            onClick={clearQAHistory}
+            disabled={qaHistory.length === 0}
+            size="small"
+          >
+            清除歷史
+          </Button>
+        </div>
       </div>
 
-      {/* 統計卡片 */}
-      {renderStatsCards()}
+      {/* 右側：主內容區域 */}
+      <div className="flex-1 flex flex-col">
+        {/* 頂部控制欄 */}
+        <div className="bg-white border-b border-gray-200 px-6 py-3">
+          <div className="flex items-center space-x-3">
+            <Text type="secondary" className="text-sm">AI 模式:</Text>
+              <Button
+              type={getCurrentMode() === 'low' ? 'primary' : 'default'}
+              icon={<ThunderboltOutlined />}
+              onClick={() => applyPresetMode('low')}
+              size="small"
+            >
+              輕量
+              </Button>
+            <Button
+              type={getCurrentMode() === 'medium' ? 'primary' : 'default'}
+              onClick={() => applyPresetMode('medium')}
+              size="small"
+            >
+              平衡
+            </Button>
+            <Button
+              type={getCurrentMode() === 'high' ? 'primary' : 'default'}
+              onClick={() => applyPresetMode('high')}
+              size="small"
+            >
+              高精度
+            </Button>
+            <Tooltip 
+              title="詳細參數設定"
+              overlayInnerStyle={{
+                backgroundColor: '#1f2937',
+                color: '#ffffff',
+                fontSize: '13px',
+                fontWeight: 500,
+              }}
+            >
+              <Button
+                type="text"
+                icon={<QuestionCircleOutlined />}
+                onClick={() => setShowSettingsModal(true)}
+                size="small"
+              />
+            </Tooltip>
+          </div>
+        </div>
 
-      {/* 主要功能標籤頁 */}
-      <Card className="shadow-lg">
-        <Tabs
-          activeKey={activeTab}
-          onChange={setActiveTab}
-          items={[
-            {
-              key: 'qa',
-              label: (
-                <span className="flex items-center">
-                  <RobotOutlined className="mr-2" />
-                  AI 問答
-                </span>
-              ),
-              children: renderQAInterface()
-            },
-            {
-              key: 'search',
-              label: (
-                <span className="flex items-center">
-                  <SearchOutlined className="mr-2" />
-                  知識搜索
-                </span>
-              ),
-              children: renderSearchInterface()
-            }
-          ]}
-        />
-      </Card>
+        {/* 主內容區：對話 + 右側面板 */}
+        <div className="flex-1 flex overflow-hidden">
+          {/* 對話內容區域 */}
+          <div className="flex-1 overflow-y-auto p-6">
+          {qaHistory.length === 0 ? (
+            // 空狀態 - 顯示示例問題
+            <div className="max-w-3xl mx-auto mt-20">
+              <div className="text-center mb-8">
+                <RobotOutlined className="text-6xl text-blue-500 mb-4" />
+                <Title level={3}>AI 智能助手</Title>
+                <Text type="secondary">您可以問我任何關於文檔的問題</Text>
+              </div>
 
-      {/* 歷史記錄模態框 (QA歷史) */}
-      <Modal
-        title="問答歷史記錄"
-        open={showHistoryModal}
-        onCancel={() => setShowHistoryModal(false)}
-        footer={[
-          <Button key="close" onClick={() => setShowHistoryModal(false)}>
-            關閉
-          </Button>,
-          <Button key="clear" danger onClick={clearQAHistory}>
-            清除所有記錄
-          </Button>
-        ]}
-        width={800}
-      >
-        {qaHistory.length > 0 ? (
-          <List
-            dataSource={qaHistory}
-            renderItem={(session) => (
-              <List.Item>
-                <List.Item.Meta
-                  avatar={<RobotOutlined className="text-lg text-blue-500" />}
-                  title={<Text strong>{session.question}</Text>}
-                  description={
-                    <div className="space-y-2">
-                      <div>
-                        <MarkdownRenderer content={session.answer} />
+              {/* 示例問題卡片 */}
+              <div className="grid grid-cols-2 gap-4 mt-8">
+                {exampleQuestions.map((example, index) => (
+                  <Card
+                    key={index}
+                    hoverable
+                    className="cursor-pointer"
+                    onClick={() => handleExampleQuestion(example)}
+                  >
+                    <div className="flex items-start">
+                      <BulbOutlined className="text-yellow-500 mr-2 mt-1" />
+                      <Text className="text-sm">{example}</Text>
+                    </div>
+                  </Card>
+                ))}
+          </div>
+
+          {(!vectorStats || vectorStats.total_vectors === 0) && (
+            <Alert
+              message="向量數據庫為空"
+              description="請先在向量數據庫管理頁面中向量化一些文檔，然後回來進行問答。"
+              type="warning"
+              showIcon
+                  className="mt-8"
+            />
+          )}
+        </div>
+          ) : (
+            // 對話記錄 - 聊天氣泡樣式
+            <div className="max-w-4xl mx-auto space-y-6">
+              {[...qaHistory].reverse().map((session) => (
+                <div key={session.id} className="space-y-4">
+                  {/* 用戶問題氣泡 */}
+                  <div className="flex justify-end">
+                    <div className="max-w-[70%] bg-blue-500 text-white rounded-2xl px-4 py-3 shadow-sm">
+                      <div className="flex items-start">
+                        <div className="flex-1">
+                          <Text className="text-white font-medium">{session.question}</Text>
+        </div>
+                        <UserOutlined className="ml-2 mt-1 text-white" />
                       </div>
-                      <SourceDocumentsDisplay documents={session.sourceDocuments} />
-                      <Collapse ghost size="small" className="mb-2">
-                        {session.detailedDocumentDataFromAiQuery && (
-                          <Panel
-                            header="AI 詳細查詢結果"
-                            key="modal-detailed-query"
-                            extra={<Tooltip title="AI 為了回答問題，對特定文檔進行了深入查詢，並獲取了以下精確信息。"><ApartmentOutlined style={{color: '#8A2BE2'}} /></Tooltip>}
-                          >
-                            <div className="space-y-2">
-                              {session.detailedQueryReasoning && (
-                                <div>
-                                  <Text strong>AI 查詢原因:</Text>
-                                  <Paragraph className="mt-1 p-2 bg-surface-100 rounded text-sm">
-                                    {session.detailedQueryReasoning}
-                                  </Paragraph>
-                                </div>
+                    </div>
+                  </div>
+
+                  {/* AI 回答氣泡 */}
+                  <div className="flex justify-start">
+                    <div className="max-w-[80%] bg-white rounded-2xl px-4 py-3 shadow-sm border border-gray-200">
+                      <div className="flex items-start">
+                        <RobotOutlined className="text-blue-500 mr-2 mt-1 text-lg" />
+                        <div className="flex-1">
+                          <MarkdownRenderer content={session.answer} />
+
+                          {/* 時間戳 */}
+                          <Text type="secondary" className="text-xs block mt-3">
+                            {session.timestamp.toLocaleString('zh-TW')}
+                          </Text>
+                        </div>
+                                    </div>
+                                      </div>
+                                      </div>
+                                  </div>
+              ))}
+              {/* 自動滾動錨點 */}
+              <div ref={messagesEndRef} />
+                              </div>
+                            )}
+    </div>
+
+          {/* 右側面板：處理數據 + 參考資料 */}
+          <div className="w-96 border-l border-gray-200 bg-white flex flex-col overflow-y-auto">
+            <Collapse
+              defaultActiveKey={['processing-data', 'references']}
+              ghost
+            >
+              {/* 處理數據面板 */}
+              {qaHistory.length > 0 && (
+                <Panel
+                  header={
+                    <div className="flex items-center space-x-2">
+                      <BulbOutlined className="text-blue-500" />
+                      <Text strong>處理過程數據</Text>
+                    </div>
+                  }
+                  key="processing-data"
+                  className="flex-1"
+                >
+                  <AIQADataPanel
+                    queryRewriteResult={qaHistory[0].queryRewriteResult}
+                    semanticSearchContexts={qaHistory[0].semanticSearchContexts}
+                    llmContextDocuments={qaHistory[0].llmContextDocuments}
+                    tokensUsed={qaHistory[0].tokensUsed}
+                    processingTime={qaHistory[0].processingTime}
+                    confidenceScore={qaHistory[0].confidenceScore}
+                    detailedDocumentDataFromAiQuery={qaHistory[0].detailedDocumentDataFromAiQuery}
+                    detailedQueryReasoning={qaHistory[0].detailedQueryReasoning}
+                  />
+                </Panel>
+              )}
+
+              {/* 參考資料面板 */}
+              <Panel 
+                header={
+                  <div className="flex items-center space-x-2">
+                    <FileTextOutlined className="text-green-500" />
+                    <Text strong>參考資料</Text>
+                    {qaHistory.length > 0 && qaHistory[0].sourceDocuments && (
+                      <Tag color="green" className="ml-2 text-xs">
+                        {qaHistory[0].sourceDocuments.length} 個文檔
+                      </Tag>
+                    )}
+                  </div>
+                }
+                key="references"
+              >
+                <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
+                  {qaHistory.length > 0 && qaHistory[0].sourceDocuments && qaHistory[0].sourceDocuments.length > 0 ? (
+                    qaHistory[0].sourceDocuments.map((docId, index) => {
+                      const doc = referenceDocuments[docId];
+                      return (
+                        <Card
+                          key={index}
+                          size="small"
+                          className="cursor-pointer hover:shadow-md transition-shadow relative group"
+                          bodyStyle={{ padding: '8px 12px' }}
+                          onClick={() => handleViewDocument(docId)}
+                        >
+                          {/* 刪除按鈕 */}
+                          {currentConversationId && (
+                            <Button
+                              type="text"
+                              size="small"
+                              danger
+                              icon={<CloseCircleOutlined />}
+                              className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                              onClick={(e) => handleRemoveCachedDocument(docId, e)}
+                              style={{ padding: '2px 4px' }}
+                            />
+                          )}
+                          
+                          <div className="flex items-start space-x-2">
+                            {doc ? (
+                              <DocumentTypeIcon
+                                fileType={doc.file_type}
+                                fileName={doc.filename}
+                                className="w-8 h-8 flex-shrink-0"
+                              />
+                            ) : (
+                              <FileTextOutlined className="text-green-500 mt-1 flex-shrink-0 text-xl" />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <Text strong className="text-xs block truncate">
+                                {doc ? doc.filename : `文檔 ${index + 1}`}
+                              </Text>
+                              {doc && doc.file_type && (
+                                <Text type="secondary" className="text-xs block">
+                                  {doc.file_type}
+                                </Text>
                               )}
-                              <div>
-                                <Text strong>查詢到的詳細資料:</Text>
-                                <div className="mt-1 p-2 bg-surface-100 rounded text-xs max-h-48 overflow-y-auto">
-                                  <pre className="whitespace-pre-wrap font-mono">{JSON.stringify(session.detailedDocumentDataFromAiQuery, null, 2)}</pre>
-                                </div>
+                              <div className="flex items-center justify-between mt-1">
+                                <Tag color="green" className="text-xs">參考文檔</Tag>
+                                <Text type="secondary" className="text-xs">
+                                  {doc && doc.updated_at
+                                    ? new Date(doc.updated_at).toLocaleDateString('zh-TW', {
+                                        month: 'numeric',
+                                        day: 'numeric',
+                                      })
+                                    : ''}
+                                </Text>
                               </div>
                             </div>
-                          </Panel>
-                        )}
-                        {session.queryRewriteResult && (
-                          <Panel header="查詢重寫過程" key="modal-query-rewrite">
-                            {/* 新增：顯示AI分析結果 */}
-                            {(session.queryRewriteResult.reasoning || 
-                              session.queryRewriteResult.query_granularity || 
-                              session.queryRewriteResult.search_strategy_suggestion) && (
-                              <div className="mb-4 p-3 bg-blue-50 rounded-lg border-l-4 border-blue-400">
-                                <div className="space-y-2">
-                                  {session.queryRewriteResult.reasoning && (
+                          </div>
+                        </Card>
+                      );
+                    })
+                  ) : (
+                    <Empty
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                      description="暫無參考資料"
+                      className="py-4"
+                    />
+                  )}
+                </div>
+              </Panel>
+            </Collapse>
+          </div>
+        </div>
+
+        {/* 底部輸入區域 */}
+        <div className="border-t border-gray-200 bg-white p-4">
+          <div className="max-w-4xl mx-auto">
+            {/* 輸入框 */}
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <TextArea
+                  placeholder="請輸入您想要問的問題... (Ctrl+Enter 發送)"
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  rows={3}
+                  onPressEnter={(e) => {
+                    if (e.ctrlKey || e.metaKey) {
+                      handleAskQuestion();
+                    }
+                  }}
+                  className="resize-none"
+                  disabled={!vectorStats?.total_vectors}
+                />
+      </div>
+              <Button 
+                type="primary"
+                size="large"
+                icon={<SendOutlined />}
+                onClick={handleAskQuestion}
+                loading={isAsking}
+                disabled={!question.trim() || !vectorStats?.total_vectors}
+                className="h-[72px]"
+              >
+                發送
+              </Button>
+            </div>
+
+            {/* 狀態提示 */}
+            <div className="mt-2 flex items-center justify-between">
+              <Text type="secondary" className="text-xs">
+                按 Ctrl+Enter 快速發送
+              </Text>
+              {currentSessionId && (
+                <Text type="secondary" className="text-xs">
+                  會話ID: {currentSessionId.substring(0, 8)}...
+                </Text>
+      )}
+    </div>
+      </div>
+        </div>
+      </div>
+
+      {/* AI 參數設定模態框 */}
+      <Modal
+        title="AI 問答參數設定"
+        open={showSettingsModal}
+        onCancel={() => setShowSettingsModal(false)}
+        footer={null}
+        width={800}
+      >
+        <AIQASettings
+          settings={aiQASettings}
+          onChange={handleSettingsChange}
+          onReset={handleSettingsReset}
+        />
+      </Modal>
+
+      {/* 文件內容查看模態框 */}
+      <Modal
+        title={
+          <div className="flex items-center space-x-2">
+            {viewingDocument && (
+              <>
+                <DocumentTypeIcon
+                  fileType={viewingDocument.file_type}
+                  fileName={viewingDocument.filename}
+                  className="w-6 h-6"
+                />
+                <span>{viewingDocument.filename}</span>
+              </>
+            )}
+          </div>
+        }
+        open={!!viewingDocument}
+        onCancel={() => setViewingDocument(null)}
+        footer={[
+          <Button key="close" onClick={() => setViewingDocument(null)}>
+            關閉
+          </Button>
+        ]}
+        width={900}
+        style={{ top: 20 }}
+      >
+        {isLoadingDocumentContent ? (
+          <div className="flex items-center justify-center py-12">
+            <Spin size="large" tip="載入文件內容..." />
+          </div>
+        ) : viewingDocument ? (
+          <div className="space-y-4">
+            {/* 文件基本信息 */}
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                  <Text type="secondary">文件類型：</Text>
+                  <Text strong>{viewingDocument.file_type || 'N/A'}</Text>
+                      </div>
+                                <div>
+                  <Text type="secondary">文件大小：</Text>
+                  <Text strong>
+                    {viewingDocument.size
+                      ? `${(viewingDocument.size / 1024).toFixed(2)} KB`
+                      : 'N/A'}
+                  </Text>
+                                </div>
+                              <div>
+                  <Text type="secondary">上傳時間：</Text>
+                  <Text strong>
+                    {viewingDocument.created_at
+                      ? new Date(viewingDocument.created_at).toLocaleString('zh-TW')
+                      : 'N/A'}
+                  </Text>
+                                </div>
                                     <div>
-                                      <Text strong style={{color: '#1890ff'}}>🧠 AI分析推理：</Text>
-                                      <div className="mt-1 text-sm text-gray-700">
-                                        {session.queryRewriteResult.reasoning}
+                  <Text type="secondary">更新時間：</Text>
+                  <Text strong>
+                    {viewingDocument.updated_at
+                      ? new Date(viewingDocument.updated_at).toLocaleString('zh-TW')
+                      : 'N/A'}
+                  </Text>
                                       </div>
                                     </div>
-                                  )}
-                                  <div className="flex flex-wrap gap-2">
-                                    {session.queryRewriteResult.query_granularity && (
-                                      <div>
-                                        <Text strong style={{color: '#52c41a'}}>📊 問題粒度：</Text>
-                                        <Tag color={
-                                          session.queryRewriteResult.query_granularity === 'thematic' ? 'blue' :
-                                          session.queryRewriteResult.query_granularity === 'detailed' ? 'green' : 'orange'
-                                        }>
-                                          {session.queryRewriteResult.query_granularity === 'thematic' ? '主題級' :
-                                           session.queryRewriteResult.query_granularity === 'detailed' ? '細節級' : '不確定'}
+              {viewingDocument.tags && viewingDocument.tags.length > 0 && (
+                <div className="mt-3">
+                  <Text type="secondary">標籤：</Text>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {viewingDocument.tags.map((tag, idx) => (
+                      <Tag key={idx} color="blue">
+                        {tag}
                                         </Tag>
+                    ))}
                                       </div>
-                                    )}
-                                    {session.queryRewriteResult.search_strategy_suggestion && (
-                                      <div>
-                                        <Text strong style={{color: '#722ed1'}}>🎯 建議策略：</Text>
-                                        <Tag color={
-                                          session.queryRewriteResult.search_strategy_suggestion === 'summary_only' ? 'cyan' :
-                                          session.queryRewriteResult.search_strategy_suggestion === 'rrf_fusion' ? 'purple' : 'magenta'
-                                        }>
-                                          {session.queryRewriteResult.search_strategy_suggestion === 'summary_only' ? '摘要專用' :
-                                           session.queryRewriteResult.search_strategy_suggestion === 'rrf_fusion' ? 'RRF融合' : '關鍵詞增強RRF'}
-                                        </Tag>
                                       </div>
                                     )}
                                   </div>
+
+            {/* AI 摘要 */}
+            {(viewingDocument.enriched_data?.summary || 
+              viewingDocument.analysis?.ai_analysis_output?.initial_summary) && (
+              <div>
+                <Title level={5}>AI 摘要</Title>
+                <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                  <MarkdownRenderer 
+                    content={
+                      viewingDocument.enriched_data?.summary || 
+                      viewingDocument.analysis?.ai_analysis_output?.initial_summary || 
+                      ''
+                    } 
+                  />
                                 </div>
                               </div>
-                            )}
-                            <Steps direction="vertical" size="small" current={session.queryRewriteResult.rewritten_queries.length}>
-                              <Steps.Step title="原始問題" description={session.queryRewriteResult.original_query} icon={<UserOutlined />} />
-                              {session.queryRewriteResult.rewritten_queries.map((rq, idx) => (
-                                <Steps.Step key={`modal-rewrite-${idx}`} title={`重寫查詢 ${idx + 1}`} description={rq} icon={<RetweetOutlined />} />
-                              ))}
-                              {session.queryRewriteResult.intent_analysis && (
-                                <Steps.Step title="意圖分析" description={session.queryRewriteResult.intent_analysis} icon={<BulbOutlined />} />
-                              )}
-                               {session.queryRewriteResult.extracted_parameters && 
-                                Object.keys(session.queryRewriteResult.extracted_parameters).length > 0 && (
-                                <Steps.Step 
-                                  title="提取參數" 
-                                  icon={<SlidersOutlined />}
-                                  description={
-                                    <List
-                                      size="small"
-                                      dataSource={Object.entries(session.queryRewriteResult.extracted_parameters)}
-                                      renderItem={([key, value]) => (
-                                        <List.Item>
-                                          <Text strong style={{fontSize: '0.8em'}}>{key}: </Text>
-                                          <Text style={{fontSize: '0.8em'}}>{JSON.stringify(value)}</Text>
-                                        </List.Item>
-                                      )}
-                                    />
-                                  }
-                                />
-                              )}
-                            </Steps>
-                          </Panel>
-                        )}
-                        {session.semanticSearchContexts && session.semanticSearchContexts.length > 0 && (
-                          <Panel header={`向量搜索初步結果 (${session.semanticSearchContexts.length} 個)`} key="modal-semantic-search-context">
-                            <List
-                              dataSource={session.semanticSearchContexts}
-                              renderItem={(doc, index) => (
-                                <List.Item>
-                                  <List.Item.Meta
-                                    title={<Text strong style={{fontSize: '0.9em'}}>{`匹配 ${index + 1}: ${doc.document_id} (相似度: ${(doc.similarity_score * 100).toFixed(1)}%)`}</Text>}
-                                    description={<Paragraph ellipsis={{ rows: 2, expandable: true, symbol: '展開' }} style={{fontSize: '0.85em'}}>{doc.summary_or_chunk_text}</Paragraph>}
-                                  />
-                                </List.Item>
-                              )}
-                            />
-                          </Panel>
-                        )}
-                        {session.llmContextDocuments && session.llmContextDocuments.length > 0 && (
-                          <Panel header={`LLM 使用的上下文 (${session.llmContextDocuments.length} 個片段)`} key="modal-llm-context">
-                            <List
-                              dataSource={session.llmContextDocuments}
-                              renderItem={(doc, index) => (
-                                <List.Item>
-                                  <List.Item.Meta
-                                    title={<Text strong style={{fontSize: '0.9em'}}>{`片段 ${index + 1}: ${doc.document_id} (來源: ${doc.source_type})`}</Text>}
-                                    description={<Paragraph ellipsis={{ rows: 2, expandable: true, symbol: '展開'}} style={{fontSize: '0.85em'}}>{doc.content_used}</Paragraph>}
-                                  />
-                                </List.Item>
-                              )}
-                            />
-                          </Panel>
-                        )}
-                        {session.usedSettings && (
-                          <Panel 
-                            header="使用的參數設定" 
-                            key="used-settings"
-                            extra={<Tooltip title="本次查詢使用的具體參數設定"><SettingOutlined style={{color: '#52c41a'}} /></Tooltip>}
-                          >
-                            <Row gutter={[16, 8]}>
-                              <Col xs={12} sm={6}>
-                                <Text strong>詳細查詢:</Text><br />
-                                <Tag color={session.usedSettings.use_ai_detailed_query ? 'green' : 'default'}>
-                                  {session.usedSettings.use_ai_detailed_query ? '啟用' : '禁用'}
-                                </Tag>
-                              </Col>
-                              <Col xs={12} sm={6}>
-                                <Text strong>上下文數量:</Text><br />
-                                <Tag color="blue">{session.usedSettings.context_limit}</Tag>
-                              </Col>
-                              <Col xs={12} sm={6}>
-                                <Text strong>相似度閾值:</Text><br />
-                                <Tag color="purple">{(session.usedSettings.similarity_threshold * 100).toFixed(0)}%</Tag>
-                              </Col>
-                              <Col xs={12} sm={6}>
-                                <Text strong>查詢重寫數:</Text><br />
-                                <Tag color="orange">{session.usedSettings.query_rewrite_count}</Tag>
-                              </Col>
-                              <Col xs={12} sm={6}>
-                                <Text strong>候選文件數:</Text><br />
-                                <Tag color="cyan">{session.usedSettings.max_documents_for_selection}</Tag>
-                              </Col>
-                              <Col xs={12} sm={6}>
-                                <Text strong>AI選擇限制:</Text><br />
-                                <Tag color="magenta">{session.usedSettings.ai_selection_limit}</Tag>
-                              </Col>
-                              <Col xs={12} sm={6}>
-                                <Text strong>詳細文本長度:</Text><br />
-                                <Tag color="gold">{(session.usedSettings.detailed_text_max_length / 1000).toFixed(1)}K</Tag>
-                              </Col>
-                              <Col xs={12} sm={6}>
-                                <Text strong>單文檔限制:</Text><br />
-                                <Tag color="volcano">{(session.usedSettings.max_chars_per_doc / 1000).toFixed(1)}K</Tag>
-                              </Col>
-                              <Col xs={12} sm={6}>
-                                <Text strong>查詢擴展:</Text><br />
-                                <Tag color={session.usedSettings.enable_query_expansion ? 'green' : 'default'}>
-                                  {session.usedSettings.enable_query_expansion ? '啟用' : '禁用'}
-                                </Tag>
-                              </Col>
-                              {session.usedSettings.prompt_input_max_length && (
-                                <Col xs={12} sm={6}>
-                                  <Text strong>提示詞輸入限制:</Text><br />
-                                  <Tag color="volcano">{(session.usedSettings.prompt_input_max_length / 1000).toFixed(1)}K</Tag>
-                                </Col>
-                              )}
-                            </Row>
-                          </Panel>
-                        )}
-                      </Collapse>
-                      <div className="flex flex-wrap gap-2">
-                        <Tag color="blue">{session.tokensUsed} tokens</Tag>
-                        <Tag color="green">{session.processingTime.toFixed(2)}s</Tag>
-                        {session.confidenceScore && (
-                          <Tag color="purple">
-                            {(session.confidenceScore * 100).toFixed(0)}% 置信度
-                          </Tag>
-                        )}
-
-                      </div>
-                      <Text type="secondary" className="text-xs mt-2 block">
-                        {session.timestamp.toLocaleString('zh-TW')}
-                      </Text>
-                    </div>
-                  }
-                />
-              </List.Item>
             )}
-          />
-        ) : (
-          <Empty description="暫無問答記錄" />
-        )}
+
+            {/* 文件內容 */}
+            {viewingDocument.extracted_text && (
+              <div>
+                <Title level={5}>文件內容</Title>
+                <div className="bg-white p-4 rounded-lg border border-gray-200 max-h-96 overflow-y-auto">
+                  <MarkdownRenderer content={viewingDocument.extracted_text} />
+                      </div>
+                    </div>
+            )}
+
+            {/* 如果沒有內容顯示提示 */}
+            {!viewingDocument.extracted_text && 
+             !viewingDocument.enriched_data?.summary && 
+             !viewingDocument.analysis?.ai_analysis_output?.initial_summary && (
+              <Empty
+                description="該文件暫無可顯示的內容"
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+              />
+            )}
+          </div>
+        ) : null}
       </Modal>
     </div>
   );

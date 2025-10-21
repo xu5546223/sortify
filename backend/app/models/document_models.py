@@ -73,6 +73,39 @@ class DocumentInDBBase(DocumentBase):
         description="Gmail 郵件元數據 (email_id, thread_id, from, to, 等)"
     )
     email_synced_at: Optional[datetime] = Field(None, description="郵件同步時間")
+    
+    # Stage 2: Enriched data (語義豐富化數據)
+    # 注意: raw_text 使用現有的 extracted_text 欄位
+    enriched_data: Optional[Dict[str, Any]] = Field(None, description="語義豐富化數據")
+    # enriched_data 結構:
+    # {
+    #   "title": str,  # AI生成的標題
+    #   "summary": str,  # 1-2句話摘要
+    #   "entities": {
+    #     "vendor": str,  # 店家/機構
+    #     "people": List[str],  # 人物
+    #     "locations": List[str],  # 地點
+    #     "organizations": List[str],  # 機構
+    #     "items": List[str],  # 品項清單
+    #     "amounts": List[Dict],  # [{"value": 80, "currency": "TWD"}]
+    #     "dates": List[str]  # ISO格式日期
+    #   },
+    #   "keywords": List[str],  # 5-7個關鍵詞
+    #   "embedding_generated": bool  # 是否已生成embedding
+    # }
+    
+    # Stage 4: Dynamic clustering (動態聚類)
+    cluster_info: Optional[Dict[str, Any]] = Field(None, description="聚類信息")
+    # cluster_info 結構:
+    # {
+    #   "cluster_id": str,  # 如 "cluster_user123_0"
+    #   "cluster_name": str,  # AI生成的分類名稱
+    #   "cluster_confidence": float,  # 0.0-1.0
+    #   "clustered_at": datetime,
+    #   "clustering_version": str  # 如 "v1.0"
+    # }
+    
+    clustering_status: str = Field("pending", description="聚類狀態: pending/clustered/excluded")
 
     @root_validator(pre=True)
     @classmethod

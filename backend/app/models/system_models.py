@@ -12,6 +12,7 @@ class AIServiceSettingsInput(BaseModel):
     temperature: Optional[float] = Field(None, title="AI 模型 Temperature", ge=0, le=1, description="控制模型輸出的隨機性，0-1 之間")
     ensure_chinese_output: Optional[bool] = Field(None, alias="ensureChineseOutput", title="確保中文輸出")
     max_output_tokens: Optional[int] = Field(None, alias="maxOutputTokens", title="最大輸出Token數量", ge=1)
+    prompt_input_max_length: Optional[int] = Field(None, alias="promptInputMaxLength", title="提示詞最大輸入長度", ge=1000, le=20000)
 
     class Config:
         populate_by_name = True
@@ -24,6 +25,7 @@ class AIServiceSettingsStored(BaseModel):
     is_api_key_configured: bool = Field(False, description="指示 AI API Key 是否已在環境變數中設定")
     ensure_chinese_output: Optional[bool] = Field(default=False, title="確保中文輸出")
     max_output_tokens: Optional[int] = Field(None, title="最大輸出Token數量", ge=1)
+    prompt_input_max_length: Optional[int] = Field(None, title="提示詞最大輸入長度", ge=1000, le=20000)
 
 # 新增：資料庫設定的 Pydantic 模型
 class DatabaseSettings(BaseModel):
@@ -71,6 +73,7 @@ class StoredAISettings(BaseModel):
     temperature: Optional[float] = None
     ensure_chinese_output: Optional[bool] = Field(default=False, title="確保中文輸出")
     max_output_tokens: Optional[int] = Field(None, title="最大輸出Token數量", ge=1)
+    prompt_input_max_length: Optional[int] = Field(None, title="提示詞最大輸入長度", ge=1000, le=20000)
 
 class DBSettingsSchema(BaseModel): # This is what's actually stored in the 'settings' collection in MongoDB
     # Using a fixed ID for the single global settings document

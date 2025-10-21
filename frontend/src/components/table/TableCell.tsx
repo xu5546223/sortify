@@ -5,9 +5,9 @@ interface TableCellProps extends React.TdHTMLAttributes<HTMLTableCellElement> {
 }
 
 const TableCell: React.FC<TableCellProps> = ({ children, className = '', ...props }) => {
-  const defaultTdClass = 'px-6 py-4 whitespace-nowrap text-sm text-surface-900';
+  const defaultTdClass = 'px-6 py-4 text-sm text-surface-900';
   return (
-    <td className={`${defaultTdClass} ${className}`}{...props}>
+    <td className={`${defaultTdClass} ${className}`} {...props}>
       {children}
     </td>
   );

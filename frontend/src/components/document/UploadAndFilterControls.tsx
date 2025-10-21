@@ -41,6 +41,7 @@ interface UploadAndFilterControlsProps {
   isDeleting: boolean;
   onUploadClick: () => void;
   onDeleteSelected: () => void;
+  onGmailImport?: () => void;
 }
 
 const UploadAndFilterControls: React.FC<UploadAndFilterControlsProps> = ({
@@ -55,6 +56,7 @@ const UploadAndFilterControls: React.FC<UploadAndFilterControlsProps> = ({
   isDeleting,
   onUploadClick,
   onDeleteSelected,
+  onGmailImport,
 }) => {
   return (
     <Card className="mb-6">
@@ -96,6 +98,14 @@ const UploadAndFilterControls: React.FC<UploadAndFilterControlsProps> = ({
             >
               {isDeleting ? '刪除中...' : `刪除選中 (${selectedDocumentsCount})`}
             </Button>
+            {onGmailImport && (
+              <Button 
+                onClick={onGmailImport} 
+                variant="outline"
+              >
+                📧 讀取 Gmail
+              </Button>
+            )}
           </div>
         </div>
 

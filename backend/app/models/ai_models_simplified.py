@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Dict, Any, Union
 from app.services.unified_ai_config import TaskType
 
@@ -81,6 +81,22 @@ class FlexibleKeyInformation(BaseKeyInformation):
     # 法律/官方文檔特性（當內容為法律文檔時填充）
     legal_context: Optional[str] = Field(None, description="法律背景")
     compliance_requirements: Optional[List[str]] = Field(None, description="合規要求")
+    
+    # 新增: 結構化實體提取 (用於動態分類系統)
+    structured_entities: Optional[Dict[str, Any]] = Field(None, description="結構化實體提取")
+    # structured_entities 結構:
+    # {
+    #   "vendor": str,  # 店家或機構名稱
+    #   "people": List[str],  # 人物列表
+    #   "locations": List[str],  # 地點列表
+    #   "organizations": List[str],  # 機構組織列表
+    #   "items": List[Dict[str, Any]],  # 品項清單 [{"name": "御飯糰", "quantity": 1, "price": 35}]
+    #   "amounts": List[Dict[str, Any]],  # 金額列表 [{"value": 80, "currency": "TWD", "context": "總計"}]
+    #   "dates": List[Dict[str, str]]  # 日期列表 [{"date": "2024-05-21", "context": "交易日期"}]
+    # }
+    
+    # 新增: 自動標題生成
+    auto_title: Optional[str] = Field(None, description="AI自動生成的文檔標題(6-15字)")
 
 # === 主要輸出模型 ===
 
@@ -181,4 +197,33 @@ class IntermediateAnalysisStep(BaseModel):
     reasoning: str = Field(..., description="判斷理由或分析說明")
 
 # 向後兼容的別名
-AIImageAnalysisOutputFlexible = AIImageAnalysisOutput  # 別名，實際上是同一個類 
+AIImageAnalysisOutputFlexible = AIImageAnalysisOutput  # 別名，實際上是同一個類
+
+
+# === 聚類標籤生成輸出模型 ===
+
+class AIClusterLabelOutput(BaseModel):
+    """聚類標籤生成輸出 - 用於動態文檔分類(單個聚類)"""
+    cluster_name: str = Field(..., description="生成的聚類名稱 (簡潔, 3-10字)")
+    cluster_description: Optional[str] = Field(None, description="聚類的詳細描述")
+    common_themes: List[str] = Field(default_factory=list, description="共通主題列表")
+    suggested_keywords: List[str] = Field(default_factory=list, description="建議的關鍵詞")
+    confidence: Optional[float] = Field(None, description="命名置信度(0.0-1.0)")
+    reasoning: Optional[str] = Field(None, description="命名推理過程")
+    
+    model_config = ConfigDict(extra='allow')
+
+class ClusterLabelItem(BaseModel):
+    """單個聚類標籤項"""
+    cluster_index: int = Field(..., description="聚類索引")
+    label: str = Field(..., description="聚類標籤/名稱")
+    description: Optional[str] = Field(None, description="聚類描述")
+    keywords: Optional[List[str]] = Field(None, description="關鍵詞列表")
+
+class AIBatchClusterLabelsOutput(BaseModel):
+    """批量聚類標籤生成輸出 - 一次生成多個聚類的標籤"""
+    labels: List[ClusterLabelItem] = Field(..., description="所有聚類的標籤列表")
+    total_clusters: Optional[int] = Field(None, description="總聚類數量")
+    generation_notes: Optional[str] = Field(None, description="生成說明")
+    
+    model_config = ConfigDict(extra='allow') 

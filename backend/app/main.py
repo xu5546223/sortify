@@ -16,6 +16,8 @@ from .apis.v1 import embedding as embedding_api_v1 # 新增 embedding router 導
 from .apis.v1 import unified_ai as unified_ai_api_v1 # 新增統一AI router導入
 from .apis.v1 import cache_monitoring as cache_monitoring_api_v1 # 新增緩存監控 router 導入
 from .apis.v1 import gmail as gmail_api_v1 # 新增 Gmail router 導入
+from .apis.v1 import clustering as clustering_api_v1 # 新增聚類 router 導入
+from .apis.v1 import conversations as conversations_api_v1 # 新增對話 router 導入
 
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -46,6 +48,14 @@ async def lifespan(app: FastAPI):
     
     try:
         await db_manager.connect_to_mongo() # 確保連接已建立
+        
+        # 連接到 Redis
+        try:
+            from .services.conversation_cache_service import conversation_cache_service
+            await conversation_cache_service.connect()
+            std_logger.info("Redis 連接已建立")
+        except Exception as e:
+            std_logger.warning(f"Redis 連接失敗（將繼續使用純 MongoDB 模式）: {e}")
         
         # 使用新的智能預熱機制
         try:
@@ -105,6 +115,14 @@ async def lifespan(app: FastAPI):
     finally:
         # 應用程式關閉時 - 確保清理工作執行
         std_logger.info("開始應用程式關閉清理...")
+        
+        # 關閉 Redis 連接
+        try:
+            from .services.conversation_cache_service import conversation_cache_service
+            await conversation_cache_service.disconnect()
+            std_logger.info("Redis 連接已關閉")
+        except Exception as e:
+            std_logger.error(f"關閉 Redis 連接失敗: {e}")
         
         # 關閉向量資料庫連接
         try:
@@ -279,6 +297,11 @@ app.include_router(cache_monitoring_api_v1.router, prefix="/api/v1/cache", tags=
 # 註冊新的 Gmail 路由
 app.include_router(gmail_api_v1.router, prefix="/api/v1/gmail", tags=["v1 - Gmail Services"])
 
+# 註冊新的聚類路由
+app.include_router(clustering_api_v1.router, prefix="/api/v1/clustering", tags=["v1 - Clustering"])
+
+# 註冊新的對話路由
+app.include_router(conversations_api_v1.router, prefix="/api/v1", tags=["v1 - Conversations"])
 
 # 註冊新的緩存分析路由
 

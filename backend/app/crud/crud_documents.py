@@ -26,7 +26,10 @@ def _build_document_filter_query(
     uploader_device_id: Optional[str] = None,
     status_in: Optional[List[DocumentStatus]] = None,
     filename_contains: Optional[str] = None,
-    tags_include: Optional[List[str]] = None
+    tags_include: Optional[List[str]] = None,
+    cluster_id: Optional[str] = None,
+    clustering_status: Optional[str] = None,
+    has_enriched_data: Optional[bool] = None
 ) -> Dict[str, Any]:
     query: Dict[str, Any] = {"owner_id": owner_id}
     if uploader_device_id:
@@ -37,6 +40,20 @@ def _build_document_filter_query(
         query["filename"] = {"$regex": re.escape(filename_contains), "$options": "i"}
     if tags_include and len(tags_include) > 0:
         query["tags"] = {"$in": tags_include}
+    
+    # 新增: 聚類相關過濾
+    if cluster_id:
+        query["cluster_info.cluster_id"] = cluster_id
+    
+    if clustering_status:
+        query["clustering_status"] = clustering_status
+    
+    if has_enriched_data is not None:
+        if has_enriched_data:
+            query["enriched_data"] = {"$ne": None}
+        else:
+            query["enriched_data"] = None
+    
     return query
 
 async def create_document(
@@ -131,6 +148,27 @@ async def get_document_by_id(db: AsyncIOMotorDatabase, document_id: uuid.UUID) -
             logger.error(f"[get_document_by_id] Error during string ID fallback find_one: {fallback_err}", exc_info=True)
         return None
 
+async def count_documents(
+    db: AsyncIOMotorDatabase,
+    owner_id: uuid.UUID,
+    uploader_device_id: Optional[str] = None,
+    status_in: Optional[List[DocumentStatus]] = None,
+    filename_contains: Optional[str] = None,
+    tags_include: Optional[List[str]] = None,
+    cluster_id: Optional[str] = None
+) -> int:
+    """計算符合條件的文檔數量"""
+    query = _build_document_filter_query(
+        owner_id=owner_id,
+        uploader_device_id=uploader_device_id,
+        status_in=status_in,
+        filename_contains=filename_contains,
+        tags_include=tags_include,
+        cluster_id=cluster_id
+    )
+    count = await db[DOCUMENT_COLLECTION].count_documents(query)
+    return count
+
 async def get_documents(
     db: AsyncIOMotorDatabase, 
     owner_id: uuid.UUID, # 新增 owner_id
@@ -140,6 +178,7 @@ async def get_documents(
     status_in: Optional[List[DocumentStatus]] = None, # <--- 修改此處
     filename_contains: Optional[str] = None,
     tags_include: Optional[List[str]] = None,
+    cluster_id: Optional[str] = None,  # 新增: 聚類ID過濾
     sort_by: Optional[str] = None, # <--- 新增排序參數
     sort_order: Optional[str] = "desc" # <--- 新增排序參數，預設為 desc
 ) -> List[Document]:
@@ -149,7 +188,8 @@ async def get_documents(
         uploader_device_id=uploader_device_id,
         status_in=status_in,
         filename_contains=filename_contains,
-        tags_include=tags_include
+        tags_include=tags_include,
+        cluster_id=cluster_id  # 傳遞cluster_id
     )
     cursor = db[DOCUMENT_COLLECTION].find(query)
 
@@ -405,24 +445,7 @@ async def set_document_analysis(
 
     return await update_document(db, document_id, update_payload)
 
-async def count_documents(
-    db: AsyncIOMotorDatabase,
-    owner_id: uuid.UUID,
-    status_in: Optional[List[DocumentStatus]] = None, # <--- 修改此處
-    filename_contains: Optional[str] = None,
-    tags_include: Optional[List[str]] = None,
-    uploader_device_id: Optional[str] = None # 與 get_documents 保持一致性
-) -> int:
-    """計算符合條件的文件總數。"""
-    query = _build_document_filter_query(
-        owner_id=owner_id,
-        uploader_device_id=uploader_device_id,
-        status_in=status_in,
-        filename_contains=filename_contains,
-        tags_include=tags_include
-    )
-    count = await db[DOCUMENT_COLLECTION].count_documents(query)
-    return count 
+# count_documents 函數已在第151行定義,此處刪除重複定義
 
 async def update_document_vector_status(
     db: AsyncIOMotorDatabase, 

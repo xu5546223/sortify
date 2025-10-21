@@ -183,6 +183,47 @@ class DocumentTasksService:
                     analysis_status_enum=processing_status, 
                     analyzed_content_type_str=analysis_data.get("content_type", "Unknown")
                 )
+                
+                # 新增: 如果分析成功,進行實體提取和語義豐富化
+                if processing_status == DocumentStatus.ANALYSIS_COMPLETED:
+                    try:
+                        from app.services.entity_extraction_service import EntityExtractionService
+                        
+                        entity_service = EntityExtractionService()
+                        enriched_data = await entity_service.enrich_document(db, document, analysis_data)
+                        
+                        # 更新文檔的 enriched_data 和 clustering_status
+                        # 注意: 文本內容已存儲在 extracted_text 欄位中,無需額外儲存
+                        update_dict = {
+                            "enriched_data": enriched_data,
+                            "clustering_status": "pending"
+                        }
+                        
+                        await crud_documents.update_document(db, doc_uuid, update_dict)
+                        
+                        logger.info(f"成功為文檔 {doc_uuid} 生成enriched_data")
+                        await log_event(
+                            db=db, level=LogLevel.INFO,
+                            message=f"文檔 {doc_uuid} 實體提取完成",
+                            source="doc_tasks_service.entity_extraction",
+                            user_id=user_id_for_log, request_id=request_id_for_log,
+                            details={"doc_id": str(doc_uuid), "title": enriched_data.get("title")}
+                        )
+                        
+                        # 檢查是否需要觸發聚類
+                        # await self._check_trigger_clustering(db, str(document.owner_id))
+                        # TODO: 實現自動觸發聚類邏輯
+                        
+                    except Exception as enrich_error:
+                        logger.error(f"實體提取失敗 for doc {doc_uuid}: {enrich_error}", exc_info=True)
+                        await log_event(
+                            db=db, level=LogLevel.ERROR,
+                            message=f"文檔 {doc_uuid} 實體提取失敗: {str(enrich_error)}",
+                            source="doc_tasks_service.entity_extraction.error",
+                            user_id=user_id_for_log, request_id=request_id_for_log,
+                            details={"doc_id": str(doc_uuid), "error": str(enrich_error)}
+                        )
+                
                 log_level = LogLevel.INFO if processing_status == DocumentStatus.ANALYSIS_COMPLETED else LogLevel.ERROR
                 log_message = f"AI {processing_type} for doc ID {doc_uuid} status: {processing_status.value}."
             elif processing_status != DocumentStatus.ANALYZING: # Error or unsupported before full analysis
@@ -365,5 +406,58 @@ class DocumentTasksService:
                                                   {"error": str(e)}, None, None, 
                                                   DocumentStatus.PROCESSING_ERROR, processing_type_for_save)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"觸發文件分析時發生意外錯誤: {str(e)}")
+    
+    async def _check_trigger_clustering(self, db: AsyncIOMotorDatabase, owner_id: str) -> None:
+        """
+        檢查是否需要觸發聚類 (累積>=20個待分類文檔)
+        
+        Args:
+            db: 數據庫連接
+            owner_id: 用戶ID (字符串格式)
+        """
+        try:
+            # 計算pending狀態且有enriched_data的文檔數量
+            pending_count = await db["documents"].count_documents({
+                "owner_id": uuid.UUID(owner_id),
+                "clustering_status": "pending",
+                "enriched_data": {"$ne": None}
+            })
+            
+            logger.debug(f"用戶 {owner_id} 有 {pending_count} 個待聚類文檔")
+            
+            # 如果累積>=20個,觸發後台聚類任務
+            if pending_count >= 20:
+                logger.info(f"用戶 {owner_id} 達到聚類閾值 ({pending_count}個文檔),準備觸發聚類")
+                
+                # 注意: 這裡不直接執行聚類,而是記錄日誌
+                # 實際的聚類觸發會在clustering_service創建後實現
+                # 或通過定期任務執行
+                await log_event(
+                    db=db,
+                    level=LogLevel.INFO,
+                    message=f"用戶 {owner_id} 達到聚類閾值,待聚類文檔數: {pending_count}",
+                    source="doc_tasks_service.check_trigger_clustering",
+                    user_id=owner_id,
+                    details={"pending_count": pending_count}
+                )
+                
+                # TODO: 當 ClusteringService 實現後,在這裡觸發聚類
+                # from app.services.clustering_service import ClusteringService
+                # clustering_service = ClusteringService()
+                # background_tasks.add_task(
+                #     clustering_service.run_clustering_for_user,
+                #     db, uuid.UUID(owner_id)
+                # )
+                
+        except Exception as e:
+            logger.error(f"檢查聚類觸發條件時發生錯誤 (用戶 {owner_id}): {e}", exc_info=True)
+            await log_event(
+                db=db,
+                level=LogLevel.ERROR,
+                message=f"檢查聚類觸發條件失敗: {str(e)}",
+                source="doc_tasks_service.check_trigger_clustering.error",
+                user_id=owner_id,
+                details={"error": str(e)}
+            )
 
 

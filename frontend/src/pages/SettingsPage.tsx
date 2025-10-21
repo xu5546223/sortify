@@ -26,6 +26,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
       provider: 'google',
       ensure_chinese_output: true,
       max_output_tokens: null,
+      prompt_input_max_length: 6000,  // 新增: 默認值6000
     },
     database: {
       uri: '',
@@ -67,6 +68,12 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
         } else {
           newAiServiceSettings.max_output_tokens = prev.aiService?.max_output_tokens ?? null;
         }
+
+        if (typeof data.aiService?.prompt_input_max_length === 'number') {
+          newAiServiceSettings.prompt_input_max_length = data.aiService.prompt_input_max_length;
+        } else {
+          newAiServiceSettings.prompt_input_max_length = prev.aiService?.prompt_input_max_length ?? 6000;
+        }
         
         return {
           ...prev,
@@ -107,9 +114,9 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
         // Explicitly handle boolean toggles for aiService
         if (section === 'aiService' && field === 'ensure_chinese_output') {
           newValue = newBooleanState;
-        } else if (type === 'number' || name === 'aiService.max_output_tokens') {
+        } else if (type === 'number' || name === 'aiService.max_output_tokens' || name === 'aiService.prompt_input_max_length') {
           newValue = parseInt(value, 10);
-          if (name === 'aiService.max_output_tokens' && (isNaN(newValue) || newValue <= 0)) {
+          if ((name === 'aiService.max_output_tokens' || name === 'aiService.prompt_input_max_length') && (isNaN(newValue) || newValue <= 0)) {
             newValue = null;
           }
         } else { // Handle other string inputs (like model select, db uri, dbName)
@@ -196,6 +203,9 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
         temperature: settings.aiService?.temperature ?? 0.7,
         ensure_chinese_output: settings.aiService?.ensure_chinese_output ?? true,
         max_output_tokens: settings.aiService?.max_output_tokens ?? null,
+        prompt_input_max_length: settings.aiService?.prompt_input_max_length !== null && settings.aiService?.prompt_input_max_length !== undefined 
+          ? settings.aiService.prompt_input_max_length 
+          : 6000,
       },
       database: {
         uri: settings.database?.uri || null,
@@ -274,6 +284,22 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ showPCMessage }) => {
               />
               <p className="text-xs text-gray-500 mt-1">
                 設定 AI 生成內容的最大 token 數量。影響內容完整性與請求成本。
+              </p>
+            </div>
+
+            <div className="md:col-span-1">
+              <Input
+                label="提示詞最大輸入長度 (字符數)"
+                name="aiService.prompt_input_max_length"
+                type="number"
+                value={settings.aiService?.prompt_input_max_length === null || settings.aiService?.prompt_input_max_length === undefined ? '' : String(settings.aiService.prompt_input_max_length)}
+                onChange={handleChange}
+                placeholder="建議: 4000-8000, 默認: 6000"
+                min="1000"
+                max="20000"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                控制AI提示詞的最大輸入字符數。數值越大允許處理更長的文本,但可能消耗更多token。
               </p>
             </div>
 

@@ -32,7 +32,14 @@ from .ai_models_simplified import (
     AITextAnalysisOutput,
     AIImageAnalysisOutput,
     AIPromptRequest,
-    TokenUsage
+    TokenUsage,
+    AIClusterLabelOutput
+)
+# 聚類模型
+from .clustering_models import (
+    ClusterInfo,
+    ClusteringJobStatus,
+    ClusterSummary
 )
 
 __all__ = [
@@ -79,4 +86,9 @@ __all__ = [
     "AIImageAnalysisOutput",
     "AIPromptRequest",
     "TokenUsage",
+    "AIClusterLabelOutput",
+    # 聚類模型
+    "ClusterInfo",
+    "ClusteringJobStatus",
+    "ClusterSummary",
 ] 

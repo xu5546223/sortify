@@ -467,8 +467,74 @@ class EnhancedAIQAService:
 
         query_rewrite_result: Optional[QueryRewriteResult] = None
         semantic_contexts_for_response: List[SemanticContextDocument] = []
+        conversation_history_context = ""
 
         try:
+            # === 對話記憶和文檔緩存處理 ===
+            cached_doc_ids = []
+            cached_doc_data = None
+            
+            if request.conversation_id and user_id:
+                try:
+                    from uuid import UUID
+                    from app.services.conversation_cache_service import conversation_cache_service
+                    from app.crud import crud_conversations
+                    
+                    conversation_uuid = UUID(request.conversation_id)
+                    # 處理 user_id 可能是 UUID 或字符串
+                    if isinstance(user_id, UUID):
+                        user_uuid = user_id
+                    else:
+                        user_uuid = UUID(str(user_id)) if user_id else None
+                    
+                    if user_uuid:
+                        # 先嘗試從 Redis 緩存獲取最近消息
+                        recent_messages = await conversation_cache_service.get_recent_messages(
+                            user_id=user_uuid,
+                            conversation_id=conversation_uuid,
+                            limit=5
+                        )
+                        
+                        # 如果緩存未命中，從 MongoDB 獲取
+                        if not recent_messages:
+                            recent_messages = await crud_conversations.get_recent_messages(
+                                db=db,
+                                conversation_id=conversation_uuid,
+                                user_id=user_uuid,
+                                limit=5
+                            )
+                        
+                        # 獲取已緩存的文檔ID和數據
+                        cached_doc_ids, cached_doc_data = await crud_conversations.get_cached_documents(
+                            db=db,
+                            conversation_id=conversation_uuid,
+                            user_id=user_uuid
+                        )
+                        
+                        if cached_doc_ids:
+                            logger.info(f"對話已緩存 {len(cached_doc_ids)} 個文檔，將優先使用")
+                        
+                        # 格式化對話歷史為上下文
+                        if recent_messages and len(recent_messages) > 0:
+                            conversation_history_context = "\n\n=== 對話歷史（最近 5 條）===\n"
+                            for msg in recent_messages:
+                                role_name = "用戶" if msg.role == "user" else "助手"
+                                conversation_history_context += f"{role_name}: {msg.content[:200]}...\n" if len(msg.content) > 200 else f"{role_name}: {msg.content}\n"
+                            conversation_history_context += "=== 當前問題 ===\n"
+                            
+                            logger.info(f"已載入 {len(recent_messages)} 條歷史消息作為上下文")
+                            await log_event(db=db, level=LogLevel.INFO,
+                                          message=f"載入對話記憶: {len(recent_messages)} 條歷史消息, 緩存文檔: {len(cached_doc_ids)}",
+                                          source="service.enhanced_ai_qa.conversation_memory",
+                                          user_id=user_id_str, request_id=request_id,
+                                          details={"conversation_id": request.conversation_id, "messages_count": len(recent_messages), "cached_docs_count": len(cached_doc_ids)})
+                except Exception as e:
+                    logger.warning(f"載入對話歷史失敗，將繼續處理: {e}")
+                    await log_event(db=db, level=LogLevel.WARNING,
+                                  message=f"載入對話歷史失敗: {str(e)}",
+                                  source="service.enhanced_ai_qa.conversation_memory_error",
+                                  user_id=user_id_str, request_id=request_id)
+            
             # === 智能觸發流程：基於傳統單階段搜索的真實相似度分數 ===
             # 根據實驗數據，傳統單階段搜索（摘要+文本片段）效果最好，我們將其作為第一道防線。
             confidence_threshold = 0.75  # 可調超參數
@@ -569,6 +635,13 @@ class EnhancedAIQAService:
                 )
             
             document_ids = [result.document_id for result in semantic_results_raw]
+            
+            # 優先使用對話中已緩存的文檔
+            if cached_doc_ids and len(cached_doc_ids) > 0:
+                # 合併緩存的文檔ID和新搜索到的文檔ID
+                all_doc_ids = list(set(cached_doc_ids + document_ids))
+                logger.info(f"合併緩存文檔 ({len(cached_doc_ids)}) 和新搜索文檔 ({len(document_ids)})，總計 {len(all_doc_ids)} 個文檔")
+                document_ids = all_doc_ids
             
             if not isinstance(document_ids, list):
                 logger.error(f"Before get_documents_by_ids, document_ids is not a list, but {type(document_ids)}. Defaulting to empty list.")
@@ -748,11 +821,87 @@ class EnhancedAIQAService:
                 request.model_preference,
                 ensure_chinese_output=getattr(request, 'ensure_chinese_output', None),
                 detailed_text_max_length=getattr(request, 'detailed_text_max_length', 8000),  # 傳遞用戶設定的文本長度限制
-                max_chars_per_doc=getattr(request, 'max_chars_per_doc', None)  # 傳遞用戶設定的單文檔限制
+                max_chars_per_doc=getattr(request, 'max_chars_per_doc', None),  # 傳遞用戶設定的單文檔限制
+                conversation_history=conversation_history_context  # 傳遞對話歷史上下文
             )
             total_tokens += answer_tokens
             
             processing_time = time.time() - start_time
+            
+            # === 保存問答對到對話中 ===
+            if request.conversation_id and user_id:
+                try:
+                    from uuid import UUID
+                    from app.crud import crud_conversations
+                    from app.services.conversation_cache_service import conversation_cache_service
+                    
+                    logger.info(f"開始保存對話: conversation_id={request.conversation_id}, user_id={user_id}")
+                    
+                    conversation_uuid = UUID(request.conversation_id)
+                    # user_id 可能已經是 UUID 對象
+                    if isinstance(user_id, UUID):
+                        user_uuid = user_id
+                    else:
+                        user_uuid = UUID(str(user_id)) if user_id else None
+                    
+                    logger.info(f"UUID 轉換成功: conversation_uuid={conversation_uuid}, user_uuid={user_uuid}")
+                    
+                    if user_uuid:
+                        # 添加用戶問題
+                        logger.info(f"準備添加用戶問題: {request.question[:50]}...")
+                        result1 = await crud_conversations.add_message_to_conversation(
+                            db=db,
+                            conversation_id=conversation_uuid,
+                            user_id=user_uuid,
+                            role="user",
+                            content=request.question,
+                            tokens_used=None
+                        )
+                        logger.info(f"用戶問題添加結果: {result1}")
+                        
+                        # 添加 AI 回答
+                        logger.info(f"準備添加 AI 回答: {answer[:50]}...")
+                        result2 = await crud_conversations.add_message_to_conversation(
+                            db=db,
+                            conversation_id=conversation_uuid,
+                            user_id=user_uuid,
+                            role="assistant",
+                            content=answer,
+                            tokens_used=answer_tokens
+                        )
+                        logger.info(f"AI 回答添加結果: {result2}")
+                        
+                        # 更新對話的文檔緩存
+                        if full_documents:
+                            new_doc_ids = [str(doc.id) for doc in full_documents]
+                            logger.info(f"準備更新文檔緩存: {len(new_doc_ids)} 個文檔，IDs: {new_doc_ids}")
+                            cache_result = await crud_conversations.update_cached_documents(
+                                db=db,
+                                conversation_id=conversation_uuid,
+                                user_id=user_uuid,
+                                document_ids=new_doc_ids,
+                                document_data=None
+                            )
+                            logger.info(f"文檔緩存更新結果: {cache_result}")
+                        else:
+                            logger.warning("沒有 full_documents 可以緩存")
+                        
+                        # 使緩存失效，下次會從 MongoDB 重新載入
+                        await conversation_cache_service.invalidate_conversation(
+                            user_id=user_uuid,
+                            conversation_id=conversation_uuid
+                        )
+                        
+                        logger.info(f"✅ 成功保存問答對到對話 {request.conversation_id}")
+                    else:
+                        logger.error(f"user_uuid 為 None，無法保存對話")
+                except Exception as e:
+                    import traceback
+                    logger.error(f"❌ 保存對話失敗: {e}")
+                    logger.error(f"錯誤詳情: {traceback.format_exc()}")
+                    # 不影響主流程，繼續返回結果
+            else:
+                logger.warning(f"跳過保存對話: conversation_id={request.conversation_id}, user_id={user_id}")
             
             logger.info(f"AI問答處理完成，耗時: {processing_time:.2f}秒，Token: {total_tokens} (用戶: {user_id})")
             
@@ -1283,7 +1432,7 @@ class EnhancedAIQAService:
         # This function is no longer called in the main flow but is kept for potential future use.
         return document_ids
 
-    async def _generate_answer_unified(self, db: AsyncIOMotorDatabase, original_query: str, documents_for_context: List[Any], query_rewrite_result: QueryRewriteResult, detailed_document_data: Optional[List[Dict[str, Any]]], ai_generated_query_reasoning: Optional[str], user_id: Optional[str], request_id: Optional[str], model_preference: Optional[str] = None, ensure_chinese_output: Optional[bool] = None, detailed_text_max_length: Optional[int] = None, max_chars_per_doc: Optional[int] = None) -> Tuple[str, int, float, List[LLMContextDocument]]:
+    async def _generate_answer_unified(self, db: AsyncIOMotorDatabase, original_query: str, documents_for_context: List[Any], query_rewrite_result: QueryRewriteResult, detailed_document_data: Optional[List[Dict[str, Any]]], ai_generated_query_reasoning: Optional[str], user_id: Optional[str], request_id: Optional[str], model_preference: Optional[str] = None, ensure_chinese_output: Optional[bool] = None, detailed_text_max_length: Optional[int] = None, max_chars_per_doc: Optional[int] = None, conversation_history: Optional[str] = None) -> Tuple[str, int, float, List[LLMContextDocument]]:
         """步驟4: 生成最終答案（使用統一AI服務）- Implements focused context logic."""
         actual_contexts_for_llm: List[LLMContextDocument] = []
         context_parts = []
@@ -1363,8 +1512,13 @@ class EnhancedAIQAService:
                 logger.info(f"使用通用上下文：{len(context_parts)} 個文件摘要，總長度約 {sum(len(part) for part in context_parts)} 字符")
 
             query_for_answer_gen = query_rewrite_result.rewritten_queries[0] if query_rewrite_result.rewritten_queries else original_query
+            
+            # 如果有對話歷史，將其添加到上下文開頭
+            if conversation_history:
+                context_parts.insert(0, conversation_history)
+                logger.info("已將對話歷史添加到 AI 上下文中")
 
-            log_details_ai_call = {"query_for_answer_gen_length": len(query_for_answer_gen), "num_docs_in_final_context": len(actual_contexts_for_llm), "total_context_length": len("\n\n".join(context_parts)), "model_preference": model_preference}
+            log_details_ai_call = {"query_for_answer_gen_length": len(query_for_answer_gen), "num_docs_in_final_context": len(actual_contexts_for_llm), "total_context_length": len("\n\n".join(context_parts)), "model_preference": model_preference, "has_conversation_history": bool(conversation_history)}
             await log_event(db=db, level=LogLevel.DEBUG, message="Calling AI for answer generation.", source="service.enhanced_ai_qa.generate_answer_internal", user_id=user_id, request_id=request_id, details=log_details_ai_call)
             
             ai_response: UnifiedAIResponse = await unified_ai_service_simplified.generate_answer(

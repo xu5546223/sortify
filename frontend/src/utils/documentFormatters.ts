@@ -30,6 +30,67 @@ export const formatDate = (dateString?: string): string => {
   }
 };
 
+/**
+ * 格式化日期為緊湊格式
+ * - 今天：顯示時間 (15:23)
+ * - 昨天：昨天 15:23
+ * - 7天內：X天前
+ * - 其他：MM/DD
+ */
+export const formatCompactDate = (dateString?: string): string => {
+  if (!dateString) return 'N/A';
+  
+  try {
+    let adjustedDateString = dateString;
+    if (dateString.includes('T') && !dateString.endsWith('Z') && dateString.length >= 19) {
+      adjustedDateString = dateString + 'Z';
+    }
+    const date = new Date(adjustedDateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    
+    // 今天：顯示時間
+    if (diffDays === 0) {
+      return date.toLocaleTimeString('zh-TW', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false
+      });
+    } 
+    // 昨天
+    else if (diffDays === 1) {
+      return '昨天 ' + date.toLocaleTimeString('zh-TW', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false
+      });
+    } 
+    // 7天內
+    else if (diffDays < 7) {
+      return `${diffDays}天前`;
+    } 
+    // 今年：顯示月/日
+    else if (date.getFullYear() === now.getFullYear()) {
+      return date.toLocaleDateString('zh-TW', { 
+        month: '2-digit', 
+        day: '2-digit' 
+      });
+    }
+    // 去年或更早：顯示年/月/日
+    else {
+      return date.toLocaleDateString('zh-TW', { 
+        year: 'numeric',
+        month: '2-digit', 
+        day: '2-digit' 
+      });
+    }
+  } catch (e) {
+    console.error("Error formatting compact date:", dateString, e);
+    return dateString;
+  }
+};
+
 export const mapMimeTypeToSimpleType = (mimeType?: string | null): string => {
   if (!mimeType) return '未知類型';
 

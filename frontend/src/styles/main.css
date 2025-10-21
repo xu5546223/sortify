@@ -484,4 +484,32 @@ select:focus-visible {
   :root:not([data-theme="light"]) .text-success {
     color: #10B981 !important;
   }
+}
+
+/* Tooltip 樣式優化 - 增加對比度 */
+.ant-tooltip {
+  max-width: 300px;
+}
+
+.ant-tooltip-inner {
+  background-color: #1f2937 !important;
+  color: #ffffff !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  padding: 8px 12px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+}
+
+.ant-tooltip-arrow-content {
+  background-color: #1f2937 !important;
+}
+
+/* 確保深色模式下 Tooltip 仍然清晰 */
+[data-theme="dark"] .ant-tooltip-inner {
+  background-color: #1f2937 !important;
+  color: #ffffff !important;
+}
+
+[data-theme="dark"] .ant-tooltip-arrow-content {
+  background-color: #1f2937 !important;
 } 

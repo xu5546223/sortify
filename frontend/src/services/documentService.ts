@@ -17,9 +17,10 @@ export const getDocuments = async (
     sortBy?: keyof Document, 
     sortOrder?: 'asc' | 'desc',
     skip: number = 0,
-    limit: number = 20
+    limit: number = 20,
+    clusterId?: string | null
 ): Promise<{ documents: Document[], totalCount: number }> => {
-    console.log(`API: Fetching documents... Search: ${searchTerm}, Status: ${status}, Tags: ${tagsInclude}, SortBy: ${sortBy} ${sortOrder}, Skip: ${skip}, Limit: ${limit}`);
+    console.log(`API: Fetching documents... Search: ${searchTerm}, Status: ${status}, Tags: ${tagsInclude}, SortBy: ${sortBy} ${sortOrder}, Skip: ${skip}, Limit: ${limit}, ClusterId: ${clusterId}`);
     try {
         const params: Record<string, any> = {
             skip: skip,
@@ -39,6 +40,9 @@ export const getDocuments = async (
             if (sortOrder) {
                 params.sort_order = sortOrder; 
             }
+        }
+        if (clusterId) {
+            params.cluster_id = clusterId;
         }
 
         const response = await apiClient.get<{ items?: Document[], total?: number }>('/documents/', { params });

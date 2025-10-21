@@ -59,6 +59,13 @@ async def create_database_indexes(db: AsyncIOMotorDatabase):
         await db.logs.create_index([("timestamp", DESCENDING), ("level", ASCENDING)])
         await db.logs.create_index([("timestamp", DESCENDING), ("source", ASCENDING)])
 
+        # Conversations collection
+        # user_id: 按用戶ID查詢對話
+        await db.conversations.create_index("user_id")
+        # 複合索引：按用戶ID和更新時間查詢（用於列出用戶對話）
+        await db.conversations.create_index([("user_id", ASCENDING), ("updated_at", DESCENDING)])
+        # created_at: 按創建時間降序查詢
+        await db.conversations.create_index([("created_at", DESCENDING)])
 
         logger.info("資料庫索引檢查並創建完成。")
     except Exception as e:

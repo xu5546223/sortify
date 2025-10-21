@@ -79,6 +79,7 @@ class AIQARequest(BaseModel):
     use_semantic_search: Optional[bool] = Field(True, description="Enable semantic/vector search")
     use_structured_filter: Optional[bool] = Field(False, description="Enable structured filtering based on query analysis")
     session_id: Optional[str] = Field(None, description="Optional session ID for conversation continuity")
+    conversation_id: Optional[str] = Field(None, description="對話ID，用於關聯歷史記憶和上下文")
     model_preference: Optional[str] = Field(None, description="Preferred AI model for this request")
     use_ai_detailed_query: Optional[bool] = Field(True, description="Enable AI to generate specific queries for detailed data extraction from documents.")
     

@@ -113,6 +113,7 @@ export interface AIServiceSettings {
   is_api_key_configured?: boolean | null;
   ensure_chinese_output?: boolean | null;
   max_output_tokens?: number | null;
+  prompt_input_max_length?: number | null;  // 新增: 提示詞最大輸入長度
 }
 
 export interface AIServiceSettingsUpdate {
@@ -121,6 +122,7 @@ export interface AIServiceSettingsUpdate {
   temperature?: number | null;
   ensure_chinese_output?: boolean | null;
   max_output_tokens?: number | null;
+  prompt_input_max_length?: number | null;  // 新增: 提示詞最大輸入長度
 }
 
 export interface DatabaseSettings {
@@ -212,6 +214,64 @@ export interface DocumentAnalysis {
   ai_analysis_output?: Record<string, any> | null;
 }
 
+// ========== 聚類相關類型 ==========
+
+export interface EnrichedDataEntities {
+  vendor?: string;
+  people?: string[];
+  locations?: string[];
+  organizations?: string[];
+  items?: string[];
+  amounts?: Array<{value: number; currency: string; context?: string}>;
+  dates?: Array<{date: string; context?: string}>;
+}
+
+export interface EnrichedData {
+  title?: string;
+  summary?: string;
+  entities?: EnrichedDataEntities;
+  keywords?: string[];
+  embedding_generated?: boolean;
+}
+
+export interface ClusterInfo {
+  cluster_id: string;
+  cluster_name: string;
+  cluster_confidence: number;
+  clustered_at: string;
+  clustering_version: string;
+}
+
+export type ClusteringStatus = 'pending' | 'clustered' | 'excluded';
+
+export interface ClusterSummary {
+  cluster_id: string;
+  cluster_name: string;
+  document_count: number;
+  keywords: string[];
+  created_at?: string;
+  updated_at?: string;
+  
+  // 階層結構相關 (用於兩級聚類)
+  parent_cluster_id?: string | null;
+  level: number; // 0=根層級/大類, 1=子層級/細分類
+  subclusters: string[]; // 子聚類ID列表
+  subcluster_summaries?: ClusterSummary[] | null; // 子聚類摘要(遞歸結構)
+}
+
+export interface ClusteringJobStatus {
+  job_id: string;
+  owner_id: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  total_documents: number;
+  processed_documents: number;
+  clusters_created: number;
+  started_at?: string | null;
+  completed_at?: string | null;
+  error_message?: string | null;
+  progress_percentage: number;
+}
+
 export interface Document {
   id: string;
   filename: string;
@@ -230,6 +290,12 @@ export interface Document {
   text_extraction_completed_at?: string | null;
   analysis?: DocumentAnalysis | null;
   error_details?: string | null;
+  
+  // 新增: 聚類和語義豐富化欄位
+  // 注意: raw_text 使用現有的 extracted_text 欄位
+  enriched_data?: EnrichedData | null;
+  cluster_info?: ClusterInfo | null;
+  clustering_status?: ClusteringStatus;
 }
 
 export interface DocumentUpdateRequest {
@@ -289,6 +355,7 @@ export interface AIQARequestUnified extends AIRequest {
   use_semantic_search?: boolean;
   use_structured_filter?: boolean;
   session_id?: string | null;
+  conversation_id?: string | null; // 對話ID，用於關聯歷史記憶和上下文
   use_ai_detailed_query?: boolean;
   
   // 新增的用戶可調整參數
