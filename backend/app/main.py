@@ -18,6 +18,7 @@ from .apis.v1 import cache_monitoring as cache_monitoring_api_v1 # 新增緩存�
 from .apis.v1 import gmail as gmail_api_v1 # 新增 Gmail router 導入
 from .apis.v1 import clustering as clustering_api_v1 # 新增聚類 router 導入
 from .apis.v1 import conversations as conversations_api_v1 # 新增對話 router 導入
+from .apis.v1 import device_auth as device_auth_api_v1 # 新增 Device Auth router 導入
 
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -306,6 +307,17 @@ app.include_router(conversations_api_v1.router, prefix="/api/v1", tags=["v1 - Co
 # 註冊QA統計分析路由
 from .apis.v1 import qa_analytics as qa_analytics_api_v1
 app.include_router(qa_analytics_api_v1.router, prefix="/api/v1/qa/analytics", tags=["v1 - QA Analytics"])
+
+# 註冊流式 QA 路由
+from .apis.v1 import qa_stream as qa_stream_api_v1
+app.include_router(qa_stream_api_v1.router, prefix="/api/v1", tags=["v1 - QA Streaming"])
+
+# 註冊 Device Auth 路由
+app.include_router(device_auth_api_v1.router, prefix="/api/v1/device-auth", tags=["v1 - Device Authentication"])
+
+# 註冊建議問題路由
+from .apis.v1 import suggested_questions as suggested_questions_api_v1
+app.include_router(suggested_questions_api_v1.router, prefix="/api/v1", tags=["v1 - Suggested Questions"])
 
 
 

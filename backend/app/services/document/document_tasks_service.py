@@ -16,6 +16,7 @@ from .document_processing_service import DocumentProcessingService, SUPPORTED_IM
 from ..ai.unified_ai_service_simplified import AIRequest, TaskType as AIServiceTaskType, unified_ai_service_simplified
 from ..ai.unified_ai_config import unified_ai_config
 from ...core.logging_utils import log_event, LogLevel, AppLogger
+from .vectorization_queue import vectorization_queue
 
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
 
@@ -226,6 +227,43 @@ class DocumentTasksService:
                 
                 log_level = LogLevel.INFO if processing_status == DocumentStatus.ANALYSIS_COMPLETED else LogLevel.ERROR
                 log_message = f"AI {processing_type} for doc ID {doc_uuid} status: {processing_status.value}."
+                
+                # 🎯 自動向量化: 當 AI 分析成功完成後，加入向量化隊列
+                if processing_status == DocumentStatus.ANALYSIS_COMPLETED:
+                    logger.info(f"✨ AI 分析完成，將文檔 {doc_uuid} 加入向量化隊列")
+                    try:
+                        # 使用隊列管理向量化任務，避免並發衝突
+                        await vectorization_queue.add_task(
+                            document_id=str(doc_uuid),
+                            db=db
+                        )
+                        logger.info(f"✅ 文檔 {doc_uuid} 已加入向量化隊列")
+                        
+                        # 獲取隊列狀態
+                        queue_status = vectorization_queue.get_status()
+                        logger.info(f"📊 隊列狀態: {queue_status}")
+                        
+                        await log_event(
+                            db=db, level=LogLevel.INFO,
+                            message=f"文檔 {doc_uuid} 加入向量化隊列",
+                            source="doc_tasks_service._save_results.auto_vectorize",
+                            user_id=user_id_for_log, request_id=request_id_for_log,
+                            details={
+                                "doc_id": str(doc_uuid), 
+                                "trigger": "auto",
+                                "queue_status": queue_status
+                            }
+                        )
+                    except Exception as auto_vec_error:
+                        # 向量化失敗不應影響分析狀態，只記錄錯誤
+                        logger.error(f"❌ 文檔 {doc_uuid} 加入向量化隊列失敗: {auto_vec_error}", exc_info=True)
+                        await log_event(
+                            db=db, level=LogLevel.ERROR,
+                            message=f"文檔 {doc_uuid} 加入向量化隊列失敗: {str(auto_vec_error)}",
+                            source="doc_tasks_service._save_results.auto_vectorize_error",
+                            user_id=user_id_for_log, request_id=request_id_for_log,
+                            details={"doc_id": str(doc_uuid), "error": str(auto_vec_error)}
+                        )
             elif processing_status != DocumentStatus.ANALYZING: # Error or unsupported before full analysis
                 await crud_documents.update_document_status(db, doc_uuid, processing_status, f"Processing concluded: {processing_status.value}")
                 log_level = LogLevel.WARNING

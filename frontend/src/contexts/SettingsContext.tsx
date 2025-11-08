@@ -70,6 +70,19 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
   const [error, setError] = useState<string | null>(null);
 
   const fetchSettings = useCallback(async () => {
+    // 🔒 檢查是否在手機端且未配對
+    const isMobile = window.location.pathname.startsWith('/mobile');
+    const hasDeviceToken = localStorage.getItem('sortify_device_token');
+    const hasAuthToken = localStorage.getItem('authToken');
+    
+    // 如果是手機端且沒有 token，使用默認設置而不請求 API
+    if (isMobile && !hasDeviceToken && !hasAuthToken) {
+      console.log('SettingsContext: 手機端未配對，使用默認設置');
+      setSettings(initialSettings);
+      setIsLoading(false);
+      return;
+    }
+    
     console.log('SettingsContext: Fetching settings...');
     setIsLoading(true);
     setError(null);
@@ -93,6 +106,12 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
     } catch (err: any) {
       console.error('SettingsContext: Failed to fetch settings', err);
       setError(err.message || 'Failed to load settings');
+      
+      // 🔒 如果是 401 錯誤且在手機端，使用默認設置（避免無限循環）
+      if (isMobile && err.response?.status === 401) {
+        console.log('SettingsContext: 401 錯誤，使用默認設置');
+        setSettings(initialSettings);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -100,6 +119,23 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
 
   useEffect(() => {
     fetchSettings();
+  }, [fetchSettings]);
+
+  // 🔄 監聽認證狀態變化，當用戶登錄/登出時自動重新載入設定
+  useEffect(() => {
+    const handleAuthChange = () => {
+      console.log('SettingsContext: 檢測到認證狀態變化，重新載入設定');
+      fetchSettings();
+    };
+
+    // 監聽自定義的認證狀態變化事件
+    window.addEventListener('pairing-status-changed', handleAuthChange);
+    window.addEventListener('auth-status-changed', handleAuthChange);
+
+    return () => {
+      window.removeEventListener('pairing-status-changed', handleAuthChange);
+      window.removeEventListener('auth-status-changed', handleAuthChange);
+    };
   }, [fetchSettings]);
 
   const updateSettingsHandler = async (newSettingsUpdate: Partial<UpdatableSettingsPayload>) => {

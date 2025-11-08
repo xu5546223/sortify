@@ -13,14 +13,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 # 這些函數從ai_config_service移植過來
+# 僅保留2025年的正式版本模型
 DEFAULT_GOOGLE_AI_MODELS = [
-    "gemini-1.5-flash",
-    "gemini-1.5-pro", 
-    "gemini-1.0-pro",
-    "gemini-pro",
-    "gemini-2.0-flash",
-    "gemini-2.5-flash-preview-05-20",
-    "gemini-2.5-pro-preview-05-06",
+    "gemini-2.5-pro",        # 2025年 2.5 Pro 正式版本
+    "gemini-2.5-flash",      # 2025年 2.5 Flash 正式版本
+    "gemini-2.0-flash",      # 2025年 2.0 Flash 正式版本
+    "gemini-1.5-flash",      # 備用穩定版本
+    "gemini-1.5-pro",        # 備用穩定版本
 ]
 
 def _fetch_dynamic_google_models() -> Optional[List[str]]:
@@ -57,13 +56,18 @@ def get_google_ai_models() -> List[str]:
     
     if all_models_from_api:
         preferred_models = []
+        # 僅保留2025年的正式版本模型，按優先級排序
         priority_order = [
-            "gemini-2.5-pro-preview-05-06", "gemini-2.5-pro-preview-03-25", "gemini-2.5-pro-exp-03-25",
-            "gemini-2.5-flash-preview-05-20", "gemini-2.5-flash-preview-04-17",
-            "gemini-2.0-flash", "gemini-2.0-flash-001", "gemini-2.0-flash-exp",
-            "gemini-1.5-flash", "gemini-1.5-flash-002", "gemini-1.5-flash-001",
-            "gemini-1.5-pro", "gemini-1.5-pro-002", "gemini-1.5-pro-001",
-            "gemini-1.0-pro", "gemini-1.0-pro-vision-latest", "gemini-pro", "gemini-pro-vision",
+            "gemini-2.5-pro",             # 2025年 2.5 Pro 正式版本
+            "gemini-2.5-flash",           # 2025年 2.5 Flash 正式版本
+            "gemini-2.0-flash",           # 2025年 2.0 Flash 正式版本
+            "gemini-2.0-flash-001",       # 2.0 系列穩定版本
+            "gemini-1.5-pro",             # 1.5 Pro 備用版本
+            "gemini-1.5-pro-002",         # 1.5 Pro 穩定版本
+            "gemini-1.5-pro-001",         # 1.5 Pro 穩定版本
+            "gemini-1.5-flash",           # 1.5 Flash 備用版本
+            "gemini-1.5-flash-002",       # 1.5 Flash 穩定版本
+            "gemini-1.5-flash-001",       # 1.5 Flash 穩定版本
         ]
         added_models = set()
         for model_name in priority_order:
@@ -197,6 +201,7 @@ class TaskType(Enum):
     BATCH_CLUSTER_LABELS = "batch_cluster_labels"  # 批量聚類標籤生成
     QUESTION_INTENT_CLASSIFICATION = "question_intent_classification"  # 問題意圖分類
     GENERATE_CLARIFICATION_QUESTION = "generate_clarification_question"  # 生成澄清問題
+    QUESTION_GENERATION = "question_generation"  # 生成建議問題
 
 @dataclass
 class AIModelConfig:
@@ -300,11 +305,12 @@ class UnifiedAIConfig:
             if user_preferred_model and user_preferred_model in self._models:
                 model_cfg = self._models[user_preferred_model]
                 if not supports_images or model_cfg.supports_images: preferred.append(user_preferred_model)
-            for model_id in ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash", "gemini-1.5-pro"]:
+            # 使用2025年的正式版本模型（2.5 Pro、2.5 Flash、2.0 Flash）
+            for model_id in ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]:
                 if model_id not in preferred and model_id in self._models:
                     model_cfg = self._models[model_id]
                     if not supports_images or model_cfg.supports_images: preferred.append(model_id)
-            return preferred if preferred else ["gemini-1.5-flash"]
+            return preferred if preferred else ["gemini-2.0-flash"]
         
         common_safety_settings = {
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
@@ -371,8 +377,9 @@ class UnifiedAIConfig:
             retry_attempts=3
         )
         
-        # Configuration for Question Intent Classification (使用 Gemini 2.0 Flash for speed)
-        flash_models = ["gemini-2.0-flash-exp", "gemini-2.0-flash", "gemini-2.5-flash-preview-05-20"]
+        # Configuration for Question Intent Classification (使用 Gemini Flash 系列提升速度)
+        # 使用2025年的正式版本模型
+        flash_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
         available_flash = [m for m in flash_models if m in self._models]
         self._task_configs[TaskType.QUESTION_INTENT_CLASSIFICATION] = TaskConfig(
             task_type=TaskType.QUESTION_INTENT_CLASSIFICATION,
@@ -402,6 +409,22 @@ class UnifiedAIConfig:
                 safety_settings=common_safety_settings
             ),
             timeout_seconds=15,
+            retry_attempts=2
+        )
+        
+        # Configuration for Question Generation (建議問題生成)
+        self._task_configs[TaskType.QUESTION_GENERATION] = TaskConfig(
+            task_type=TaskType.QUESTION_GENERATION,
+            preferred_models=available_flash if available_flash else get_preferred_models_for_task_init(False),
+            generation_params=GenerationParams(
+                temperature=0.8, # Higher temperature for diverse and creative questions
+                top_p=settings.AI_TOP_P,
+                top_k=settings.AI_TOP_K,
+                max_output_tokens=2048, # 足夠的輸出長度以生成多個問題
+                response_mime_type="application/json",
+                safety_settings=common_safety_settings
+            ),
+            timeout_seconds=30,
             retry_attempts=2
         )
     
@@ -561,32 +584,9 @@ class UnifiedAIConfig:
 
             user_preferred_model_from_db = self._user_global_ai_preferences.get("model")
 
-            # 新增：映射通用名稱到具體的預覽版名稱
-            model_mapping = {
-                "gemini-2.5-flash": "gemini-2.5-flash-preview-05-20",
-                "gemini-2.5-pro": "gemini-2.5-pro-preview-05-06",
-                "gemini-1.5-pro": "gemini-1.5-pro-latest", # 假設 "gemini-1.5-pro-latest" 是我們在 DEFAULT_GOOGLE_AI_MODELS 中使用的 ID
-                "gemini-1.5-flash": "gemini-1.5-flash-latest" # 假設 "gemini-1.5-flash-latest" 是我們在 DEFAULT_GOOGLE_AI_MODELS 中使用的 ID
-                # 如果 DEFAULT_GOOGLE_AI_MODELS 使用的是 "gemini-1.5-pro" 和 "gemini-1.5-flash"，則不需要這兩條映射
-            }
-            
-            # 校驗映射目標是否存在於 self._models (確保映射到的是系統已知的模型)
-            # 並更新 DEFAULT_GOOGLE_AI_MODELS 以匹配這些映射目標，如果它們還沒完全一致
-            # 例如, 確保 "gemini-1.5-pro-latest" 在 DEFAULT_GOOGLE_AI_MODELS 中 (如果它是映射目標)
-            # 為了簡化，這裡假設 DEFAULT_GOOGLE_AI_MODELS 已經包含了正確的映射目標ID
-
-            if user_preferred_model_from_db in model_mapping:
-                mapped_model = model_mapping[user_preferred_model_from_db]
-                # 只有當映射後的模型存在於系統已知的模型列表 (_models) 中時才進行更新
-                if mapped_model in self._models:
-                    original_pref = user_preferred_model_from_db
-                    self._user_global_ai_preferences["model"] = mapped_model
-                    logger.info(f"用戶偏好模型 '{original_pref}' 已映射到系統已知的具體版本 '{mapped_model}'")
-                else:
-                    logger.warning(f"用戶偏好模型 '{user_preferred_model_from_db}' 的映射目標 '{mapped_model}' 未在系統配置中找到。將保留原始偏好或回退。")
-            
-            # 更新後，user_preferred_model 將使用 self._user_global_ai_preferences 中可能已被映射的值
-            user_preferred_model = self._user_global_ai_preferences.get("model")
+            # 直接使用正式版本模型，不再需要映射到預覽版
+            # 所有模型使用其正式版本名稱
+            user_preferred_model = user_preferred_model_from_db
             
             logger.info(f"重新載入任務配置，使用全局AI偏好 (無穩定模式): {self._user_global_ai_preferences}")
             
@@ -595,11 +595,12 @@ class UnifiedAIConfig:
                 if user_preferred_model and user_preferred_model in self._models:
                     model_cfg = self._models[user_preferred_model]
                     if not supports_images or model_cfg.supports_images: preferred.append(user_preferred_model)
-                for model_id in ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash", "gemini-1.5-pro"]:
+                # 使用2025年的正式版本模型（2.5 Pro、2.5 Flash、2.0 Flash）
+                for model_id in ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]:
                     if model_id not in preferred and model_id in self._models:
                         model_cfg = self._models[model_id]
                         if not supports_images or model_cfg.supports_images: preferred.append(model_id)
-                return preferred if preferred else ["gemini-1.5-flash"]
+                return preferred if preferred else ["gemini-2.0-flash"]
             
             if TaskType.TEXT_GENERATION in self._task_configs: self._task_configs[TaskType.TEXT_GENERATION].preferred_models = get_preferred_models_for_task_reload(False)
             if TaskType.IMAGE_ANALYSIS in self._task_configs: self._task_configs[TaskType.IMAGE_ANALYSIS].preferred_models = get_preferred_models_for_task_reload(True)

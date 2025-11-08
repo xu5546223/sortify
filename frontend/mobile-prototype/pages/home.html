@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sortify - 首頁</title>
+  <link rel="stylesheet" href="../css/mobile-theme.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+  <div class="mobile-header">
+    <div class="mobile-header-icon">
+      <i class="fas fa-bars"></i>
+    </div>
+    <div class="mobile-header-title">Sortify AI</div>
+    <div></div>
+  </div>
+
+  <div class="mobile-content fade-in">
+    <div class="mobile-card">
+      <h2 style="font-size: 24px; font-weight: 700; margin-bottom: 8px;">歡迎使用 Sortify AI</h2>
+      <p style="font-size: 14px; color: #666;">智能文件分析和問答助手</p>
+    </div>
+
+    <div class="mobile-card">
+      <h3 class="mobile-card-title">快速操作</h3>
+      <div class="action-grid">
+        <div class="action-item" onclick="navigate('camera.html')">
+          <i class="action-icon fas fa-camera" style="color: #29bf12;"></i>
+          <span style="font-size: 14px; font-weight: 500;">拍照上傳</span>
+        </div>
+        <div class="action-item" onclick="navigate('upload.html')">
+          <i class="action-icon fas fa-upload" style="color: #08bdbdff;"></i>
+          <span style="font-size: 14px; font-weight: 500;">選擇文件</span>
+        </div>
+        <div class="action-item" onclick="navigate('scan.html')">
+          <i class="action-icon fas fa-qrcode" style="color: #ff9914ff;"></i>
+          <span style="font-size: 14px; font-weight: 500;">掃描連線</span>
+        </div>
+        <div class="action-item" onclick="navigate('documents.html')">
+          <i class="action-icon fas fa-file-alt" style="color: #abff4fff;"></i>
+          <span style="font-size: 14px; font-weight: 500;">文件列表</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mobile-bottom-nav">
+    <a href="home.html" class="mobile-nav-item active">
+      <i class="mobile-nav-icon fas fa-home"></i>
+      <span class="mobile-nav-label">首頁</span>
+    </a>
+    <a href="documents.html" class="mobile-nav-item">
+      <i class="mobile-nav-icon fas fa-file-alt"></i>
+      <span class="mobile-nav-label">文件</span>
+    </a>
+    <a href="qa.html" class="mobile-nav-item">
+      <i class="mobile-nav-icon fas fa-comments"></i>
+      <span class="mobile-nav-label">問答</span>
+    </a>
+    <a href="profile.html" class="mobile-nav-item">
+      <i class="mobile-nav-icon fas fa-user"></i>
+      <span class="mobile-nav-label">我的</span>
+    </a>
+  </div>
+
+  <script src="../js/prototype.js"></script>
+</body>
+</html>
+

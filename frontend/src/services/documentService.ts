@@ -30,7 +30,7 @@ export const getDocuments = async (
             params.filename_contains = searchTerm;
         }
         if (status && status !== 'all') {
-            params.status = status;
+            params.status_in = [status]; // 后端接受的是数组
         }
         if (tagsInclude && tagsInclude.length > 0) {
             params.tags_include = tagsInclude;

@@ -16,12 +16,17 @@ Thumbs.db
 *.sln
 *.sw?
 
-# Environment files
+# Environment files (包含所有敏感配置)
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+*.env
+**/.env
+**/backend/.env
+**/frontend/.env
+**/evaluation/.env
 
 # Backend Python specific
 __pycache__/
@@ -76,6 +81,19 @@ data/
 uploaded_files/
 logs/
 *.log
+
+# 敏感的配置和密鑰文件
+*.pem
+*.key
+*.cert
+*.crt
+**/credentials.json
+**/token.json
+**/service-account.json
+
+# 本地開發配置
+.vscode/settings.json
+.idea/workspace.xml
 
 # Database files
 *.db

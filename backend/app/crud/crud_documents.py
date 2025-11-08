@@ -45,8 +45,18 @@ def _build_document_filter_query(
     if cluster_id:
         query["cluster_info.cluster_id"] = cluster_id
     
+    # 聚類狀態過濾
     if clustering_status:
-        query["clustering_status"] = clustering_status
+        if clustering_status == 'pending':
+            # pending 表示尚未分類：clustering_status 不存在、為 null 或明確為 'pending'
+            query["$or"] = [
+                {"clustering_status": {"$exists": False}},
+                {"clustering_status": None},
+                {"clustering_status": 'pending'}
+            ]
+        else:
+            # 其他狀態（excluded, clustered 等）直接匹配
+            query["clustering_status"] = clustering_status
     
     if has_enriched_data is not None:
         if has_enriched_data:
@@ -155,7 +165,8 @@ async def count_documents(
     status_in: Optional[List[DocumentStatus]] = None,
     filename_contains: Optional[str] = None,
     tags_include: Optional[List[str]] = None,
-    cluster_id: Optional[str] = None
+    cluster_id: Optional[str] = None,
+    clustering_status: Optional[str] = None
 ) -> int:
     """計算符合條件的文檔數量"""
     query = _build_document_filter_query(
@@ -164,7 +175,8 @@ async def count_documents(
         status_in=status_in,
         filename_contains=filename_contains,
         tags_include=tags_include,
-        cluster_id=cluster_id
+        cluster_id=cluster_id,
+        clustering_status=clustering_status
     )
     count = await db[DOCUMENT_COLLECTION].count_documents(query)
     return count
@@ -179,6 +191,7 @@ async def get_documents(
     filename_contains: Optional[str] = None,
     tags_include: Optional[List[str]] = None,
     cluster_id: Optional[str] = None,  # 新增: 聚類ID過濾
+    clustering_status: Optional[str] = None,  # 新增: 聚類狀態過濾
     sort_by: Optional[str] = None, # <--- 新增排序參數
     sort_order: Optional[str] = "desc" # <--- 新增排序參數，預設為 desc
 ) -> List[Document]:
@@ -189,12 +202,13 @@ async def get_documents(
         status_in=status_in,
         filename_contains=filename_contains,
         tags_include=tags_include,
-        cluster_id=cluster_id  # 傳遞cluster_id
+        cluster_id=cluster_id,  # 傳遞cluster_id
+        clustering_status=clustering_status  # 傳遞clustering_status
     )
     cursor = db[DOCUMENT_COLLECTION].find(query)
 
     # 添加排序邏輯
-    ALLOWED_SORT_FIELDS = ["created_at", "updated_at", "filename", "status", "file_size"] # 新增：允許排序的欄位列表
+    ALLOWED_SORT_FIELDS = ["created_at", "updated_at", "filename", "status", "size"] # 修正: file_size -> size 以匹配數據庫模型
     if sort_by and sort_by in ALLOWED_SORT_FIELDS: # 修改：檢查 sort_by 是否在允許列表中
         direction = 1 if sort_order.lower() == "asc" else -1
         cursor = cursor.sort(sort_by, direction)

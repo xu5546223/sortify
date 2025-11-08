@@ -238,6 +238,7 @@ async def list_documents(
     filename_contains: Optional[str] = Query(None, description="根據文件名包含的文字過濾 (不區分大小寫)"),
     tags_include: Optional[List[str]] = Query(None, description="根據包含的標籤過濾 (傳入一個或多個標籤)"),
     cluster_id: Optional[str] = Query(None, description="根據聚類ID過濾"),
+    clustering_status: Optional[str] = Query(None, description="根據聚類狀態過濾 (pending, clustered, excluded)"),
     sort_by: Optional[str] = Query(None, description="排序欄位 (例如 filename, created_at)"),
     sort_order: Optional[str] = Query("desc", description="排序順序 (asc 或 desc)")
 ):
@@ -249,6 +250,7 @@ async def list_documents(
     - **filename_contains**: 根據文件名包含的文字過濾 (不區分大小寫)。
     - **tags_include**: 根據包含的標籤過濾 (傳入一個或多個標籤)。
     - **cluster_id**: 根據聚類ID過濾,只返回屬於該聚類的文檔。
+    - **clustering_status**: 根據聚類狀態過濾 (pending, clustered, excluded)。
     - **sort_by**: 用於排序的欄位名稱。
     - **sort_order**: 排序方向 ('asc' 或 'desc')。
     """
@@ -264,6 +266,7 @@ async def list_documents(
         filename_contains=filename_contains,
         tags_include=tags_include,
         cluster_id=cluster_id,
+        clustering_status=clustering_status,
         sort_by=sort_by,
         sort_order=sort_order
     )
@@ -274,7 +277,8 @@ async def list_documents(
         status_in=status_in,
         filename_contains=filename_contains,
         tags_include=tags_include,
-        cluster_id=cluster_id
+        cluster_id=cluster_id,
+        clustering_status=clustering_status
     )
     
     

@@ -6,6 +6,7 @@ class TokenUsage(BaseModel):
     prompt_tokens: int = Field(..., description="輸入提示詞所使用的 Token 數量")
     completion_tokens: int = Field(..., description="模型生成回應所使用的 Token 數量")
     total_tokens: int = Field(..., description="總共使用的 Token 數量")
+    error_message: Optional[str] = Field(None, description="錯誤訊息（如果API調用失敗）")
 
 class AIPromptRequest(BaseModel):
     user_prompt: str = Field(..., description="使用者的提示詞", max_length=100000)

@@ -98,7 +98,8 @@ class AIQARequest(BaseModel):
     
     # 新增: 工作流控制參數
     skip_classification: Optional[bool] = Field(False, description="跳過問題分類,直接使用標準流程")
-    workflow_action: Optional[str] = Field(None, description="工作流操作: approve_search, skip_search, confirm_documents")
+    workflow_action: Optional[str] = Field(None, description="工作流操作: approve_search, skip_search, confirm_documents, provide_clarification")
+    clarification_text: Optional[str] = Field(None, description="用戶對澄清問題的回答文本")
     force_strategy: Optional[str] = Field(None, description="強制使用特定策略: simple, standard, complex")
     workflow_step: Optional[str] = Field(None, description="當前工作流步驟(用於前端逐步執行)")
 

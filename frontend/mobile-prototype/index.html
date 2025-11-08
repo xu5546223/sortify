@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Sortify Mobile - 原型導航</title>
+  <link rel="stylesheet" href="css/mobile-theme.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <style>
+    body {
+      padding: 20px;
+      background: linear-gradient(135deg, #29bf12 0%, #abff4fff 100%);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .nav-container {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+      max-width: 400px;
+      width: 100%;
+    }
+    h1 {
+      text-align: center;
+      color: #29bf12;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      text-align: center;
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+    .page-link {
+      display: block;
+      padding: 16px;
+      margin-bottom: 12px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      text-decoration: none;
+      color: #333;
+      transition: all 0.2s;
+    }
+    .page-link:hover {
+      background: #e9ecef;
+      transform: translateX(4px);
+    }
+    .page-link i {
+      margin-right: 12px;
+      color: #29bf12;
+      width: 24px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="nav-container fade-in">
+    <h1>📱 Sortify Mobile</h1>
+    <p class="subtitle">高保真互動原型 - 頁面導航</p>
+    
+    <a href="pages/home.html" class="page-link">
+      <i class="fas fa-home"></i>首頁
+    </a>
+    <a href="pages/scan.html" class="page-link">
+      <i class="fas fa-qrcode"></i>QR Code 掃描
+    </a>
+    <a href="pages/camera.html" class="page-link">
+      <i class="fas fa-camera"></i>拍照介面
+    </a>
+    <a href="pages/upload.html" class="page-link">
+      <i class="fas fa-upload"></i>文件上傳
+    </a>
+    <a href="pages/preview.html" class="page-link">
+      <i class="fas fa-eye"></i>上傳預覽
+    </a>
+    <a href="pages/processing.html" class="page-link">
+      <i class="fas fa-spinner"></i>分析處理中
+    </a>
+    <a href="pages/result.html" class="page-link">
+      <i class="fas fa-check-circle"></i>分析結果
+    </a>
+    <a href="pages/documents.html" class="page-link">
+      <i class="fas fa-file-alt"></i>文件列表
+    </a>
+    <a href="pages/qa.html" class="page-link">
+      <i class="fas fa-comments"></i>智能問答
+    </a>
+    <a href="pages/profile.html" class="page-link">
+      <i class="fas fa-user"></i>個人資料
+    </a>
+  </div>
+
+  <script src="js/prototype.js"></script>
+</body>
+</html>
+

@@ -154,7 +154,68 @@ class UnifiedAIServiceSimplified:
         except Exception as e:
             logger.error(f"[GoogleAI] 未預期錯誤 - Model: {model_id}: {e}", exc_info=True)
             error_message = f"執行 Google AI 請求時發生未預期錯誤: {str(e)}"
-        return None, TokenUsage(error_message=error_message)
+        
+        # 返回錯誤時，需要包含所有必需字段
+        return None, TokenUsage(
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            error_message=error_message
+        )
+    
+    async def _execute_google_ai_request_stream(
+        self,
+        model_id: str,
+        prompt_request: AIPromptRequest,
+        generation_config_dict: genai.types.GenerationConfigDict,
+        safety_settings: Dict[genai.types.HarmCategory, genai.types.HarmBlockThreshold],
+        image_content: Optional[Image.Image] = None
+    ):
+        """
+        流式執行 Google AI 請求，逐塊生成內容
+        
+        Yields:
+            str: 生成的文本塊
+        """
+        try:
+            model = genai.GenerativeModel(
+                model_name=model_id, 
+                generation_config=generation_config_dict,
+                safety_settings=safety_settings
+            )
+            prompt_parts_for_api = []
+            if prompt_request.system_prompt:
+                prompt_parts_for_api.append(prompt_request.system_prompt)
+            
+            prompt_parts_for_api.append(prompt_request.user_prompt)
+            
+            if image_content:
+                prompt_parts_for_api.append(image_content)
+            
+            logger.debug(f"[GoogleAI Stream] Model: {model_id}, Prompt parts count: {len(prompt_parts_for_api)}")
+            
+            # 使用 stream=True 啟用流式輸出
+            response = model.generate_content(prompt_parts_for_api, stream=True)
+            
+            full_text = ""
+            for chunk in response:
+                if chunk.text:
+                    full_text += chunk.text
+                    yield chunk.text
+            
+            # 記錄完整統計信息
+            token_count_model_input = model.count_tokens(prompt_parts_for_api).total_tokens
+            output_token_count = model.count_tokens(full_text).total_tokens
+            total_tokens = token_count_model_input + output_token_count
+            
+            logger.info(f"[GoogleAI Stream Success] Model: {model_id}, Input Tokens: {token_count_model_input}, Output Tokens: {output_token_count}, Total Tokens: {total_tokens}")
+            
+        except (GoogleAPIError, RetryError, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"[GoogleAI Stream] API 錯誤 ({type(e).__name__}) - Model: {model_id}: {e}")
+            yield f"[錯誤] Google AI API 錯誤: {str(e)}"
+        except Exception as e:
+            logger.error(f"[GoogleAI Stream] 未預期錯誤 - Model: {model_id}: {e}", exc_info=True)
+            yield f"[錯誤] 執行流式請求時發生錯誤: {str(e)}"
     
     async def process_request(
         self, 
@@ -216,6 +277,8 @@ class UnifiedAIServiceSimplified:
             prompt_type = PromptType.QUESTION_INTENT_CLASSIFICATION
         elif request.task_type == TaskType.GENERATE_CLARIFICATION_QUESTION:
             prompt_type = PromptType.GENERATE_CLARIFICATION_QUESTION
+        elif request.task_type == TaskType.QUESTION_GENERATION:
+            prompt_type = PromptType.QUESTION_GENERATION
         else:
             logger.error(f"未知的任務類型: {request.task_type}")
             return AIResponse(success=False, task_type=request.task_type, error_message=f"未知的任務類型: {request.task_type}", processing_time_seconds=time.time() - start_time)

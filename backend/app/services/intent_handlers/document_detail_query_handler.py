@@ -44,6 +44,20 @@ def remove_projection_path_collisions(projection: dict) -> dict:
     return projection
 
 
+def sanitize_for_json(obj: Any) -> Any:
+    """清理數據中的不可 JSON 序列化的對象（UUID、datetime 等）"""
+    from datetime import datetime
+    if isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [sanitize_for_json(item) for item in obj]
+    if isinstance(obj, uuid.UUID):
+        return str(obj)
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    return obj
+
+
 class DocumentDetailQueryHandler:
     """文檔詳細查詢處理器 - 對已知文檔執行 MongoDB 精確查詢"""
     
@@ -188,8 +202,9 @@ class DocumentDetailQueryHandler:
         document_reference_map = {}  # 用於保存文檔ID到參考編號的映射
         
         # 構建文檔ID到參考編號的映射（從緩存文檔列表）
+        # 確保 key 統一為字符串格式，以便後續查找
         for idx, doc_id in enumerate(cached_doc_ids, 1):
-            document_reference_map[doc_id] = idx
+            document_reference_map[str(doc_id)] = idx
         
         documents = await get_documents_by_ids(db, target_doc_ids)
         
@@ -313,7 +328,7 @@ class DocumentDetailQueryHandler:
         conversation_id: Optional[str],
         context: Optional[dict]
     ) -> str:
-        """使用詳細數據生成答案"""
+        """使用詳細數據生成答案（非流式）"""
         
         # 載入對話歷史
         from app.services.qa_workflow.unified_context_helper import unified_context_helper
@@ -333,7 +348,9 @@ class DocumentDetailQueryHandler:
         
         # 添加詳細數據
         for i, data in enumerate(detailed_data, 1):
-            data_str = json.dumps(data, ensure_ascii=False, indent=2)
+            # 清理數據中的 UUID 和其他不可序列化的對象
+            sanitized_data = sanitize_for_json(data)
+            data_str = json.dumps(sanitized_data, ensure_ascii=False, indent=2)
             
             # 獲取文檔的原始參考編號（文檔幾）
             filename = data.get('filename', '未知文件')
@@ -362,6 +379,68 @@ class DocumentDetailQueryHandler:
         except Exception as e:
             logger.error(f"生成答案失敗: {e}", exc_info=True)
             return "抱歉，生成答案時發生錯誤。"
+    
+    async def generate_answer_from_details_stream(
+        self,
+        question: str,
+        detailed_data: List[Dict],
+        classification: QuestionClassification,
+        db: Optional[AsyncIOMotorDatabase],
+        user_id: Optional[str],
+        conversation_id: Optional[str],
+        context: Optional[dict]
+    ):
+        """使用詳細數據生成答案（流式）"""
+        
+        # 載入對話歷史
+        from app.services.qa_workflow.unified_context_helper import unified_context_helper
+        
+        conversation_history_text = await unified_context_helper.load_and_format_conversation_history(
+            db=db,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            limit=5,
+            max_content_length=2000
+        )
+        
+        # 構建上下文
+        context_parts = []
+        if conversation_history_text:
+            context_parts.append(conversation_history_text)
+        
+        # 添加詳細數據
+        for i, data in enumerate(detailed_data, 1):
+            # 清理數據中的 UUID 和其他不可序列化的對象
+            sanitized_data = sanitize_for_json(data)
+            data_str = json.dumps(sanitized_data, ensure_ascii=False, indent=2)
+            
+            # 獲取文檔的原始參考編號（文檔幾）
+            filename = data.get('filename', '未知文件')
+            reference_number = data.get('_reference_number', i)  # 如果有原始編號就用，沒有就用循環編號
+            
+            # 構建清晰的標題，包含參考編號和文件名
+            doc_label = f"文檔{reference_number} ({filename})"
+            context_parts.append(f"=== {doc_label} 的詳細數據 ===\n{data_str}\n")
+            
+            logger.debug(f"添加文檔上下文: {doc_label}")
+        
+        # 調用 AI 流式生成答案
+        try:
+            from app.services.ai.unified_ai_service_stream import generate_answer_stream
+            
+            async for chunk in generate_answer_stream(
+                user_question=question,
+                intent_analysis=classification.reasoning,
+                document_context=context_parts,
+                model_preference=None,
+                user_id=user_id,
+                db=db
+            ):
+                yield chunk
+                
+        except Exception as e:
+            logger.error(f"流式生成答案失敗: {e}", exc_info=True)
+            yield "抱歉，生成答案時發生錯誤。"
 
 
 # 創建全局實例

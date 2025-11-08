@@ -1,0 +1,405 @@
+/* ==================== 手機端工作流卡片樣式 ==================== */
+
+.mobile-workflow-card {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  margin: 16px 0;
+  overflow: hidden;
+  animation: slide-in 0.3s ease-out;
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ==================== 卡片標題 ==================== */
+
+.mobile-workflow-card .card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.mobile-workflow-card.clarification .card-header {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+}
+
+.mobile-workflow-card.search-approval .card-header {
+  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+}
+
+.mobile-workflow-card.detail-query-approval .card-header {
+  background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+}
+
+.mobile-workflow-card .card-icon {
+  font-size: 20px;
+}
+
+.mobile-workflow-card .card-title {
+  font-size: 16px;
+  font-weight: 600;
+  flex: 1;
+}
+
+/* ==================== 卡片內容 ==================== */
+
+.mobile-workflow-card .card-body {
+  padding: 16px;
+}
+
+.mobile-workflow-card .approval-description,
+.mobile-workflow-card .clarification-question {
+  font-size: 15px;
+  line-height: 1.6;
+  color: #262626;
+  margin: 0 0 16px 0;
+}
+
+.mobile-workflow-card .clarification-question {
+  background: #fff7e6;
+  border-left: 3px solid #fa8c16;
+  padding: 12px;
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+/* ==================== 快速選項 ==================== */
+
+.quick-options {
+  margin-bottom: 16px;
+}
+
+.quick-options-label {
+  font-size: 13px;
+  color: #8c8c8c;
+  margin-bottom: 8px;
+}
+
+.quick-options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.quick-option-btn {
+  background: white;
+  border: 1.5px solid #d9d9d9;
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 14px;
+  color: #262626;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.quick-option-btn:active {
+  background: #f0f0f0;
+  border-color: #1890ff;
+  transform: scale(0.98);
+}
+
+/* ==================== 自定義輸入 ==================== */
+
+.toggle-custom-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: #1890ff;
+  font-size: 14px;
+  padding: 8px 0;
+  cursor: pointer;
+  text-align: center;
+  text-decoration: underline;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.custom-input-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.custom-textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1.5px solid #d9d9d9;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: none;
+  box-sizing: border-box;
+  transition: border-color 0.2s ease;
+}
+
+.custom-textarea:focus {
+  outline: none;
+  border-color: #1890ff;
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1);
+}
+
+.submit-btn {
+  align-self: flex-end;
+  background: #1890ff;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.submit-btn:active {
+  background: #096dd9;
+  transform: scale(0.96);
+}
+
+.submit-btn:disabled {
+  background: #d9d9d9;
+  color: #8c8c8c;
+  cursor: not-allowed;
+}
+
+/* ==================== 搜索預覽 ==================== */
+
+.search-preview {
+  background: #e6f7ff;
+  border: 1px solid #91d5ff;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.search-preview .preview-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1890ff;
+  margin-bottom: 10px;
+}
+
+.search-preview .preview-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.search-preview .preview-label {
+  font-size: 12px;
+  color: #8c8c8c;
+}
+
+.search-preview .preview-value {
+  font-size: 13px;
+  color: #262626;
+}
+
+.search-preview .preview-value.highlight {
+  font-weight: 600;
+  color: #1890ff;
+}
+
+.search-preview .preview-note {
+  font-size: 11px;
+  color: #8c8c8c;
+  font-style: italic;
+  margin-top: 8px;
+}
+
+/* ==================== 文檔列表 ==================== */
+
+.document-list {
+  background: #f6ffed;
+  border: 1px solid #b7eb8f;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.document-list-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #52c41a;
+  margin-bottom: 10px;
+}
+
+.document-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.document-check {
+  color: #52c41a;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.document-name {
+  font-size: 13px;
+  color: #262626;
+  flex: 1;
+  line-height: 1.4;
+}
+
+.document-list-note {
+  font-size: 11px;
+  color: #8c8c8c;
+  font-style: italic;
+  margin-top: 8px;
+}
+
+/* ==================== 操作按鈕 ==================== */
+
+.action-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.action-btn {
+  width: 100%;
+  padding: 14px 16px;
+  border: none;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.action-btn.primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  box-shadow: 0 4px 12px rgba(118, 75, 162, 0.3);
+}
+
+.action-btn.primary:active {
+  transform: scale(0.97);
+  box-shadow: 0 2px 8px rgba(118, 75, 162, 0.3);
+}
+
+.action-btn.secondary {
+  background: white;
+  color: #595959;
+  border: 1.5px solid #d9d9d9;
+}
+
+.action-btn.secondary:active {
+  background: #f5f5f5;
+  border-color: #bfbfbf;
+}
+
+.action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.action-hint {
+  font-size: 12px;
+  color: #8c8c8c;
+  text-align: center;
+  line-height: 1.4;
+}
+
+/* ==================== 深色模式 ==================== */
+
+@media (prefers-color-scheme: dark) {
+  .mobile-workflow-card {
+    background: #1f1f1f;
+  }
+  
+  .mobile-workflow-card .approval-description,
+  .mobile-workflow-card .clarification-question {
+    color: #e0e0e0;
+  }
+  
+  .mobile-workflow-card .clarification-question {
+    background: #2a2416;
+    border-left-color: #d48806;
+  }
+  
+  .quick-option-btn {
+    background: #141414;
+    border-color: #434343;
+    color: #e0e0e0;
+  }
+  
+  .quick-option-btn:active {
+    background: #262626;
+  }
+  
+  .custom-textarea {
+    background: #141414;
+    border-color: #434343;
+    color: #e0e0e0;
+  }
+  
+  .search-preview {
+    background: #111d2c;
+    border-color: #15395b;
+  }
+  
+  .search-preview .preview-value {
+    color: #e0e0e0;
+  }
+  
+  .document-list {
+    background: #162312;
+    border-color: #274916;
+  }
+  
+  .document-name {
+    color: #e0e0e0;
+  }
+  
+  .action-btn.secondary {
+    background: #141414;
+    color: #e0e0e0;
+    border-color: #434343;
+  }
+  
+  .action-btn.secondary:active {
+    background: #262626;
+  }
+}
+
+/* ==================== 響應式調整 ==================== */
+
+@media (max-width: 360px) {
+  .mobile-workflow-card .card-body {
+    padding: 12px;
+  }
+  
+  .action-btn {
+    padding: 12px 14px;
+    font-size: 14px;
+  }
+}
+

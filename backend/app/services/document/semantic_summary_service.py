@@ -890,8 +890,9 @@ class SemanticSummaryService:
                                 source="service.semantic_summary.batch_process_chunked", details=log_details_item)
                 results["failed_to_process"].append({"id": doc_id_str, "error": "Invalid ID format"})
             except Exception as e:
+                logger.error(f"Error processing document {doc_id_str} in batch chunked processing: {str(e)}", exc_info=True)
                 await log_event(db=db, level=LogLevel.ERROR, message=f"Error processing document {doc_id_str} in batch chunked processing: {str(e)}",
-                                source="service.semantic_summary.batch_process_chunked", exc_info=True, details={**log_details_item, "error": str(e)})
+                                source="service.semantic_summary.batch_process_chunked", details={**log_details_item, "error": str(e)})
                 results["failed_to_process"].append({"id": doc_id_str, "error": str(e)})
                 try: # Attempt to mark doc as failed if general error occurs here
                     doc_uuid_for_fail_update = uuid.UUID(doc_id_str)

@@ -56,6 +56,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       // localStorage.setItem('authToken', tokenData.access_token); // loginUser 內部已處理
       // console.log('AuthContext: Login successful, token set');
       await fetchCurrentUser(); // 登入後立即獲取使用者資訊
+      
+      // 🔄 觸發認證狀態變化事件，讓其他組件（如 SettingsContext）重新載入
+      window.dispatchEvent(new Event('auth-status-changed'));
+      console.log('AuthContext: 已觸發 auth-status-changed 事件');
     } catch (error) {
       console.error('AuthContext: Login failed', error);
       setCurrentUser(null);
@@ -88,6 +92,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setToken(null);
     // delete apiClient.defaults.headers.common['Authorization']; // 攔截器會處理
     setIsLoading(false); 
+    
+    // 🔄 觸發認證狀態變化事件
+    window.dispatchEvent(new Event('auth-status-changed'));
+    console.log('AuthContext: 已觸發 auth-status-changed 事件（登出）');
+    
     // 可以在這裡加入重定向到登入頁面的邏輯，如果 AuthProvider 不是在路由層級之上的話
     // window.location.href = '/login'; // 簡單粗暴的重定向方式，建議使用 useNavigate
   };

@@ -13,6 +13,8 @@
     "antd": "^5.25.2",
     "axios": "^1.6.0",
     "chart.js": "^4.4.0",
+    "html5-qrcode": "^2.3.8",
+    "qrcode.react": "^4.2.0",
     "react": "^18.2.0",
     "react-chartjs-2": "^5.2.0",
     "react-dom": "^18.2.0",
@@ -21,10 +23,10 @@
     "react-router-dom": "^6.22.3",
     "react-scripts": "5.0.1",
     "remark-gfm": "^4.0.1",
+    "streamdown": "^1.4.0",
     "typescript": "^4.9.5",
     "web-vitals": "^2.1.4"
   },
-  "proxy": "http://localhost:8000/api/v1",
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
@@ -54,6 +56,7 @@
     "@types/node": "^22.15.18",
     "@types/testing-library__jest-dom": "^5.14.9",
     "autoprefixer": "^10.4.21",
+    "http-proxy-middleware": "^3.0.5",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17"
   }

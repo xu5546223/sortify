@@ -1,0 +1,869 @@
+/**
+ * 移動端智能問答樣式 - 滿版顯示
+ */
+
+.mobile-qa-container {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #f5f5f5;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+}
+
+/* 消息列表 */
+.mobile-qa-messages {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 70px 16px 16px 16px; /* 增加頂部 padding 避免被 header 遮擋 */
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+  -webkit-overflow-scrolling: touch;
+  background: #f5f5f5;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* 消息容器 - 獨立的用戶和 AI 容器 */
+.mobile-qa-message-wrapper {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: visible;
+  clear: both;
+  position: relative;
+  margin-bottom: 0; /* 移除默認間距 */
+  background: transparent !important;
+  border: none !important;
+}
+
+/* 用戶消息容器 - 獨立間距 */
+.mobile-qa-user-wrapper {
+  margin-bottom: 16px; /* 用戶消息後的間距 */
+  background: transparent !important;
+}
+
+/* AI 消息容器 - 獨立間距 */
+.mobile-qa-assistant-wrapper {
+  margin-bottom: 24px; /* AI 消息後的間距，為下一個問題留空間 */
+  background: transparent !important;
+}
+
+.mobile-qa-message {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  align-items: flex-start;
+  box-sizing: border-box;
+  overflow: visible;
+  margin: 0; /* 移除默認 margin */
+  padding: 0; /* 移除默認 padding */
+  background: transparent !important;
+  border: none !important;
+}
+
+.mobile-qa-message.user {
+  justify-content: flex-end;
+  background: transparent !important;
+}
+
+.mobile-qa-message.assistant {
+  justify-content: flex-start;
+  background: transparent !important;
+}
+
+/* 聊天氣泡 - 基礎樣式 */
+.mobile-qa-bubble {
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: 16px;
+  font-size: 15px;
+  line-height: 1.5;
+  word-wrap: break-word;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  position: relative;
+  animation: bubble-in 0.2s ease-out;
+  display: inline-block;
+  box-sizing: border-box;
+  border: none;
+  outline: none;
+  margin: 0;
+}
+
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 用戶消息氣泡 - 藍色背景，無邊框 */
+.user-bubble,
+.mobile-qa-bubble.user-bubble,
+.mobile-qa-message.user .mobile-qa-bubble,
+.mobile-qa-user-wrapper .mobile-qa-bubble,
+div.mobile-qa-bubble.user-bubble {
+  background: #1890ff !important;
+  background-color: #1890ff !important;
+  color: white !important;
+  border-bottom-right-radius: 4px !important;
+  box-shadow: 0 2px 8px rgba(24, 144, 255, 0.15) !important;
+  /* 強制移除所有可能的邊框 */
+  border: none !important;
+  border-width: 0 !important;
+  border-style: none !important;
+  border-color: transparent !important;
+  border-top: none !important;
+  border-right: none !important;
+  border-bottom: none !important;
+  border-left: none !important;
+  outline: none !important;
+  outline-width: 0 !important;
+  outline-style: none !important;
+  outline-color: transparent !important;
+}
+
+/* AI 回答直接渲染，不使用氣泡 */
+.assistant-content {
+  width: 100%;
+  max-width: 100%;
+  padding: 0; /* 移除 padding，讓間距由容器控制 */
+  margin: 0; /* 移除 margin，讓間距由容器控制 */
+  color: #262626;
+  font-size: 15px;
+  line-height: 1.6;
+  animation: fade-in 0.3s ease-out;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  word-break: break-word;
+  box-sizing: border-box;
+  display: block;
+  position: relative;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 打字機光標 */
+.typing-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: #1890ff;
+  margin-left: 2px;
+  animation: blink 1s infinite;
+  vertical-align: text-bottom;
+}
+
+@keyframes blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+/* 工作流批准 UI */
+.mobile-workflow-approval {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.approval-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1890ff;
+  margin-bottom: 8px;
+}
+
+.approval-message {
+  font-size: 13px;
+  color: #595959;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.approval-btn {
+  flex: 1;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.approval-btn.approve {
+  background: #1890ff;
+  color: white;
+}
+
+.approval-btn.approve:active {
+  background: #096dd9;
+  transform: scale(0.98);
+}
+
+.approval-btn.skip {
+  background: #f0f0f0;
+  color: #595959;
+}
+
+.approval-btn.skip:active {
+  background: #d9d9d9;
+  transform: scale(0.98);
+}
+
+.approval-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 元數據 */
+.message-metadata {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid #f0f0f0;
+  font-size: 11px;
+  color: #8c8c8c;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.metadata-item {
+  display: inline-flex;
+  padding: 4px 8px;
+  background: #f5f5f5;
+  border-radius: 12px;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 輸入框區域 */
+.mobile-qa-input-wrapper {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  background: white;
+  border-top: 1px solid #f0f0f0;
+}
+
+.mobile-qa-input {
+  flex: 1;
+  min-height: 40px;
+  max-height: 120px;
+  padding: 10px 14px;
+  border: 1px solid #d9d9d9;
+  border-radius: 20px;
+  font-size: 15px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  resize: none;
+  outline: none;
+  transition: border-color 0.2s;
+  -webkit-appearance: none;
+}
+
+.mobile-qa-input:focus {
+  border-color: #1890ff;
+}
+
+.mobile-qa-input:disabled {
+  background: #f5f5f5;
+  color: #bfbfbf;
+}
+
+.mobile-qa-send-btn {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: #1890ff;
+  color: white;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-qa-send-btn:active:not(:disabled) {
+  background: #096dd9;
+  transform: scale(0.95);
+}
+
+.mobile-qa-send-btn:disabled {
+  background: #d9d9d9;
+  cursor: not-allowed;
+}
+
+/* 快速問題按鈕 */
+.mobile-quick-question-btn {
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0 !important;
+  border-width: 1px !important;
+  border-style: solid !important;
+  border-color: #e0e0e0 !important;
+  background: white !important;
+  background-color: white !important;
+  font-size: 13px;
+  text-align: left;
+  color: #262626 !important;
+  cursor: pointer;
+  transition: all 0.2s;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.mobile-quick-question-btn:active {
+  background: #f5f5f5 !important;
+  transform: scale(0.98);
+}
+
+/* 對話列表抽屜 */
+.mobile-conversation-drawer .ant-drawer-header {
+  padding: 16px;
+  border-bottom: 1px solid #f0f0f0;
+  background: #fafafa;
+}
+
+.mobile-conversation-drawer .ant-drawer-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #262626;
+}
+
+.mobile-conversation-drawer .ant-drawer-body {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 抽屜頂部操作區 */
+.drawer-header-actions {
+  padding: 12px 16px;
+  background: white;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  gap: 8px;
+}
+
+.drawer-new-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  background: #1890ff;
+  color: white;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: all 0.2s;
+  box-shadow: 0 2px 4px rgba(24, 144, 255, 0.2);
+}
+
+.drawer-new-btn:active {
+  background: #096dd9;
+  transform: scale(0.98);
+}
+
+/* 搜索框 */
+.drawer-search {
+  padding: 8px 16px 12px;
+  background: white;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.drawer-search-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 14px;
+  background: #f5f5f5;
+  transition: all 0.2s;
+}
+
+.drawer-search-input:focus {
+  outline: none;
+  border-color: #1890ff;
+  background: white;
+}
+
+/* 對話列表 */
+.conversation-list {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.conversation-item {
+  padding: 14px 16px;
+  border-bottom: 1px solid #f0f0f0;
+  position: relative;
+  cursor: pointer;
+  transition: all 0.2s;
+  -webkit-tap-highlight-color: transparent;
+  background: white;
+}
+
+.conversation-item:active {
+  background: #f5f5f5;
+}
+
+.conversation-item.active {
+  background: #e6f7ff;
+  border-left: 3px solid #1890ff;
+  padding-left: 13px;
+}
+
+.conversation-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: #1890ff;
+}
+
+.conversation-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: #262626;
+  margin-bottom: 6px;
+  padding-right: 36px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.4;
+}
+
+.conversation-item.active .conversation-title {
+  color: #1890ff;
+}
+
+.conversation-meta {
+  font-size: 12px;
+  color: #8c8c8c;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.conversation-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.conversation-meta-badge {
+  background: #f0f0f0;
+  color: #595959;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.conversation-item.active .conversation-meta-badge {
+  background: #bae7ff;
+  color: #096dd9;
+}
+
+.conversation-delete-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #ff4d4f;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: all 0.2s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.conversation-delete-btn:active {
+  opacity: 1;
+  background: #fff1f0;
+  transform: scale(1.1);
+}
+
+/* 分類標籤 */
+.conversation-category {
+  padding: 8px 16px;
+  background: #fafafa;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #8c8c8c;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* 空狀態 */
+.mobile-empty {
+  text-align: center;
+  padding: 32px 16px;
+}
+
+.mobile-empty-icon {
+  font-size: 64px;
+  margin-bottom: 16px;
+}
+
+.mobile-empty-text {
+  font-size: 18px;
+  font-weight: 500;
+  color: #262626;
+  margin-bottom: 8px;
+}
+
+.mobile-empty-subtext {
+  font-size: 14px;
+  color: #8c8c8c;
+}
+
+/* 響應式調整 */
+@media (max-width: 375px) {
+  .mobile-qa-bubble {
+    max-width: 85%;
+    padding: 10px 14px;
+    font-size: 14px;
+  }
+  
+  .mobile-qa-input {
+    font-size: 14px;
+  }
+}
+
+/* iOS 安全區域適配 */
+@supports (padding: max(0px)) {
+  .mobile-qa-container {
+    height: calc(100vh - var(--mobile-header-height) - var(--mobile-bottom-nav-height) - env(safe-area-inset-bottom));
+  }
+}
+
+/* 深色模式支持 */
+@media (prefers-color-scheme: dark) {
+  .mobile-qa-container {
+    background: #141414;
+  }
+  
+  .assistant-content {
+    color: #e8e8e8;
+  }
+  
+  .message-metadata {
+    border-top-color: #303030;
+  }
+  
+  .metadata-item {
+    background: #262626;
+    color: #a8a8a8;
+  }
+  
+  .mobile-qa-input {
+    background: #1f1f1f;
+    border-color: #434343;
+    color: #e8e8e8;
+  }
+  
+  .mobile-quick-question-btn {
+    background: #1f1f1f;
+    border-color: #434343;
+    color: #e8e8e8;
+  }
+  
+  .conversation-item {
+    border-bottom-color: #303030;
+  }
+  
+  .conversation-title {
+    color: #e8e8e8;
+  }
+}
+
+/* ==================== Streamdown Markdown 樣式 ==================== */
+
+/* 確保 Streamdown 內容正確換行 */
+.assistant-content > div {
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow-wrap: break-word !important;
+  word-wrap: break-word !important;
+  word-break: break-word !important;
+  white-space: normal !important;
+  line-height: 1.6;
+  font-size: 15px;
+  box-sizing: border-box !important;
+}
+
+/* Streamdown 根元素 */
+.assistant-content [class*="streamdown"],
+.assistant-content > * {
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow-wrap: break-word !important;
+  word-wrap: break-word !important;
+  word-break: break-word !important;
+  white-space: normal !important;
+  box-sizing: border-box !important;
+}
+
+/* Markdown 標題 */
+.assistant-content h1,
+.assistant-content h2,
+.assistant-content h3,
+.assistant-content h4 {
+  margin-top: 16px;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: #262626;
+}
+
+.assistant-content h1 {
+  font-size: 20px;
+  border-bottom: 2px solid #e8e8e8;
+  padding-bottom: 8px;
+}
+
+.assistant-content h2 {
+  font-size: 18px;
+}
+
+.assistant-content h3 {
+  font-size: 16px;
+}
+
+/* Markdown 段落 */
+.assistant-content p {
+  margin: 8px 0;
+  line-height: 1.6;
+  width: 100%;
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  word-break: break-word;
+  white-space: normal;
+  box-sizing: border-box;
+}
+
+/* Markdown 列表 */
+.assistant-content ul,
+.assistant-content ol {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+
+.assistant-content li {
+  margin: 4px 0;
+  line-height: 1.6;
+}
+
+/* Markdown 代碼塊 */
+.assistant-content pre {
+  background: #f5f5f5;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  padding: 12px;
+  overflow-x: auto;
+  margin: 12px 0;
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  white-space: pre;
+}
+
+.assistant-content pre code {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+/* 行內代碼 */
+.assistant-content p code,
+.assistant-content li code {
+  background: #f0f0f0;
+  color: #d73a49;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  white-space: normal;
+  word-break: break-word;
+}
+
+/* Markdown 引用 */
+.assistant-content blockquote {
+  border-left: 4px solid #1890ff;
+  background: #f0f5ff;
+  padding: 8px 12px;
+  margin: 12px 0;
+  color: #595959;
+  font-style: italic;
+}
+
+/* Markdown 鏈接 */
+.assistant-content a {
+  color: #1890ff;
+  text-decoration: none;
+}
+
+.assistant-content a:hover {
+  text-decoration: underline;
+}
+
+/* Markdown 表格 */
+.assistant-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 14px;
+}
+
+.assistant-content table th,
+.assistant-content table td {
+  border: 1px solid #e8e8e8;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.assistant-content table th {
+  background: #fafafa;
+  font-weight: 600;
+}
+
+/* Markdown 分隔線 */
+.assistant-content hr {
+  border: none;
+  border-top: 1px solid #e8e8e8;
+  margin: 16px 0;
+}
+
+/* 暗色模式下的 Markdown 樣式 */
+.dark-mode .assistant-content h1,
+.dark-mode .assistant-content h2,
+.dark-mode .assistant-content h3,
+.dark-mode .assistant-content h4 {
+  color: #e8e8e8;
+}
+
+.dark-mode .assistant-content h1 {
+  border-bottom-color: #434343;
+}
+
+.dark-mode .assistant-content pre {
+  background: #1f1f1f;
+  border-color: #434343;
+}
+
+.dark-mode .assistant-content p code,
+.dark-mode .assistant-content li code {
+  background: #262626;
+  color: #ff7875;
+}
+
+.dark-mode .assistant-content blockquote {
+  border-left-color: #177ddc;
+  background: #111b26;
+  color: #a8a8a8;
+}
+
+.dark-mode .assistant-content table th,
+.dark-mode .assistant-content table td {
+  border-color: #434343;
+}
+
+.dark-mode .assistant-content table th {
+  background: #262626;
+}
+
+.dark-mode .assistant-content hr {
+  border-top-color: #434343;
+}
+
+/* 文檔引用鏈接樣式 */
+.doc-reference-link {
+  color: #1890ff !important;
+  cursor: pointer;
+  text-decoration: underline;
+  transition: all 0.2s ease;
+  display: inline;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+.doc-reference-link:hover {
+  color: #40a9ff !important;
+  background: rgba(24, 144, 255, 0.1);
+}
+
+.doc-reference-link:active {
+  color: #096dd9 !important;
+  background: rgba(24, 144, 255, 0.2);
+}
+
+/* Dark mode 文檔引用鏈接 */
+.dark-mode .doc-reference-link {
+  color: #4da6ff !important;
+}
+
+.dark-mode .doc-reference-link:hover {
+  color: #70b8ff !important;
+  background: rgba(77, 166, 255, 0.15);
+}
+
+.dark-mode .doc-reference-link:active {
+  color: #338aff !important;
+  background: rgba(77, 166, 255, 0.25);
+}
+

@@ -12,6 +12,7 @@ from app.models.vector_models import SemanticSearchRequest, SemanticSearchResult
 from app.models.response_models import BasicResponse
 from app.services.document.semantic_summary_service import semantic_summary_service
 from app.services.vector.embedding_service import embedding_service
+from app.services.document.vectorization_queue import vectorization_queue
 from app.dependencies import get_vector_db_service
 from app.core.logging_utils import AppLogger
 import logging
@@ -23,6 +24,27 @@ from app.core.logging_utils import log_event, LogLevel # Added
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger() # Existing AppLogger can remain
 
 router = APIRouter()
+
+@router.get("/queue/status")
+async def get_vectorization_queue_status(
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    獲取向量化隊列狀態
+    
+    返回信息：
+    - 隊列是否正在處理
+    - 隊列中等待的任務數
+    - 當前正在處理的任務數
+    - 已完成的任務數
+    - 最大並發數
+    """
+    status = vectorization_queue.get_status()
+    return {
+        "status": "success",
+        "data": status,
+        "message": "向量化隊列狀態"
+    }
 
 @router.get("/stats")
 async def get_vector_db_stats(

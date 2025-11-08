@@ -11,11 +11,13 @@ from .config import settings
 from app.db.mongodb_utils import get_db
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from ..crud.crud_users import crud_users
+from ..crud.crud_device_tokens import crud_device_tokens
 from ..models.user_models import UserInDB
 from ..models.token_models import TokenData
 from .password_utils import verify_password
 from ..core.logging_utils import log_event
 from ..models.log_models import LogLevel
+from ..core.device_security import verify_device_token
 
 # Passlib context for password hashing
 # 使用 bcrypt 作為主要的哈希算法
@@ -58,6 +60,8 @@ async def get_current_user(
     """
     解碼 JWT token 並返回 user_id。
     如果 token 無效或解碼失敗，則記錄錯誤並引發 HTTPException。
+    
+    ⚠️ 重要：如果是設備 Token，會額外檢查設備是否已被撤銷
     """
     request_id_for_log = request.state.request_id if hasattr(request.state, 'request_id') else "N/A"
     
@@ -66,6 +70,12 @@ async def get_current_user(
         detail="無法驗證憑證",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    device_revoked_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="設備授權已被撤銷，請重新配對",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    
     user_id_from_token: str | None = None
     try:
         payload = jwt.decode(
@@ -83,18 +93,81 @@ async def get_current_user(
             )
             raise credentials_exception
         
+        # 🔒 安全檢查：如果是設備 Token，驗證設備是否仍然活躍
+        token_type = payload.get("type")
+        if token_type == "device":
+            device_id = payload.get("device_id")
+            if device_id:
+                # 從數據庫檢查設備狀態
+                device_record = await crud_device_tokens.get_device_token_by_device_id(
+                    db=db,
+                    device_id=device_id
+                )
+                
+                if not device_record:
+                    await log_event(
+                        db=db,
+                        level=LogLevel.WARNING,
+                        message=f"Device token used but device not found in database: {device_id}",
+                        source="get_current_user",
+                        request_id=request_id_for_log,
+                        details={"device_id": device_id, "user_id": user_id_from_token}
+                    )
+                    raise device_revoked_exception
+                
+                # 檢查設備是否被撤銷（is_active = False）
+                if not device_record.is_active:
+                    await log_event(
+                        db=db,
+                        level=LogLevel.WARNING,
+                        message=f"Revoked device attempted to access: {device_id}",
+                        source="get_current_user",
+                        request_id=request_id_for_log,
+                        details={
+                            "device_id": device_id,
+                            "device_name": device_record.device_name,
+                            "user_id": user_id_from_token
+                        }
+                    )
+                    raise device_revoked_exception
+                
+                # 檢查設備是否過期
+                # 確保 expires_at 有時區信息
+                expires_at = device_record.expires_at
+                if expires_at.tzinfo is None:
+                    # 如果沒有時區信息，假設是 UTC
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                
+                if expires_at < datetime.now(timezone.utc):
+                    await log_event(
+                        db=db,
+                        level=LogLevel.WARNING,
+                        message=f"Expired device token used: {device_id}",
+                        source="get_current_user",
+                        request_id=request_id_for_log,
+                        details={"device_id": device_id, "user_id": user_id_from_token}
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="設備 Token 已過期，請重新配對",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+        
         token_data = TokenData(user_id=user_id_from_token)
 
+    except HTTPException:
+        # 重新拋出 HTTPException（包括設備撤銷異常）
+        raise
     except JWTError as e:
         await log_event(
             db=db,
             level=LogLevel.WARNING,
-            message="Token validation failed due to JWTError.", # Generic message
+            message="Token validation failed due to JWTError.",
             source="get_current_user",
             request_id=request_id_for_log,
             details={
                 "error_type": type(e).__name__,
-                "error_message": "JWT processing error", # More generic message in details
+                "error_message": "JWT processing error",
                 "guidance": "Verify token structure, signature, and claims. The token may be malformed, expired, or have an invalid signature."
             }
         )
