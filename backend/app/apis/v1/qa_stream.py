@@ -445,8 +445,10 @@ async def generate_streaming_answer(
                 # 執行查詢重寫
                 from app.services.ai.unified_ai_service_simplified import unified_ai_service_simplified
                 
+                # 優先使用分類推理作為重寫輸入；若無則使用包含澄清的有效問題；最後回退到原始問題
+                base_rewrite_input = classification.reasoning if hasattr(classification, 'reasoning') and classification.reasoning else effective_question
                 query_rewrite_response = await unified_ai_service_simplified.rewrite_query(
-                    original_query=request.question,
+                    original_query=base_rewrite_input,
                     model_preference=request.model_preference,
                     user_id=str(user_id) if user_id else None,
                     session_id=request.session_id,
@@ -459,10 +461,10 @@ async def generate_streaming_answer(
                     
                     ai_query_output = query_rewrite_response.output_data
                     if isinstance(ai_query_output, AIQueryRewriteOutput):
-                        rewritten_queries = ai_query_output.rewritten_queries or [request.question]
+                        rewritten_queries = ai_query_output.rewritten_queries or [base_rewrite_input]
                         
                         query_rewrite_result = QueryRewriteResult(
-                            original_query=request.question,
+                            original_query=base_rewrite_input,
                             rewritten_queries=rewritten_queries,
                             extracted_parameters=ai_query_output.extracted_parameters or {},
                             intent_analysis=ai_query_output.intent_analysis or "",
@@ -474,10 +476,10 @@ async def generate_streaming_answer(
                         yield f"data: {json.dumps({'type': 'progress', 'stage': 'query_rewrite', 'message': f'✅ 查詢優化完成', 'detail': {'count': len(rewritten_queries), 'queries': rewritten_queries}}, ensure_ascii=False)}\n\n"
                         await asyncio.sleep(0.1)
                     else:
-                        rewritten_queries = [request.question]
+                        rewritten_queries = [base_rewrite_input]
                 else:
                     logger.warning(f"查詢重寫失敗，使用原始查詢: {query_rewrite_response.error_message}")
-                    rewritten_queries = [request.question]
+                    rewritten_queries = [base_rewrite_input]
                 
                 # === 步驟 6: 向量搜索 ===
                 yield f"data: {json.dumps({'type': 'progress', 'stage': 'vector_search', 'message': '🔍 正在向量資料庫中搜索相關文檔...'}, ensure_ascii=False)}\n\n"
