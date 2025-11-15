@@ -6,7 +6,8 @@ import uuid
 import logging
 import random
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
+import pytz
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.suggested_question_models import (
@@ -78,7 +79,7 @@ async def get_random_questions(
     # 如果需要排除最近使用的問題
     if exclude_recently_used:
         from datetime import timedelta
-        cutoff_time = datetime.utcnow() - timedelta(days=recent_use_days)
+        cutoff_time = datetime.now(UTC) - timedelta(days=recent_use_days)
         available_questions = [
             q for q in available_questions
             if q.last_used_at is None or q.last_used_at < cutoff_time
@@ -121,7 +122,7 @@ async def save_user_questions(
     questions_doc = SuggestedQuestionsDocument(
         user_id=user_id,
         questions=questions,
-        last_generated=datetime.utcnow(),
+        last_generated=datetime.now(UTC),
         total_documents=total_documents,
         version=1
     )
@@ -168,7 +169,7 @@ async def mark_question_used(
         },
         {
             "$set": {
-                "questions.$.last_used_at": datetime.utcnow()
+                "questions.$.last_used_at": datetime.now(UTC)
             },
             "$inc": {
                 "questions.$.use_count": 1
@@ -249,7 +250,7 @@ async def should_regenerate_questions(
     
     # 檢查時間
     from datetime import timedelta
-    days_since_last_gen = (datetime.utcnow() - questions_doc.last_generated).days
+    days_since_last_gen = (datetime.now(UTC) - questions_doc.last_generated).days
     if days_since_last_gen > 30:
         logger.info(f"用戶 {user_id} 已 {days_since_last_gen} 天未更新問題，需要重新生成")
         return True

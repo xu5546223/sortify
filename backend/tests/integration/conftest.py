@@ -10,7 +10,7 @@ import asyncio
 import os
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from uuid import uuid4
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import AsyncGenerator
 from pymongo import MongoClient
 from bson.codec_options import CodecOptions
@@ -20,9 +20,10 @@ from bson.binary import UuidRepresentation
 os.environ["TESTING"] = "1"
 
 from app.core.config import settings
-from app.crud import crud_users, crud_documents
+from app.crud import crud_users, crud_documents, crud_conversations
 from app.models.user_models import UserCreate, User
 from app.models.document_models import Document, DocumentCreate, DocumentStatus
+from app.models.conversation_models import ConversationInDB, ConversationMessage
 from app.core.password_utils import get_password_hash
 
 # 使用独立的测试数据库
@@ -106,8 +107,8 @@ async def test_user(test_db: AsyncIOMotorDatabase) -> User:
         "hashed_password": get_password_hash("testpass123"),
         "is_active": True,
         "is_admin": False,
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow()
+        "created_at": datetime.now(UTC),
+        "updated_at": datetime.now(UTC)
     }
     
     await test_db["users"].insert_one(user_data)
@@ -143,8 +144,8 @@ async def other_user(test_db: AsyncIOMotorDatabase) -> User:
         "hashed_password": get_password_hash("otherpass123"),
         "is_active": True,
         "is_admin": False,
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow()
+        "created_at": datetime.now(UTC),
+        "updated_at": datetime.now(UTC)
     }
     
     await test_db["users"].insert_one(user_data)
@@ -179,8 +180,8 @@ async def test_document(test_db: AsyncIOMotorDatabase, test_user: User) -> Docum
         "owner_id": test_user.id,  # UUID 对象
         "status": DocumentStatus.UPLOADED.value,
         "vector_status": "not_vectorized",
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
+        "created_at": datetime.now(UTC),
+        "updated_at": datetime.now(UTC),
         "tags": ["test", "integration"],
         "metadata": {},
         "file_path": "/test/path/test_document.txt"
@@ -213,3 +214,117 @@ def test_upload_dir(tmp_path):
     upload_dir = tmp_path / "test_uploads"
     upload_dir.mkdir(exist_ok=True)
     return upload_dir
+
+
+@pytest_asyncio.fixture
+async def test_conversation(test_db: AsyncIOMotorDatabase, test_user: User) -> ConversationInDB:
+    """
+    创建测试对话（真实写入数据库）
+    
+    Returns:
+        ConversationInDB: 属于 test_user 的测试对话
+    """
+    conversation_id = uuid4()
+    
+    # 创建初始消息
+    initial_message = ConversationMessage(
+        role="user",
+        content="這是一個測試問題",
+        timestamp=datetime.now(UTC),
+        tokens_used=50
+    )
+    
+    conversation_data = {
+        "_id": conversation_id,
+        "title": "測試對話",
+        "user_id": test_user.id,
+        "messages": [initial_message.model_dump()],
+        "created_at": datetime.now(UTC),
+        "updated_at": datetime.now(UTC),
+        "message_count": 1,
+        "total_tokens": 50,
+        "cached_documents": [],
+        "cached_document_data": None
+    }
+    
+    await test_db["conversations"].insert_one(conversation_data)
+    
+    return ConversationInDB(
+        id=conversation_id,
+        title="測試對話",
+        user_id=test_user.id,
+        messages=[initial_message],
+        created_at=conversation_data["created_at"],
+        updated_at=conversation_data["updated_at"],
+        message_count=1,
+        total_tokens=50,
+        cached_documents=[],
+        cached_document_data=None
+    )
+
+
+@pytest_asyncio.fixture
+async def test_conversation_with_messages(test_db: AsyncIOMotorDatabase, test_user: User) -> ConversationInDB:
+    """
+    创建包含多条消息的测试对话
+    
+    Returns:
+        ConversationInDB: 包含多条消息的测试对话
+    """
+    conversation_id = uuid4()
+    
+    # 创建多条消息
+    messages = [
+        ConversationMessage(
+            role="user",
+            content="第一個問題",
+            timestamp=datetime.now(UTC),
+            tokens_used=30
+        ),
+        ConversationMessage(
+            role="assistant",
+            content="第一個回答",
+            timestamp=datetime.now(UTC),
+            tokens_used=100
+        ),
+        ConversationMessage(
+            role="user",
+            content="第二個問題",
+            timestamp=datetime.now(UTC),
+            tokens_used=40
+        ),
+        ConversationMessage(
+            role="assistant",
+            content="第二個回答",
+            timestamp=datetime.now(UTC),
+            tokens_used=120
+        )
+    ]
+    
+    conversation_data = {
+        "_id": conversation_id,
+        "title": "多消息測試對話",
+        "user_id": test_user.id,
+        "messages": [msg.model_dump() for msg in messages],
+        "created_at": datetime.now(UTC),
+        "updated_at": datetime.now(UTC),
+        "message_count": len(messages),
+        "total_tokens": sum(msg.tokens_used or 0 for msg in messages),
+        "cached_documents": [],
+        "cached_document_data": None
+    }
+    
+    await test_db["conversations"].insert_one(conversation_data)
+    
+    return ConversationInDB(
+        id=conversation_id,
+        title="多消息測試對話",
+        user_id=test_user.id,
+        messages=messages,
+        created_at=conversation_data["created_at"],
+        updated_at=conversation_data["updated_at"],
+        message_count=len(messages),
+        total_tokens=conversation_data["total_tokens"],
+        cached_documents=[],
+        cached_document_data=None
+    )

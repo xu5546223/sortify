@@ -20,13 +20,17 @@ from app.crud.crud_documents import get_document_by_id, update_document_vector_s
 from app.models.document_models import VectorStatus
 from fastapi import Request # Added
 from app.core.logging_utils import log_event, LogLevel # Added
+from app.core.logging_decorators import log_api_operation
 
-logger = AppLogger(__name__, level=logging.DEBUG).get_logger() # Existing AppLogger can remain
+logger = AppLogger(__name__, level=logging.DEBUG).get_logger() 
 
 router = APIRouter()
 
 @router.get("/queue/status")
+@log_api_operation(operation_name="獲取向量化隊列狀態", log_success=True, success_level=LogLevel.DEBUG)
 async def get_vectorization_queue_status(
+    request: Request,
+    db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -47,53 +51,33 @@ async def get_vectorization_queue_status(
     }
 
 @router.get("/stats")
+@log_api_operation(operation_name="獲取向量資料庫統計", log_success=True, success_level=LogLevel.DEBUG)
 async def get_vector_db_stats(
-    request: Request, # Added
-    db: AsyncIOMotorDatabase = Depends(get_db), # Added for log_event
+    request: Request,
+    db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """獲取向量資料庫統計信息 - 需要用戶認證"""
-    request_id_val = request.state.request_id if hasattr(request.state, 'request_id') else None
-    await log_event(
-        db=db, level=LogLevel.DEBUG,
-        message=f"User {current_user.username} requested vector DB stats.",
-        source="api.vector_db.get_stats", user_id=str(current_user.id), request_id=request_id_val
-    )
-    try:
-        vector_db_service_instance = get_vector_db_service()
-        stats = await vector_db_service_instance.get_collection_stats()
-        embedding_info = embedding_service.get_model_info()
-        stats["embedding_model"] = embedding_info
-        
-        if not embedding_info["model_loaded"]:
-            stats["initialization_required"] = True
-            stats["initialization_message"] = "Embedding model not loaded. Initialize to start vector database."
-        
-        if 'error' in stats and 'collection has not been initialized' in stats.get('error', '').lower(): # More robust check
-            stats["collection_initialization_required"] = True
-        
-        await log_event(
-            db=db, level=LogLevel.DEBUG,
-            message=f"Successfully retrieved vector DB stats for user {current_user.username}.",
-            source="api.vector_db.get_stats", user_id=str(current_user.id), request_id=request_id_val,
-            details={"model_loaded": embedding_info["model_loaded"], "collection_exists": not stats.get("collection_initialization_required", False)}
-        )
-        return stats
-        
-    except Exception as e:
-        await log_event(
-            db=db, level=LogLevel.ERROR,
-            message=f"Failed to get vector DB stats for user {current_user.username}: {str(e)}",
-            source="api.vector_db.get_stats", user_id=str(current_user.id), request_id=request_id_val,
-            details={"error": str(e), "error_type": type(e).__name__}
-        )
-        raise HTTPException(status_code=500, detail="Failed to retrieve vector database statistics.")
+    vector_db_service_instance = get_vector_db_service()
+    stats = await vector_db_service_instance.get_collection_stats()
+    embedding_info = embedding_service.get_model_info()
+    stats["embedding_model"] = embedding_info
+    
+    if not embedding_info["model_loaded"]:
+        stats["initialization_required"] = True
+        stats["initialization_message"] = "Embedding model not loaded. Initialize to start vector database."
+    
+    if 'error' in stats and 'collection has not been initialized' in stats.get('error', '').lower():
+        stats["collection_initialization_required"] = True
+    
+    return stats
 
 @router.post("/initialize")
+@log_api_operation(operation_name="初始化向量資料庫", log_success=True)
 async def initialize_vector_database(
-    request: Request, # Added
-    db: AsyncIOMotorDatabase = Depends(get_db), # Added
-    current_user: User = Depends(get_current_admin_user) # Admin access
+    request: Request,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user)
 ):
     """初始化向量資料庫（創建集合和索引） - 需要管理員權限"""
     request_id_val = request.state.request_id if hasattr(request.state, 'request_id') else None
@@ -143,69 +127,56 @@ async def initialize_vector_database(
         raise HTTPException(status_code=500, detail=f"Failed to initialize vector database: {str(e)}")
 
 @router.delete("/document/{document_id}")
+@log_api_operation(operation_name="刪除文檔向量", log_success=True)
 async def delete_document_from_vector_db(
     document_id: str,
-    request: Request, # Added
+    request: Request,
     current_user: User = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_db)
 ):
     """從向量資料庫中刪除文檔 - 需要用戶認證"""
-    request_id_val = request.state.request_id if hasattr(request.state, 'request_id') else None
-    await log_event(
-        db=db, level=LogLevel.INFO,
-        message=f"User {current_user.username} attempting to delete document vectors for doc_id: {document_id}.",
-        source="api.vector_db.delete_document_vectors", user_id=str(current_user.id), request_id=request_id_val,
-        details={"document_id": document_id}
-    )
-
-    doc_id_as_uuid: Optional[uuid.UUID] = None
+    # 驗證 UUID 格式
     try:
         doc_id_as_uuid = uuid.UUID(document_id)
     except ValueError:
-        await log_event(db=db, level=LogLevel.WARNING, message=f"Invalid document ID format for deletion: {document_id}", source="api.vector_db.delete_document_vectors", user_id=str(current_user.id), request_id=request_id_val)
         raise HTTPException(status_code=400, detail=f"Invalid document ID format: {document_id}")
-            
-    try:
-        document = await get_document_by_id(db, doc_id_as_uuid)
-        if not document:
-            await log_event(db=db, level=LogLevel.WARNING, message=f"Document not found for vector deletion: {document_id}", source="api.vector_db.delete_document_vectors", user_id=str(current_user.id), request_id=request_id_val)
-            raise HTTPException(status_code=404, detail=f"Document not found: {document_id}")
-        
-        if document.owner_id != current_user.id:
-            await log_event(db=db, level=LogLevel.WARNING, message=f"Unauthorized vector deletion attempt by user {current_user.username} for doc_id: {document_id}", source="api.vector_db.delete_document_vectors", user_id=str(current_user.id), request_id=request_id_val)
-            raise HTTPException(status_code=403, detail="Not authorized to delete this document's vectors.")
-        
-        vector_db_service_instance = get_vector_db_service()
-        delete_success_from_chroma = vector_db_service_instance.delete_by_document_id(document_id) # Uses string document_id
-        
-        if delete_success_from_chroma:
-            updated_doc = await update_document_vector_status(db, doc_id_as_uuid, VectorStatus.NOT_VECTORIZED)
-            if not updated_doc:
-                await log_event(db=db, level=LogLevel.WARNING, message=f"Vectors deleted from ChromaDB, but failed to update vector_status in MongoDB for doc: {document_id}", source="api.vector_db.delete_document_vectors", user_id=str(current_user.id), request_id=request_id_val)
-                # Still return success as primary deletion (vector DB) was successful
-
-            await log_event(db=db, level=LogLevel.INFO, message=f"Document vectors deleted and status updated for doc_id: {document_id}", source="api.vector_db.delete_document_vectors", user_id=str(current_user.id), request_id=request_id_val)
-            return JSONResponse(content={"message": f"Document vectors deleted and status updated: {document_id}", "document_id": document_id, "status": "deleted_and_status_updated"})
-        else:
-            # This might mean "not found" in Chroma or actual deletion failure
-            await log_event(db=db, level=LogLevel.WARNING, message=f"Vector deletion from ChromaDB indicated failure or document not found for doc_id: {document_id}", source="api.vector_db.delete_document_vectors", user_id=str(current_user.id), request_id=request_id_val)
-            raise HTTPException(status_code=500, detail="Failed to delete vectors from vector database (or vectors not found).")
-            
-    except HTTPException: # Re-raise known HTTP exceptions
-        raise
-    except Exception as e:
+    
+    # 檢查文檔存在和權限
+    document = await get_document_by_id(db, doc_id_as_uuid)
+    if not document:
+        raise HTTPException(status_code=404, detail=f"Document not found: {document_id}")
+    
+    if document.owner_id != current_user.id:
+        # 保留權限檢查日誌（重要的安全事件）
         await log_event(
-            db=db, level=LogLevel.ERROR,
-            message=f"Error deleting document vectors for doc_id {document_id}: {str(e)}",
-            source="api.vector_db.delete_document_vectors", user_id=str(current_user.id), request_id=request_id_val,
-            details={"error": str(e), "error_type": type(e).__name__}
+            db=db, level=LogLevel.WARNING,
+            message=f"Unauthorized vector deletion attempt",
+            details={"document_id": document_id, "user": current_user.username}
         )
-        raise HTTPException(status_code=500, detail=f"Error deleting document vectors: {str(e)}")
+        raise HTTPException(status_code=403, detail="Not authorized to delete this document's vectors.")
+    
+    # 執行刪除
+    vector_db_service_instance = get_vector_db_service()
+    delete_success_from_chroma = vector_db_service_instance.delete_by_document_id(document_id)
+    
+    if not delete_success_from_chroma:
+        raise HTTPException(status_code=500, detail="Failed to delete vectors from vector database (or vectors not found).")
+    
+    updated_doc = await update_document_vector_status(db, doc_id_as_uuid, VectorStatus.NOT_VECTORIZED)
+    if not updated_doc:
+        logger.warning(f"Vectors deleted from ChromaDB, but failed to update vector_status in MongoDB for doc: {document_id}")
+    
+    return JSONResponse(content={
+        "message": f"Document vectors deleted and status updated: {document_id}",
+        "document_id": document_id,
+        "status": "deleted_and_status_updated"
+    })
 
 @router.post("/process-document/{document_id}")
+@log_api_operation(operation_name="處理文檔向量化", log_success=True)
 async def process_document_to_vector(
     document_id: str,
-    request: Request, # Added
+    request: Request,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_db)
@@ -214,69 +185,43 @@ async def process_document_to_vector(
     將單個文檔處理並添加到向量資料庫 - 需要用戶認證
     (Background task)
     """
-    request_id_val = request.state.request_id if hasattr(request.state, 'request_id') else None
-    await log_event(
-        db=db, level=LogLevel.INFO,
-        message=f"User {current_user.username} requested processing of document to vector DB: {document_id}.",
-        source="api.vector_db.process_document", user_id=str(current_user.id), request_id=request_id_val,
-        details={"document_id": document_id}
-    )
-
-    doc_id_as_uuid: Optional[uuid.UUID] = None
     try:
         doc_id_as_uuid = uuid.UUID(document_id)
     except ValueError:
-        await log_event(db=db, level=LogLevel.WARNING, message=f"Invalid document ID format for processing: {document_id}", source="api.vector_db.process_document", user_id=str(current_user.id), request_id=request_id_val)
         raise HTTPException(status_code=400, detail=f"Invalid document ID format: {document_id}")
-
-    try:
-        document = await get_document_by_id(db, doc_id_as_uuid) # Use the UUID for DB operations
-        
-        if not document:
-            await log_event(db=db, level=LogLevel.WARNING, message=f"Document not found for processing: {document_id}", source="api.vector_db.process_document", user_id=str(current_user.id), request_id=request_id_val)
-            raise HTTPException(status_code=404, detail=f"Document not found: {document_id}")
-        
-        if document.owner_id != current_user.id:
-            await log_event(db=db, level=LogLevel.WARNING, message=f"Unauthorized processing attempt by user {current_user.username} for doc_id: {document_id}", source="api.vector_db.process_document", user_id=str(current_user.id), request_id=request_id_val)
-            raise HTTPException(status_code=403, detail="Not authorized to process this document.")
-        
-        background_tasks.add_task(
-            semantic_summary_service.process_document_for_vector_db,
-            db,
-            document # Pass the Document object
-        )
-        
+    
+    document = await get_document_by_id(db, doc_id_as_uuid)
+    if not document:
+        raise HTTPException(status_code=404, detail=f"Document not found: {document_id}")
+    
+    if document.owner_id != current_user.id:
         await log_event(
-            db=db, level=LogLevel.INFO,
-            message=f"Document {document_id} successfully queued for vector processing by user {current_user.username}.",
-            source="api.vector_db.process_document", user_id=str(current_user.id), request_id=request_id_val,
-            details={"document_id": document_id, "status": "queued_for_processing"}
+            db=db, level=LogLevel.WARNING,
+            message=f"Unauthorized processing attempt",
+            details={"document_id": document_id, "user": current_user.username}
         )
-        return JSONResponse(
-            status_code=202, # Accepted
-            content={
-                "message": f"Document {document_id} has been queued for vector processing.", # User-friendly
-                "document_id": document_id,
-                "status": "processing_queued"
-            }
-        )
-        
-    except HTTPException: # Re-raise known HTTP exceptions
-        raise
-    except Exception as e:
-        await log_event(
-            db=db, level=LogLevel.ERROR,
-            message=f"Error processing document {document_id} for vector DB: {str(e)}",
-            source="api.vector_db.process_document", user_id=str(current_user.id), request_id=request_id_val,
-            details={"error": str(e), "error_type": type(e).__name__}
-        )
-        raise HTTPException(status_code=500, detail=f"Error processing document: {str(e)}")
+        raise HTTPException(status_code=403, detail="Not authorized to process this document.")
+    
+    background_tasks.add_task(
+        semantic_summary_service.process_document_for_vector_db,
+        db,
+        document
+    )
+    
+    return JSONResponse(
+        status_code=202,
+        content={
+            "message": f"Document {document_id} has been queued for vector processing.",
+            "document_id": document_id,
+            "status": "processing_queued"
+        }
+    )
 
 @router.post("/batch-process")
 async def batch_process_documents(
     request_body: BatchProcessRequest,
     background_tasks: BackgroundTasks,
-    request: Request, # Added
+    request: Request,
     current_user: User = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_db)
 ):
@@ -290,7 +235,7 @@ async def batch_process_documents(
         db=db, level=LogLevel.INFO,
         message=f"User {current_user.username} requested batch processing of {len(document_ids_str_from_request)} documents.",
         source="api.vector_db.batch_process_documents", user_id=str(current_user.id), request_id=request_id_val,
-        details={"requested_doc_ids": document_ids_str_from_request} # Log requested IDs
+        details={"requested_doc_ids": document_ids_str_from_request}
     )
 
     try:
@@ -657,6 +602,7 @@ async def batch_delete_documents_from_vector_db(
         raise HTTPException(status_code=500, detail=f"Batch vector removal failed: {str(e)}")
 
 @router.get("/documents/{document_id}/chunks", response_model=List[SemanticSearchResult], summary="按文檔ID直接獲取所有向量塊")
+@log_api_operation(operation_name="獲取文檔向量塊", log_success=True, success_level=LogLevel.DEBUG)
 async def get_all_chunks_by_document_id(
     document_id: uuid.UUID,
     fastapi_request: Request,
@@ -667,44 +613,25 @@ async def get_all_chunks_by_document_id(
     直接從向量數據庫中獲取指定文檔ID的所有相關向量塊（摘要和文本塊）。
     這是一個直接提取操作，而非語義搜索。
     """
-    request_id_val = fastapi_request.state.request_id if hasattr(fastapi_request.state, 'request_id') else None
-    
-    # 步驟 1: 驗證文檔所有權
+    # 驗證文檔所有權
     doc = await get_document_by_id(db, document_id)
     if not doc or doc.owner_id != current_user.id:
+        # 保留權限檢查日誌
         await log_event(
             db=db, level=LogLevel.WARNING,
-            message=f"用戶 {current_user.username} 嘗試獲取不屬於自己的文檔塊: {document_id}",
-            source="api.vector_db.get_chunks_by_doc_id", user_id=str(current_user.id), request_id=request_id_val,
-            details={"document_id": str(document_id)}
+            message=f"Unauthorized chunks access attempt",
+            details={"document_id": str(document_id), "user": current_user.username}
         )
         raise HTTPException(status_code=404, detail="找不到文檔或無權訪問")
-
-    # 步驟 2: 從向量數據庫直接獲取塊
-    try:
-        vector_db_service_instance = get_vector_db_service()
-        
-        # 調用新的、正確的服務層方法
-        all_chunks = vector_db_service_instance.get_all_chunks_by_doc_id(
-            owner_id=str(current_user.id),
-            document_id=str(document_id)
-        )
-
-        await log_event(
-            db=db, level=LogLevel.DEBUG,
-            message=f"用戶 {current_user.username} 成功獲取文檔 {document_id} 的 {len(all_chunks)} 個塊",
-            source="api.vector_db.get_chunks_by_doc_id", user_id=str(current_user.id), request_id=request_id_val,
-            details={"document_id": str(document_id), "chunk_count": len(all_chunks)}
-        )
-        return all_chunks
-    except Exception as e:
-        await log_event(
-            db=db, level=LogLevel.ERROR,
-            message=f"為用戶 {current_user.username} 獲取文檔 {document_id} 的塊時出錯: {e}",
-            source="api.vector_db.get_chunks_by_doc_id", user_id=str(current_user.id), request_id=request_id_val,
-            details={"document_id": str(document_id), "error": str(e)}
-        )
-        raise HTTPException(status_code=500, detail="獲取向量塊時發生內部錯誤")
+    
+    # 從向量數據庫直接獲取塊
+    vector_db_service_instance = get_vector_db_service()
+    all_chunks = vector_db_service_instance.get_all_chunks_by_doc_id(
+        owner_id=str(current_user.id),
+        document_id=str(document_id)
+    )
+    
+    return all_chunks
 
 @router.post("/batch-process-summaries", response_model=BasicResponse)
 async def batch_process_summaries(

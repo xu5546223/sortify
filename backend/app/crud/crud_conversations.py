@@ -1,6 +1,6 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, UTC
 from motor.motor_asyncio import AsyncIOMotorDatabase
 import logging
 
@@ -132,7 +132,7 @@ async def add_message_to_conversation(
     message = ConversationMessage(
         role=role,
         content=content,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
         tokens_used=tokens_used
     )
     
@@ -145,7 +145,7 @@ async def add_message_to_conversation(
             "message_count": 1,
             "total_tokens": tokens_used if tokens_used else 0
         },
-        "$set": {"updated_at": datetime.utcnow()}
+        "$set": {"updated_at": datetime.now(UTC)}
     }
     
     result = await db.conversations.update_one(
@@ -253,7 +253,7 @@ async def update_conversation(
     if not update_dict:
         return await get_conversation(db, conversation_id, user_id)
     
-    update_dict['updated_at'] = datetime.utcnow()
+    update_dict['updated_at'] = datetime.now(UTC)
     
     result = await db.conversations.update_one(
         {"_id": conversation_id, "user_id": user_id},
@@ -308,7 +308,7 @@ async def update_cached_documents(
     """
     update_data = {
         "$addToSet": {"cached_documents": {"$each": document_ids}},
-        "$set": {"updated_at": datetime.utcnow()}
+        "$set": {"updated_at": datetime.now(UTC)}
     }
     
     if document_data:
@@ -386,7 +386,7 @@ async def remove_cached_document(
         {"_id": conversation_id, "user_id": user_id},
         {
             "$pull": {"cached_documents": document_id},
-            "$set": {"updated_at": datetime.utcnow()}
+            "$set": {"updated_at": datetime.now(UTC)}
         }
     )
     

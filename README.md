@@ -59,7 +59,7 @@ Sortify AI Assistant 是一個功能強大的智能文件分析和問答系統�
 | 組件     | 技術                                           | 描述                       |
 | -------- | ---------------------------------------------- | -------------------------- |
 | 前端     | React.js + TypeScript + Ant Design + TailwindCSS | 現代化響應式用戶界面       |
-| 後端     | FastAPI (Python)                               | 高性能異步 API 服務        |
+| 後端     | FastAPI + UV (Python)                          | 高性能異步 API 服務        |
 | 資料庫   | MongoDB + ChromaDB                             | 文檔存儲 + 向量搜索        |
 | AI 服務  | Google Gemini / OpenAI API                     | 大型語言模型集成           |
 
@@ -104,8 +104,10 @@ Sortify AI Assistant 是一個功能強大的智能文件分析和問答系統�
 ### 📋 環境要求
 
 - Node.js 18+
-- Python 3.13+
+- Python 3.11+
 - MongoDB
+- **UV** (推薦) - 極速 Python 包管理器
+- **NVIDIA GPU** (可選) - 用於 PyTorch GPU 加速
 
 ### 💻 本地開發
 
@@ -121,7 +123,32 @@ npm install
 npm start
 ```
 
-**後端開發:**
+**後端開發 (使用 UV - 推薦):**
+```bash
+# 進入後端目錄
+cd backend
+
+# 安裝 UV (如果尚未安裝)
+# Windows (PowerShell)
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+# 或使用 pip
+pip install uv
+
+# 使用 UV 同步依賴 (自動創建虛擬環境並安裝所有依賴)
+uv sync
+
+# 複製環境變數範本
+cp example.env .env
+# 編輯 .env 檔案，填入您的配置
+
+# 啟動開發伺服器 (使用 UV)
+uv run uvicorn app.main:app --reload
+
+# 或直接使用虛擬環境
+.venv\\Scripts\\uvicorn.exe app.main:app --reload
+```
+
+**後端開發 (傳統方式):**
 ```bash
 # 進入後端目錄
 cd backend
@@ -137,6 +164,10 @@ source .venv/bin/activate
 
 # 安裝依賴
 pip install -r requirements.txt
+
+# ⚠️ 重要：手動安裝 PyTorch GPU 版本
+pip uninstall -y torch torchvision torchaudio
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 
 # 複製環境變數範本
 cp example.env .env
@@ -177,12 +208,51 @@ sortify/
 
 ## 🔧 配置說明
 
+### 包管理器 - UV
+
+本項目使用 **UV** 作為 Python 包管理器，相比傳統 pip：
+- ⚡ **速度提升 10-100 倍**
+- 🔒 **自動鎖定依賴版本** (uv.lock)
+- 🎯 **自動管理虛擬環境**
+- 🚀 **統一的工具鏈** (替代 pip, poetry, pyenv)
+
+**常用命令:**
+```bash
+# 同步依賴
+uv sync
+
+# 添加新包
+uv add package-name
+
+# 移除包
+uv remove package-name
+
+# 運行命令
+uv run python script.py
+uv run pytest tests/ -v
+```
+
+### GPU 加速配置
+
+本項目默認使用 **PyTorch GPU 版本 (CUDA 12.4)**：
+- ✅ 自動從 PyTorch GPU 索引安裝
+- ✅ 支援 CUDA 12.x
+- ✅ Embedding 生成速度提升 **5-10 倍**
+- ✅ 向量搜索速度提升 **3-5 倍**
+
+**驗證 GPU 可用:**
+```bash
+uv run python -c "import torch; print('GPU:', torch.cuda.is_available())"
+```
+
+**預期輸出:** `GPU: True`
+
 ### 環境變數
 
 **後端配置:**
 - `MONGODB_URL`: MongoDB 連接字串
 - `DB_NAME`: 資料庫名稱
-- `OPENAI_API_KEY`: OpenAI API 密鑰
+- `OPENAI_API_KEY`: OpenAI API 密鑰 (可選)
 - `GEMINI_API_KEY`: Google Gemini API 密鑰
 
 ## 📊 API 文檔
@@ -205,10 +275,17 @@ sortify/
 
 ## 🧪 測試
 
-**後端測試:**
+**後端測試 (使用 UV):**
 ```bash
 cd backend
-pytest tests/
+uv run pytest tests/ -v
+```
+
+**後端測試 (傳統方式):**
+```bash
+cd backend
+.venv\\Scripts\\activate
+pytest tests/ -v
 ```
 
 **資料庫連接測試:**
@@ -281,7 +358,7 @@ Sortify AI Assistant is a powerful intelligent document analysis and Q&A system 
 | Component  | Technology                                     | Description                        |
 | ---------- | ---------------------------------------------- | ---------------------------------- |
 | Frontend   | React.js + TypeScript + Ant Design + TailwindCSS | Modern responsive UI               |
-| Backend    | FastAPI (Python)                               | High-performance async API service |
+| Backend    | FastAPI + UV (Python)                          | High-performance async API service |
 | Database   | MongoDB + ChromaDB                             | Document storage + Vector search   |
 | AI Service | Google Gemini / OpenAI API                     | LLM integration                    |
 
@@ -326,8 +403,10 @@ When time-consuming operations are needed, the system requests approval:
 ### 📋 Prerequisites
 
 - Node.js 18+
-- Python 3.13+
+- Python 3.11+
 - MongoDB
+- **UV** (Recommended) - Ultra-fast Python package manager
+- **NVIDIA GPU** (Optional) - For PyTorch GPU acceleration
 
 ### 💻 Local Development
 
@@ -343,7 +422,32 @@ npm install
 npm start
 ```
 
-**Backend Development:**
+**Backend Development (Using UV - Recommended):**
+```bash
+# Enter backend directory
+cd backend
+
+# Install UV (if not already installed)
+# Windows (PowerShell)
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+# Or using pip
+pip install uv
+
+# Sync dependencies using UV (auto-creates venv and installs all deps)
+uv sync
+
+# Copy environment variable template
+cp example.env .env
+# Edit .env file and fill in your configuration
+
+# Start development server (using UV)
+uv run uvicorn app.main:app --reload
+
+# Or use virtual environment directly
+.venv\\Scripts\\uvicorn.exe app.main:app --reload
+```
+
+**Backend Development (Traditional Way):**
 ```bash
 # Enter backend directory
 cd backend
@@ -359,6 +463,10 @@ source .venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
+
+# ⚠️ Important: Manually install PyTorch GPU version
+pip uninstall -y torch torchvision torchaudio
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 
 # Copy environment variable template
 cp example.env .env
@@ -399,12 +507,51 @@ sortify/
 
 ## 🔧 Configuration
 
+### Package Manager - UV
+
+This project uses **UV** as the Python package manager, compared to traditional pip:
+- ⚡ **10-100x faster**
+- 🔒 **Automatic dependency locking** (uv.lock)
+- 🎯 **Auto-managed virtual environments**
+- 🚀 **Unified toolchain** (replaces pip, poetry, pyenv)
+
+**Common Commands:**
+```bash
+# Sync dependencies
+uv sync
+
+# Add new package
+uv add package-name
+
+# Remove package
+uv remove package-name
+
+# Run commands
+uv run python script.py
+uv run pytest tests/ -v
+```
+
+### GPU Acceleration
+
+This project uses **PyTorch GPU version (CUDA 12.4)** by default:
+- ✅ Auto-installs from PyTorch GPU index
+- ✅ Supports CUDA 12.x
+- ✅ Embedding generation **5-10x faster**
+- ✅ Vector search **3-5x faster**
+
+**Verify GPU availability:**
+```bash
+uv run python -c "import torch; print('GPU:', torch.cuda.is_available())"
+```
+
+**Expected output:** `GPU: True`
+
 ### Environment Variables
 
 **Backend Configuration:**
 - `MONGODB_URL`: MongoDB connection string
 - `DB_NAME`: Database name
-- `OPENAI_API_KEY`: OpenAI API key
+- `OPENAI_API_KEY`: OpenAI API key (optional)
 - `GEMINI_API_KEY`: Google Gemini API key
 
 ## 📊 API Documentation
@@ -427,10 +574,17 @@ After starting the system, you can access the API documentation at:
 
 ## 🧪 Testing
 
-**Backend Testing:**
+**Backend Testing (Using UV):**
 ```bash
 cd backend
-pytest tests/
+uv run pytest tests/ -v
+```
+
+**Backend Testing (Traditional):**
+```bash
+cd backend
+.venv\\Scripts\\activate
+pytest tests/ -v
 ```
 
 **Database Connection Test:**

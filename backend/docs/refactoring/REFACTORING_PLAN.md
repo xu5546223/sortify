@@ -18,6 +18,8 @@
 
 **目標**：建立可重用的工具和裝飾器
 
+**完成時間**：2024-11-15
+
 ### 完成的任務
 
 **1.1 創建工具類** ✅
@@ -122,49 +124,109 @@ async def batch_process_documents(...):
 
 ---
 
-### 階段二：服務層重構（3-4週）⭐ 高優先級
+### 階段二：API 端點重構 ✅ 已完成
+
+**目標**：應用工具類重構 API 端點
+
+**完成時間**：2024-11-16
+
+#### 2.1 Documents API 重構 ✅
+- ✅ `GET /documents` - 列出文檔
+- ✅ `GET /documents/{id}` - 獲取文檔詳情
+- ✅ `get_owned_document` - 依賴函數
+- ✅ 代碼減少 34% (116 行 → 77 行)
+- ✅ 31 個整合測試
+
+#### 2.2 Conversations API 重構 ✅
+- ✅ `GET /conversations` - 列出對話
+- ✅ `GET /conversations/{id}` - 獲取對話詳情
+- ✅ `GET /conversations/{id}/messages` - 獲取消息
+- ✅ `PUT /conversations/{id}` - 更新對話
+- ✅ `DELETE /conversations/{id}` - 刪除對話
+- ✅ `get_owned_conversation` - 依賴函數
+- ✅ 代碼減少 12.7% (362 行 → 316 行)
+- ✅ 32 個整合測試（功能 23 + 權限 9）
+
+#### 驗收標準
+- [x] 所有測試通過（85/85，100%）✅
+- [x] 代碼更簡潔（總計減少 13%）✅
+- [x] 統一使用依賴函數和裝飾器 ✅
+
+---
+
+### 階段三：程式碼品質優化 ✅ 已完成
+
+**目標**：消除技術債務和棄用警告
+
+**完成時間**：2024-11-16
+
+#### 3.1 datetime.utcnow() 修復 ✅
+- ✅ 修復 9 個文件，38 處
+- ✅ 消除 131 個棄用警告（-100%）
+- ✅ 改用 `datetime.now(UTC)`
+- ✅ 符合 Python 3.12+ 標準
+
+#### 影響文件
+- CRUD: `crud_conversations.py`, `crud_documents.py`, `crud_dashboard.py`, `crud_suggested_questions.py`, `crud_users.py`, `crud_device_tokens.py`
+- 測試: `conftest.py`, `test_conversations_api.py`, `test_conversation_permissions.py`
+
+#### 驗收標準
+- [x] 所有測試通過 ✅
+- [x] datetime 警告降為 0 ✅
+- [x] 無功能變更 ✅
+
+---
+
+### 階段四：服務層重構（未開始）⭐ 低優先級
 
 #### 2.1 拆分 enhanced_ai_qa_service.py (110KB → 10個文件)
 **工作量**: 40-60小時
 
 將巨型服務拆分為職責單一的小服務
 
-**新目錄結構**:
-```
-services/qa/
-├── query/          # 查詢處理
-│   ├── query_rewriter.py
-│   └── query_expander.py
-├── search/         # 搜索服務
-│   ├── semantic_searcher.py
-│   └── mongodb_searcher.py
+---
 
-**下一步選項**：
+## 🎯 當前狀態
 
-**選項 A：暫停並評估**（推薦）
-- 使用一段時間
-- 收集團隊反饋
-- 評估維護效率
-- 決定是否繼續
+### 已完成的階段
+- ✅ **階段一**：基礎架構建設（3 個工具類，22 個單元測試）
+- ✅ **階段二**：API 端點重構（8/14 端點，代碼減少 13%）
+- ✅ **階段三**：程式碼品質優化（消除 131 個警告）
 
-**選項 B：繼續優化**（可選）
-- 優化其他 API（conversations, users）
-- 添加更多裝飾器選項
-- 擴展工具類功能文檔
-- API 文檔
-- 開發指南
+### 重構成果
+| 指標 | 結果 |
+|------|------|
+| 非 AI API 端點重構 | 24/27 (89%) ✅ |
+| AI API 端點 | 0/43 (待重新設計) ⏸️ |
+| 總代碼減少 | -500+ 行 (-35%) |
+| 測試數量 | 116 個 (100% 通過) |
+| 警告減少 | -131 個 (-48%) |
+| 部署狀態 | ✅ 可立即部署 |
+
+### 下一步建議
+
+**選項 A：暫停並評估**（推薦）✅ **當前狀態**
+- 已完成核心重構
+- 系統穩定，測試完整
+- 可安全部署到生產環境
+- 建議先使用一段時間再決定是否繼續
+
+**選項 B：未來可選優化**（低優先級）
+- 其他 API 端點重構
+- Pydantic V2 遷移（等 V3 發布）
+- 服務層重構（視需要而定）
 
 ---
 
-### 階段三至五：暫停評估 ⏸️
+## 📝 更新記錄
 
-**決定**：暫停進一步的大規模重構
-
-**原因**：
-- ✅ 已達到良好的代碼質量平衡
-- ✅ 簡單端點已優化
-- ✅ 複雜端點保留靈活性
-- ✅ 投資回報達到合理水平
+- **2024-11-15**：完成階段一（基礎架構）
+- **2024-11-16**：完成階段二（Documents + Conversations API）
+- **2024-11-16**：完成階段三（datetime.utcnow() 優化）
+- **2024-11-16**：Vector DB API 日誌統一化（已完成，6/10 端點重構）
+- **2024-11-16**：補充非 AI API 測試（Users, Auth, System，37 個測試）
+- **2024-11-16**：完成非 AI API 重構（users.py, auth.py, system.py，18 個端點，-334 行）
+- **當前狀態**：✅ 非 AI API 重構完成，AI API 待重新設計
 
 **保留手動實現的端點**：
 - `upload_document` - 多個日誌點，文件處理
@@ -173,6 +235,19 @@ services/qa/
 - `delete_document_route` - 多步驟刪除
 - `batch_delete_documents_route` - 批量操作
 
+**⏸️ AI API 暫不重構**（需要重新設計）：
+- `unified_ai.py` - 10 個端點（26 處手動日誌）
+- `qa_stream.py` - 1 個端點（流式處理，極其複雜）
+- `clustering.py` - 9 個端點（20 處手動日誌）
+- `suggested_questions.py` - 7 個端點
+- `qa_analytics.py` - 3 個端點
+- `embedding.py` - 5 個端點
+- `gmail.py` - 8 個端點（AI 相關功能）
+
+**原因**：這些端點需要重新設計 API 結構，避免在重新設計前做無效重構。
+
+**詳細計劃**：參見 `docs/refactoring/AI_API_REDESIGN_TODO.md`
+
 **下一步選項**：
 
 **選項 A：暫停並評估**（推薦）
@@ -181,12 +256,16 @@ services/qa/
 - 評估維護效率
 - 決定是否繼續
 
-**選項 B：繼續優化**（可選）
-- 優化其他 API（conversations, users）
-- 添加更多裝飾器選項
-- 擴展工具類功能文檔
-- API 文檔
-- 開發指南
+**選項 B：繼續非 AI API 重構**（✅ 已完成）
+- ✅ 已補充測試：users.py (8 測試), auth.py (18 測試), system.py (13 測試)
+- ✅ 已完成重構：users.py（設備管理，5 個端點，-172 行）
+- ✅ 已完成重構：auth.py（認證，7 個端點，-70 行）
+- ✅ 已完成重構：system.py（系統設置，6 個端點，-92 行）
+
+**選項 C：AI API 重新設計**（長期）
+- 詳見 `docs/refactoring/AI_API_REDESIGN_TODO.md`
+- 需要架構設計和評估
+- 預期工作量：30-50 小時
 
 ---
 

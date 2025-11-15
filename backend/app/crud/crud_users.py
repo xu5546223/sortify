@@ -1,6 +1,6 @@
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.results import UpdateResult, DeleteResult
-from datetime import datetime
+from datetime import datetime, UTC
 from uuid import UUID
 from typing import Optional
 
@@ -21,7 +21,7 @@ async def create_or_update_device(db: AsyncIOMotorDatabase, device_data: Connect
 
     if existing_device_doc:
         update_fields = {
-            "last_active_at": datetime.utcnow(),
+            "last_active_at": datetime.now(UTC),
             "is_active": True,
             "ip_address": device_data.ip_address,
             "user_agent": device_data.user_agent,
@@ -57,8 +57,8 @@ async def create_or_update_device(db: AsyncIOMotorDatabase, device_data: Connect
     else:
         # Creating new device
         device_dict = device_data.model_dump(exclude_unset=True)
-        device_dict["first_connected_at"] = device_dict.get("first_connected_at", datetime.utcnow())
-        device_dict["last_active_at"] = device_dict.get("last_active_at", datetime.utcnow())
+        device_dict["first_connected_at"] = device_dict.get("first_connected_at", datetime.now(UTC))
+        device_dict["last_active_at"] = device_dict.get("last_active_at", datetime.now(UTC))
         device_dict["is_active"] = device_dict.get("is_active", True)
         await collection.insert_one(device_dict)
 
@@ -105,7 +105,7 @@ async def update_device_activity(db: AsyncIOMotorDatabase, device_id: str) -> Co
     collection = db[DEVICE_COLLECTION_NAME]
     result: UpdateResult = await collection.update_one(
         {"device_id": device_id},
-        {"$set": {"last_active_at": datetime.utcnow(), "is_active": True}}
+        {"$set": {"last_active_at": datetime.now(UTC), "is_active": True}}
     )
     if result.matched_count > 0:
         return await get_device_by_id(db, device_id)
@@ -115,7 +115,7 @@ async def deactivate_device(db: AsyncIOMotorDatabase, device_id: str) -> Connect
     collection = db[DEVICE_COLLECTION_NAME]
     result: UpdateResult = await collection.update_one(
         {"device_id": device_id},
-        {"$set": {"is_active": False, "last_active_at": datetime.utcnow()}}
+        {"$set": {"is_active": False, "last_active_at": datetime.now(UTC)}}
     )
     if result.matched_count > 0:
         updated_device = await get_device_by_id(db, device_id)
@@ -230,7 +230,7 @@ class CRUDUser:
         #         print(f"Error: Email {update_data['email']} is already in use by another user.")
         #         return None # 表示更新失敗
         
-        update_data["updated_at"] = datetime.utcnow()
+        update_data["updated_at"] = datetime.now(UTC)
 
         result = await db[USER_COLLECTION_NAME].update_one(
             {"id": user_id},
@@ -257,7 +257,7 @@ class CRUDUser:
         hashed_password = get_password_hash(new_password)
         update_data = {
             "hashed_password": hashed_password,
-            "updated_at": datetime.utcnow()
+            "updated_at": datetime.now(UTC)
         }
         result = await db[USER_COLLECTION_NAME].update_one(
             {"id": user_id},

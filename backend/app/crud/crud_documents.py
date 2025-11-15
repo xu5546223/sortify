@@ -1,6 +1,6 @@
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, UTC
 import uuid
 import re # 用於不區分大小寫的搜尋
 import logging
@@ -79,8 +79,8 @@ async def create_document(
     db_document_data = document_data.model_dump()
     db_document_data["_id"] = document_id_uuid 
     db_document_data["owner_id"] = owner_id 
-    db_document_data["created_at"] = datetime.utcnow()
-    db_document_data["updated_at"] = datetime.utcnow()
+    db_document_data["created_at"] = datetime.now(UTC)
+    db_document_data["updated_at"] = datetime.now(UTC)
     db_document_data["status"] = DocumentStatus.UPLOADED
     db_document_data["vector_status"] = VectorStatus.NOT_VECTORIZED.value # <-- Set default vector_status
     db_document_data["uploader_device_id"] = uploader_device_id
@@ -242,7 +242,7 @@ async def update_document(
         return await get_document_by_id(db, document_id)
 
     if "updated_at" not in update_data:
-        update_data["updated_at"] = datetime.utcnow()
+        update_data["updated_at"] = datetime.now(UTC)
     
     if "status" in update_data and isinstance(update_data["status"], DocumentStatus):
         update_data["status"] = update_data["status"].value
@@ -360,7 +360,7 @@ async def get_documents_by_ids(
 async def update_document_status(
     db: AsyncIOMotorDatabase, document_id: uuid.UUID, new_status: DocumentStatus, error_details: Optional[str] = None
 ) -> Optional[Document]:
-    update_payload: Dict[str, Any] = {"status": new_status.value, "updated_at": datetime.utcnow()}
+    update_payload: Dict[str, Any] = {"status": new_status.value, "updated_at": datetime.now(UTC)}
     
     # 檢查是否為特定的錯誤狀態
     # 假設 DocumentStatus 枚舉中已定義 EXTRACTION_FAILED 和 ANALYSIS_FAILED
@@ -375,7 +375,7 @@ async def update_document_status(
     elif not is_error_status: # 如果不是那幾個特定的錯誤狀態，則清除 error_details
         update_payload["error_details"] = None
     # 如果是 is_error_status 但 error_details 為 None，則現有 error_details (如果存在) 會被保留。
-    # 如果希望在 is_error_status 且 error_details is None 時也清除，可以修改如下:
+    # 如果希望在 is_error_status 且 error_details is None 時也清除，可以修改如下：
     # else:
     #     update_payload["error_details"] = None # 清除 error_details
 
@@ -402,10 +402,10 @@ async def update_document_on_extraction_success(
     """專門用於文本提取成功後更新文檔記錄。"""
     update_payload = {
         "extracted_text": extracted_text,
-        "text_extraction_completed_at": datetime.utcnow(),
+        "text_extraction_completed_at": datetime.now(UTC),
         "status": DocumentStatus.TEXT_EXTRACTED.value,
         "error_details": None,  # 清除任何先前的錯誤
-        "updated_at": datetime.utcnow()
+        "updated_at": datetime.now(UTC)
     }
     return await update_document(db, document_id, update_payload)
 
@@ -438,7 +438,7 @@ async def set_document_analysis(
         "error_message": analysis_data_dict.get("error_message"), # 從 AI 分析結果字典獲取
         # 'analysis_started_at' 可以由後台任務開始時設置，或在這裡設置為 utcnow()
         # 'analysis_completed_at' 應在此處設置
-        "analysis_completed_at": datetime.utcnow() if analysis_status_enum == DocumentStatus.ANALYSIS_COMPLETED else None,
+        "analysis_completed_at": datetime.now(UTC) if analysis_status_enum == DocumentStatus.ANALYSIS_COMPLETED else None,
     }
     # 如果 analysis_data_dict 中有 "analysis_started_at"，可以使用它，否則後台任務可能需要更早設置
     # For simplicity, if not provided, we don't set it here, assuming it might be set earlier
@@ -449,13 +449,13 @@ async def set_document_analysis(
     update_payload = {
         "analysis": db_analysis_payload,
         "status": analysis_status_enum.value, # 使用傳入的枚舉值的 .value
-        "updated_at": datetime.utcnow()
+        "updated_at": datetime.now(UTC)
     }
     # 可以考慮也更新一個頂層的 `analyzed_content_type` 字段到 Document 模型本身（如果有的話）
     # 假設 Document 模型有一個這樣的字段 (如果沒有，此行無效)
     # if "analyzed_content_type" in Document.model_fields: # Pydantic v2
     #    update_payload["analyzed_content_type"] = analyzed_content_type_str
-
+    update_payload["analyzed_content_type"] = analyzed_content_type_str
 
     return await update_document(db, document_id, update_payload)
 
@@ -470,7 +470,7 @@ async def update_document_vector_status(
     """更新文檔的向量化狀態。"""
     update_payload: Dict[str, Any] = {
         "vector_status": new_vector_status.value, 
-        "updated_at": datetime.utcnow()
+        "updated_at": datetime.now(UTC)
     }
     # 如果是失敗狀態且有錯誤詳情，則記錄
     if new_vector_status == VectorStatus.FAILED and error_details:

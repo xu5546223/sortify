@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 
@@ -56,7 +56,7 @@ async def get_system_stats(db: AsyncIOMotorDatabase) -> SystemStats:
     stats.total_storage_used_mb = round(total_size_bytes / (1024 * 1024), 2) if total_size_bytes > 0 else 0.0
 
     # 日誌統計
-    twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
+    twenty_four_hours_ago = datetime.now(UTC) - timedelta(hours=24)
     stats.error_logs_last_24h = await db[LOGS_COLLECTION].count_documents({
         "level": LogLevel.ERROR.value,
         "timestamp": {"$gte": twenty_four_hours_ago}
