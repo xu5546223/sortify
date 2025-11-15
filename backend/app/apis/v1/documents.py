@@ -48,6 +48,8 @@ from ...crud import crud_documents
 from ...core.config import settings, Settings
 from ...core.logging_utils import log_event, LogLevel, AppLogger
 from ...core.security import get_current_active_user
+from ...core.resource_helpers import get_owned_resource_or_404
+from ...core.logging_decorators import log_api_operation
 from ...services.document.document_processing_service import DocumentProcessingService, SUPPORTED_IMAGE_TYPES_FOR_AI
 # unified_ai_service_simplified and its components are no longer directly used in this file
 # from ...services.unified_ai_service_simplified import unified_ai_service_simplified, AIRequest, TaskType as AIServiceTaskType
@@ -69,27 +71,17 @@ async def get_owned_document(
     """
     Dependency to get a document by ID and verify ownership.
     Raises HTTPException if not found or user is not the owner.
-    """
-    document = await crud_documents.get_document_by_id(db, document_id)
-    if not document:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"ID 為 {document_id} 的文件不存在")
     
-    if document.owner_id != current_user.id:
-        await log_event(
-            db=db,
-            level=LogLevel.WARNING,
-            message="Unauthorized document access attempt.",
-            source="api.documents.get_owned_document", # Standardized source
-            user_id=str(current_user.id),
-            details={
-                "document_id": str(document_id),
-                "document_owner_id": str(document.owner_id),
-                "attempting_user_email": current_user.email # Masker should handle if sensitive
-            }
-        )
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to access or modify this document.") # User-friendly message
-        
-    return document
+    使用 resource_helpers 简化权限检查和日志记录。
+    """
+    return await get_owned_resource_or_404(
+        getter_func=crud_documents.get_document_by_id,
+        db=db,
+        resource_id=document_id,
+        current_user=current_user,
+        resource_type="Document",
+        log_unauthorized=True
+    )
 
 router = APIRouter()
 
@@ -228,23 +220,24 @@ async def upload_document(
     return created_document
 
 @router.get("/", response_model=PaginatedDocumentResponse, summary="獲取當前用戶的文件列表")
+@log_api_operation(operation_name="列出文檔", log_success=True, success_level=LogLevel.DEBUG)
 async def list_documents(
     request: Request,
-    current_user: User = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
-    skip: int = Query(0, ge=0, description="跳過的記錄數"),
+    current_user: User = Depends(get_current_active_user),
+    skip: int = Query(0, ge=0, description="跳過的記錄數，用於分頁"),
     limit: int = Query(20, ge=1, le=100, description="返回的最大記錄數"),
-    status_in: Optional[List[DocumentStatus]] = Query(None, description="根據一個或多個文件狀態列表進行過濾"),
+    status_in: Optional[List[DocumentStatus]] = Query(None, description="根據一個或多個文件狀態過濾"),
     filename_contains: Optional[str] = Query(None, description="根據文件名包含的文字過濾 (不區分大小寫)"),
     tags_include: Optional[List[str]] = Query(None, description="根據包含的標籤過濾 (傳入一個或多個標籤)"),
     cluster_id: Optional[str] = Query(None, description="根據聚類ID過濾"),
     clustering_status: Optional[str] = Query(None, description="根據聚類狀態過濾 (pending, clustered, excluded)"),
     sort_by: Optional[str] = Query(None, description="排序欄位 (例如 filename, created_at)"),
-    sort_order: Optional[str] = Query("desc", description="排序順序 (asc 或 desc)")
+    sort_order: Optional[str] = Query("desc", description="排序方向 ('asc' 或 'desc')")
 ):
     """
     檢索當前登入用戶的文件列表，支持分頁、過濾和排序。
-    - **skip**: 跳過的記錄數。
+    - **skip**: 跳過的記錄數，用於分頁。
     - **limit**: 返回的最大記錄數。
     - **status_in**: 根據一個或多個文件狀態列表進行過濾。
     - **filename_contains**: 根據文件名包含的文字過濾 (不區分大小寫)。
@@ -253,6 +246,8 @@ async def list_documents(
     - **clustering_status**: 根據聚類狀態過濾 (pending, clustered, excluded)。
     - **sort_by**: 用於排序的欄位名稱。
     - **sort_order**: 排序方向 ('asc' 或 'desc')。
+    
+    日志記錄由 log_api_operation 裝飾器自動處理。
     """
     if sort_order and sort_order.lower() not in ["asc", "desc"]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="無效的排序順序，必須是 'asc' 或 'desc'")
@@ -281,51 +276,21 @@ async def list_documents(
         clustering_status=clustering_status
     )
     
-    
-    request_id_for_log = request.state.request_id if hasattr(request.state, 'request_id') else None
-    await log_event(
-        db=db,
-        level=LogLevel.DEBUG,
-        message="Documents retrieved.",
-        source="api.documents.list_documents",
-        user_id=str(current_user.id),
-        request_id=request_id_for_log,
-        details={
-            "user_id": str(current_user.id),
-            "skip": skip,
-            "limit": limit,
-            "status_in": [s.value for s in status_in] if status_in else None,
-            "filename_contains": filename_contains,
-            "tags_include": tags_include,
-            "sort_by": sort_by,
-            "sort_order": sort_order,
-            "returned_count": len(documents),
-            "total_available_count": total_count
-        }
-    )
     return PaginatedDocumentResponse(items=documents, total=total_count)
 
 @router.get("/{document_id}", response_model=Document, summary="獲取特定文件的詳細信息")
+@log_api_operation(operation_name="獲取文檔詳情", log_success=True, success_level=LogLevel.DEBUG)
 async def get_document_details(
     request: Request,
     document: Document = Depends(get_owned_document),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """
     獲取特定文件的詳細信息。
     權限檢查由 get_owned_document 依賴處理。
+    日志記錄由 log_api_operation 裝飾器自動處理。
     """
-   
-    request_id_for_log = request.state.request_id if hasattr(request.state, 'request_id') else None
-    await log_event(
-        db=db,
-        level=LogLevel.DEBUG,
-        message="Document details retrieved.",
-        source="api.documents.get_document_details",
-        user_id=str(document.owner_id),
-        request_id=request_id_for_log,
-        details={"document_id": str(document.id), "filename": document.filename}
-    )
     return document
 
 @router.get("/{document_id}/file", summary="獲取/下載文件本身", response_class=FileResponse)
