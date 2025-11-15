@@ -6,7 +6,7 @@ import uuid
 import logging
 import random
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 import pytz
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -79,7 +79,8 @@ async def get_random_questions(
     # 如果需要排除最近使用的問題
     if exclude_recently_used:
         from datetime import timedelta
-        cutoff_time = datetime.now(UTC) - timedelta(days=recent_use_days)
+        # 使用 naive datetime 以便與數據庫中的 datetime 比較
+        cutoff_time = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=recent_use_days)
         available_questions = [
             q for q in available_questions
             if q.last_used_at is None or q.last_used_at < cutoff_time

@@ -49,27 +49,27 @@ async def create_conversation(
 
 async def get_conversation(
     db: AsyncIOMotorDatabase,
-    conversation_id: UUID,
-    user_id: UUID
+    conversation_id: UUID
 ) -> Optional[ConversationInDB]:
     """
-    獲取單個對話
+    獲取單個對話（不檢查權限）
     
     Args:
         db: 數據庫連接
         conversation_id: 對話ID
-        user_id: 用戶ID（用於權限驗證）
         
     Returns:
-        對話對象，如果不存在或無權限則返回 None
+        對話對象，如果不存在則返回 None
+        
+    Note:
+        權限檢查應該在調用此函數後進行（例如使用 get_owned_resource_or_404）
     """
     conversation_data = await db.conversations.find_one({
-        "_id": conversation_id,
-        "user_id": user_id
+        "_id": conversation_id
     })
     
     if not conversation_data:
-        logger.warning(f"Conversation {conversation_id} not found for user {user_id}")
+        logger.warning(f"Conversation {conversation_id} not found")
         return None
     
     conversation_data['id'] = conversation_data.pop('_id')
@@ -251,7 +251,7 @@ async def update_conversation(
     """
     update_dict = update_data.model_dump(exclude_unset=True)
     if not update_dict:
-        return await get_conversation(db, conversation_id, user_id)
+        return await get_conversation(db, conversation_id)
     
     update_dict['updated_at'] = datetime.now(UTC)
     
@@ -262,7 +262,7 @@ async def update_conversation(
     
     if result.modified_count > 0:
         logger.info(f"Updated conversation {conversation_id}")
-        return await get_conversation(db, conversation_id, user_id)
+        return await get_conversation(db, conversation_id)
     else:
         logger.warning(f"Failed to update conversation {conversation_id}")
         return None
