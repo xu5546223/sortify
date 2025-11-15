@@ -53,9 +53,6 @@ class Settings(BaseSettings):
     ENABLE_GREETING_SHORTCUT: bool = True  # 啟用寒暄快速通道
     ENABLE_CHITCHAT_SHORTCUT: bool = True  # 啟用閒聊快速通道
 
-    # Cloudflare Tunnel (如果在此處管理)
-    CLOUDFLARE_TUNNEL_URL: str | None = None
-
     # 新增上傳目錄配置
     UPLOAD_DIR: str = "uploaded_files"
 

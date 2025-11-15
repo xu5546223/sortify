@@ -390,10 +390,8 @@ async def get_connection_info(db: AsyncIOMotorDatabase) -> ConnectionInfo:
     實際應用中，這裡會生成 QR Code、配對碼，並包含伺服器 URL。
     """
     # TODO: 實現真實的 QR Code 生成和配對碼邏輯
-    # TODO: 從設定或動態獲取 server_url
-    
-    # 模擬 server_url，之後應從 config 或 Cloudflare Tunnel 服務獲取
-    server_url_from_config = app_env_settings.CLOUDFLARE_TUNNEL_URL or "http://localhost:8000"
+    # 注意：Cloudflare Tunnel 已在前端網頁版處理，後端使用固定 localhost URL
+    server_url_from_config = "http://localhost:8000"
 
     return ConnectionInfo(
         qr_code_image="https://via.placeholder.com/200.png?text=Scan+Me", # 模擬 QR Code 圖片 URL
@@ -416,18 +414,11 @@ async def get_tunnel_status(db: AsyncIOMotorDatabase) -> TunnelStatus:
     目前返回模擬數據。
     實際應用中，可能需要與 cloudflared 互動或檢查網路狀態。
     """
-    # TODO: 實現真實的 Tunnel 狀態檢查邏輯。
-    #       這可能涉及到運行 shell 命令 (如果 cloudflared CLI 可用) 
-    #       或檢查特定的網路端點。
-    
-    # 模擬 Tunnel 狀態
+    # 注意：Cloudflare Tunnel 已在前端網頁版處理，此功能已棄用
+    # 返回本地服務器資訊
     is_active_mock = True 
-    url_mock = app_env_settings.CLOUDFLARE_TUNNEL_URL # "https://your-tunnel-name.trycloudflare.com" 
+    url_mock = "http://localhost:8000"
     error_message_mock = None
-
-    if not url_mock: # 如果 .env 中沒有 CLOUDFLARE_TUNNEL_URL
-        is_active_mock = False
-        error_message_mock = "Cloudflare Tunnel URL 未在 .env 中配置。"
         
     return TunnelStatus(
         is_active=is_active_mock,
