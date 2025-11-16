@@ -12,6 +12,7 @@ import {
   FileTextOutlined,
   SendOutlined
 } from '@ant-design/icons';
+import '../../styles/mobile-workflow.css';
 
 interface MobileWorkflowCardProps {
   type: 'clarification' | 'search_approval' | 'detail_query_approval';
@@ -27,7 +28,19 @@ interface MobileWorkflowCardProps {
     original_question: string;
     ai_understanding: string;
     will_use_rewrite?: boolean;
+    reasoning?: string;
   };
+  queryRewriteResult?: {
+    original_query: string;
+    rewritten_queries?: string[];
+    intent_analysis?: string;
+  };
+  classification?: {
+    reasoning?: string;
+    confidence?: number;
+  };
+  estimatedDocuments?: string;
+  estimatedTime?: string;
   onApproveSearch?: () => void;
   onSkipSearch?: () => void;
   
@@ -48,6 +61,10 @@ const MobileWorkflowCard: React.FC<MobileWorkflowCardProps> = ({
   onSubmitClarification,
   onFillMainInput,
   searchPreview,
+  queryRewriteResult,
+  classification,
+  estimatedDocuments,
+  estimatedTime,
   onApproveSearch,
   onSkipSearch,
   documentNames,
@@ -117,24 +134,45 @@ const MobileWorkflowCard: React.FC<MobileWorkflowCardProps> = ({
         </p>
         
         {/* AI 理解的查詢預覽 */}
-        {searchPreview && (
+        {(searchPreview || queryRewriteResult || classification) && (
           <div className="search-preview">
-            <div className="preview-title">🔍 AI 理解的查詢</div>
+            <div className="preview-title">🔍 AI 分析結果</div>
+            
+            {/* 原始問題 */}
             <div className="preview-item">
-              <span className="preview-label">您的問題：</span>
-              <span className="preview-value">{searchPreview.original_question}</span>
-            </div>
-            <div className="preview-item">
-              <span className="preview-label">AI 理解為：</span>
-              <span className="preview-value highlight">
-                {searchPreview.ai_understanding}
+              <span className="preview-label">原始問題：</span>
+              <span className="preview-value">
+                {searchPreview?.original_question || queryRewriteResult?.original_query}
               </span>
             </div>
-            {searchPreview.will_use_rewrite && (
-              <div className="preview-note">
-                💡 將使用 AI 查詢重寫功能進一步優化搜索
+            
+            {/* AI 理解/推理 */}
+            {(classification?.reasoning || searchPreview?.reasoning) && (
+              <div className="preview-item">
+                <span className="preview-label">AI 理解為：</span>
+                <span className="preview-value highlight">
+                  {classification?.reasoning || searchPreview?.reasoning}
+                </span>
               </div>
             )}
+            
+            {/* 搜索策略說明 */}
+            <div className="preview-item">
+              <span className="preview-label">搜索策略：</span>
+              <span className="preview-value" style={{fontSize: '12px', color: '#595959'}}>
+                批准後將使用 AI 查詢重寫技術優化搜索
+              </span>
+            </div>
+            
+            {/* 預估信息 */}
+            {(estimatedDocuments || estimatedTime) && (
+              <div className="preview-note">
+                {estimatedDocuments && `📄 預估文檔數：${estimatedDocuments}`}
+                {estimatedDocuments && estimatedTime && ' • '}
+                {estimatedTime && `⏱️ 預估時間：${estimatedTime}`}
+              </div>
+            )}
+            
           </div>
         )}
         

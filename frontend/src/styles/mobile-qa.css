@@ -134,12 +134,12 @@ div.mobile-qa-bubble.user-bubble {
   outline-color: transparent !important;
 }
 
-/* AI 回答直接渲染，不使用氣泡 */
+/* AI 回答直接渲染，不使用氣泡 - 左右滿版顯示 */
 .assistant-content {
-  width: 100%;
-  max-width: 100%;
-  padding: 0; /* 移除 padding，讓間距由容器控制 */
-  margin: 0; /* 移除 margin，讓間距由容器控制 */
+  width: 100% !important;
+  max-width: 100% !important;
+  padding: 12px 0 !important; /* 上下留空，左右滿版 */
+  margin: 0 !important;
   color: #262626;
   font-size: 15px;
   line-height: 1.6;
@@ -289,6 +289,7 @@ div.mobile-qa-bubble.user-bubble {
   outline: none;
   transition: border-color 0.2s;
   -webkit-appearance: none;
+  appearance: none;
 }
 
 .mobile-qa-input:focus {
@@ -473,6 +474,7 @@ div.mobile-qa-bubble.user-bubble {
   text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   line-height: 1.4;
 }

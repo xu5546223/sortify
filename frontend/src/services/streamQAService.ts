@@ -119,14 +119,16 @@ export async function streamQA(
                 if (chunk.answer) {
                   fullText = chunk.answer;
                   callbacks.onChunk?.(chunk.answer);
-                  callbacks.onComplete?.(chunk.answer);
                 }
+                // 無論是否有 answer，都調用 onComplete 以確保清理狀態
+                callbacks.onComplete?.(fullText || chunk.answer || '');
                 break;
 
               case 'approval_needed':
                 console.log('🔔 [SSE] 收到 approval_needed 事件:', chunk);
-                console.log('📋 workflow_state:', chunk.workflow_state);
-                callbacks.onApprovalNeeded?.(chunk.workflow_state);
+                console.log('📋 完整數據:', chunk);
+                // 傳遞完整的 chunk 數據，包含 workflow_state, query_rewrite_result, classification 等
+                callbacks.onApprovalNeeded?.(chunk);
                 break;
 
               case 'metadata':
