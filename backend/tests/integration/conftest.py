@@ -30,6 +30,9 @@ from app.core.password_utils import get_password_hash
 TEST_DB_NAME = "sortify_test_db"
 TEST_MONGODB_URL = os.getenv("TEST_MONGODB_URL", "mongodb://localhost:27017")
 
+# 預先計算的簡單測試密碼哈希（"test" 的 bcrypt 哈希）
+TEST_PASSWORD_HASH = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYzS0MKLqhe"
+
 
 @pytest.fixture(scope="function")
 def event_loop():
@@ -104,7 +107,7 @@ async def test_user(test_db: AsyncIOMotorDatabase) -> User:
         "username": "testuser",
         "email": "test@example.com",
         "full_name": "Test User",
-        "hashed_password": get_password_hash("testpass123"),
+        "hashed_password": TEST_PASSWORD_HASH,  # 使用預先計算的哈希
         "is_active": True,
         "is_admin": False,
         "created_at": datetime.now(UTC),
@@ -141,7 +144,7 @@ async def other_user(test_db: AsyncIOMotorDatabase) -> User:
         "username": "otheruser",
         "email": "other@example.com",
         "full_name": "Other User",
-        "hashed_password": get_password_hash("otherpass123"),
+        "hashed_password": TEST_PASSWORD_HASH,  # 使用預先計算的哈希
         "is_active": True,
         "is_admin": False,
         "created_at": datetime.now(UTC),
@@ -328,3 +331,184 @@ async def test_conversation_with_messages(test_db: AsyncIOMotorDatabase, test_us
         cached_documents=[],
         cached_document_data=None
     )
+
+
+# ========== AI QA 測試 Fixtures ==========
+
+@pytest.fixture
+def sample_ai_qa_request():
+    """
+    標準 AI QA 請求 fixture
+    
+    Returns:
+        AIQARequest: 可用於測試的標準請求
+    """
+    from app.models.vector_models import AIQARequest
+    
+    return AIQARequest(
+        question="Python 是什麼程式語言？",
+        conversation_id=None,
+        document_ids=None,
+        context_limit=5,
+        use_semantic_search=True
+    )
+
+
+@pytest.fixture
+def sample_follow_up_request():
+    """
+    追問型 AI QA 請求 fixture（依賴對話上下文）
+    
+    Returns:
+        AIQARequest: 追問請求
+    """
+    from app.models.vector_models import AIQARequest
+    
+    return AIQARequest(
+        question="它有什麼特點？",  # 依賴上下文的問題
+        conversation_id=None,  # 需要在測試中設置
+        document_ids=None,
+        context_limit=5
+    )
+
+
+@pytest_asyncio.fixture
+async def test_conversation_with_ai_qa(
+    test_db: AsyncIOMotorDatabase,
+    test_user: User
+) -> ConversationInDB:
+    """
+    創建包含 AI QA 對話的測試對話
+    
+    模擬真實的 QA 對話歷史，包含用戶問題和 AI 回答
+    
+    Returns:
+        ConversationInDB: 包含 AI QA 對話的對話對象
+    """
+    conversation_id = uuid4()
+    
+    # 創建模擬的 AI QA 對話
+    messages = [
+        ConversationMessage(
+            role="user",
+            content="什麼是 Python？",
+            timestamp=datetime.now(UTC),
+            tokens_used=20
+        ),
+        ConversationMessage(
+            role="assistant",
+            content="Python 是一種高級、直譯式的程式語言，以其清晰的語法和豐富的標準庫而聞名。",
+            timestamp=datetime.now(UTC),
+            tokens_used=150
+        ),
+        ConversationMessage(
+            role="user",
+            content="它適合初學者嗎？",
+            timestamp=datetime.now(UTC),
+            tokens_used=25
+        ),
+        ConversationMessage(
+            role="assistant",
+            content="是的，Python 非常適合初學者，因為它的語法簡潔易懂，而且有豐富的學習資源。",
+            timestamp=datetime.now(UTC),
+            tokens_used=120
+        )
+    ]
+    
+    conversation_data = {
+        "_id": conversation_id,
+        "title": "關於 Python 的對話",
+        "user_id": test_user.id,
+        "messages": [msg.model_dump() for msg in messages],
+        "created_at": datetime.now(UTC),
+        "updated_at": datetime.now(UTC),
+        "message_count": len(messages),
+        "total_tokens": sum(msg.tokens_used or 0 for msg in messages),
+        "cached_documents": [],
+        "cached_document_data": None
+    }
+    
+    await test_db["conversations"].insert_one(conversation_data)
+    
+    return ConversationInDB(
+        id=conversation_id,
+        title="關於 Python 的對話",
+        user_id=test_user.id,
+        messages=messages,
+        created_at=conversation_data["created_at"],
+        updated_at=conversation_data["updated_at"],
+        message_count=len(messages),
+        total_tokens=conversation_data["total_tokens"],
+        cached_documents=[],
+        cached_document_data=None
+    )
+
+
+@pytest_asyncio.fixture
+async def multiple_test_documents(
+    test_db: AsyncIOMotorDatabase,
+    test_user: User
+) -> list:
+    """
+    創建多個測試文檔（用於搜索測試）
+    
+    Returns:
+        list: 多個 Document 對象的列表
+    """
+    documents = []
+    
+    doc_configs = [
+        {
+            "filename": "python_intro.txt",
+            "file_type": "text/plain",
+            "tags": ["python", "tutorial"],
+            "size": 2048
+        },
+        {
+            "filename": "python_advanced.pdf",
+            "file_type": "application/pdf",
+            "tags": ["python", "advanced"],
+            "size": 5120
+        },
+        {
+            "filename": "javascript_guide.txt",
+            "file_type": "text/plain",
+            "tags": ["javascript", "tutorial"],
+            "size": 1536
+        }
+    ]
+    
+    for config in doc_configs:
+        doc_id = uuid4()
+        doc_data = {
+            "_id": doc_id,
+            "filename": config["filename"],
+            "file_type": config["file_type"],
+            "size": config["size"],
+            "owner_id": test_user.id,
+            "status": DocumentStatus.UPLOADED.value,
+            "vector_status": "not_vectorized",
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+            "tags": config["tags"],
+            "metadata": {},
+            "file_path": f"/test/path/{config['filename']}"
+        }
+        
+        await test_db["documents"].insert_one(doc_data)
+        
+        documents.append(Document(
+            id=doc_id,
+            filename=config["filename"],
+            file_type=config["file_type"],
+            size=config["size"],
+            owner_id=test_user.id,
+            status=DocumentStatus.UPLOADED,
+            created_at=doc_data["created_at"],
+            updated_at=doc_data["updated_at"],
+            tags=config["tags"],
+            metadata={},
+            file_path=doc_data["file_path"]
+        ))
+    
+    return documents

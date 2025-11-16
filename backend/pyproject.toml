@@ -48,6 +48,7 @@ dependencies = [
     # ===== 安全與認證 =====
     "python-jose[cryptography]>=3.5.0",
     "passlib[bcrypt]>=1.7.4",
+    "bcrypt>=4.0.0,<5.0.0",  # 限制 bcrypt < 5.0（與 passlib 1.7.4 兼容）
     
     # ===== 通用工具 =====
     "python-dotenv>=1.1.0",
