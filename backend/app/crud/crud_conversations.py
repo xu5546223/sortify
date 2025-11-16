@@ -49,27 +49,35 @@ async def create_conversation(
 
 async def get_conversation(
     db: AsyncIOMotorDatabase,
-    conversation_id: UUID
+    conversation_id: UUID,
+    user_id: Optional[UUID] = None
 ) -> Optional[ConversationInDB]:
     """
-    獲取單個對話（不檢查權限）
+    獲取單個對話
     
     Args:
         db: 數據庫連接
         conversation_id: 對話ID
+        user_id: 用戶ID（可選，用於權限驗證）
         
     Returns:
-        對話對象，如果不存在則返回 None
+        對話對象，如果不存在或權限不足則返回 None
         
     Note:
-        權限檢查應該在調用此函數後進行（例如使用 get_owned_resource_or_404）
+        如果提供 user_id，將檢查對話是否屬於該用戶
+        如果不提供 user_id，則不進行權限檢查（向後兼容）
     """
-    conversation_data = await db.conversations.find_one({
-        "_id": conversation_id
-    })
+    query = {"_id": conversation_id}
+    if user_id is not None:
+        query["user_id"] = user_id
+    
+    conversation_data = await db.conversations.find_one(query)
     
     if not conversation_data:
-        logger.warning(f"Conversation {conversation_id} not found")
+        if user_id:
+            logger.warning(f"Conversation {conversation_id} not found or access denied for user {user_id}")
+        else:
+            logger.warning(f"Conversation {conversation_id} not found")
         return None
     
     conversation_data['id'] = conversation_data.pop('_id')

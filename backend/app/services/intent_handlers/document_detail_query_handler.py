@@ -186,16 +186,102 @@ class DocumentDetailQueryHandler:
             logger.warning("⚠️ 未找到目標文檔ID，使用前3個緩存文檔作為回退")
             target_doc_ids = cached_doc_ids[:3]
         
-        # 步驟4: 準備文檔 Schema 信息
+        # 步驟4: 動態載入文檔 Schema（合併所有目標文檔的結構）
+        logger.info(f"📋 動態載入 {len(target_doc_ids)} 個文檔的 Schema...")
+        
+        # 步驟4.1: 獲取所有目標文檔的結構（合併模式，避免遺漏）
+        actual_schema_fields = {}
+        schema_by_document = {}  # 記錄每個文檔有哪些欄位
+        
+        if target_doc_ids:
+            try:
+                # 批量輕量級查詢：只獲取結構，不獲取大量數據
+                # 限制最多分析 5 個文檔（避免性能問題）
+                sample_doc_ids = target_doc_ids[:5]
+                
+                cursor = db.documents.find(
+                    {"_id": {"$in": sample_doc_ids}},
+                    projection={
+                        "_id": 1,
+                        "filename": 1,
+                        "analysis.ai_analysis_output.key_information": 1
+                    }
+                )
+                
+                sample_docs = await cursor.to_list(length=5)
+                
+                for doc in sample_docs:
+                    doc_id = str(doc.get("_id"))
+                    doc_filename = doc.get("filename", "未知文檔")
+                    doc_fields = []
+                    
+                    if "analysis" in doc:
+                        key_info = doc.get("analysis", {}).get("ai_analysis_output", {}).get("key_information", {})
+                        
+                        # 提取 dynamic_fields 的實際欄位
+                        if "dynamic_fields" in key_info and isinstance(key_info["dynamic_fields"], dict):
+                            dynamic_fields = key_info["dynamic_fields"]
+                            for field_name, field_value in dynamic_fields.items():
+                                field_type = type(field_value).__name__
+                                field_key = f"dynamic_fields.{field_name}"
+                                
+                                # 合併到總 Schema（使用 set 避免重複）
+                                if field_key not in actual_schema_fields:
+                                    actual_schema_fields[field_key] = f"{field_name} ({field_type})"
+                                
+                                doc_fields.append(field_key)
+                                
+                        # 提取 structured_entities 的實際欄位
+                        if "structured_entities" in key_info and isinstance(key_info["structured_entities"], dict):
+                            struct_entities = key_info["structured_entities"]
+                            for entity_type in struct_entities.keys():
+                                field_key = f"structured_entities.{entity_type}"
+                                
+                                if field_key not in actual_schema_fields:
+                                    actual_schema_fields[field_key] = f"{entity_type} 實體"
+                                
+                                doc_fields.append(field_key)
+                    
+                    # 記錄這個文檔有哪些欄位
+                    if doc_fields:
+                        schema_by_document[doc_filename] = doc_fields
+                
+                logger.info(f"✅ 合併載入了 {len(actual_schema_fields)} 個實際欄位（來自 {len(sample_docs)} 個文檔）")
+                
+                # 日誌記錄每個文檔的差異
+                if len(schema_by_document) > 1:
+                    logger.info(f"📊 文檔結構差異：{len(schema_by_document)} 個文檔有不同的欄位組合")
+                    for filename, fields in schema_by_document.items():
+                        logger.debug(f"  - {filename}: {len(fields)} 個欄位")
+                        
+            except Exception as e:
+                logger.warning(f"⚠️ 動態 Schema 載入失敗，使用通用 Schema: {e}")
+        
+        # 步驟4.2: 準備文檔 Schema 信息（結合通用 + 動態）
         document_schema_info = {
-            "description": "MongoDB 文檔 Schema",
-            "fields": {
-                "filename": "文件名",
-                "extracted_text": "文本內容",
-                "analysis.ai_analysis_output.key_information": "結構化信息（金額、日期、人名等）",
-                "analysis.ai_analysis_output.key_information.dynamic_fields": "動態欄位"
-            }
+            "description": "MongoDB 文檔 Schema 結構（包含實際欄位）",
+            "required_fields": {
+                "_id": "文檔唯一ID",
+                "filename": "文件名"
+            },
+            "content_fields": {
+                "extracted_text": "OCR提取的完整文本內容"
+            },
+            "standard_analysis_fields": {
+                "analysis.ai_analysis_output.key_information.content_summary": "內容摘要",
+                "analysis.ai_analysis_output.key_information.content_type": "文檔類型",
+                "analysis.ai_analysis_output.key_information.amounts_mentioned": "提及的金額",
+                "analysis.ai_analysis_output.key_information.dates_mentioned": "提及的日期",
+                "analysis.ai_analysis_output.key_information.extracted_entities": "提取的實體",
+                "analysis.ai_analysis_output.key_information.auto_title": "自動生成的標題"
+            },
+            "recommendation": "建議查詢策略：\n1. 最推薦：查詢完整的 analysis.ai_analysis_output.key_information（確保不遺漏）\n2. 如需特定欄位：根據下面的實際欄位選擇"
         }
+        
+        # 添加實際發現的欄位（如果有）
+        if actual_schema_fields:
+            document_schema_info["actual_fields_in_document"] = actual_schema_fields
+            document_schema_info["recommendation"] += f"\n3. 此文檔包含 {len(actual_schema_fields)} 個實際欄位，可精確查詢"
         
         # 步驟5: 對選定的文檔執行 MongoDB 詳細查詢
         all_detailed_data = []
@@ -290,6 +376,29 @@ class DocumentDetailQueryHandler:
         
         logger.info(f"詳細查詢完成，耗時: {processing_time:.2f}秒, API調用: {api_calls}次")
         
+        # 構建包含詳細數據的 semantic_search_contexts
+        from app.models.vector_models import SemanticContextDocument
+        semantic_contexts = []
+        for data in all_detailed_data:
+            # 提取文檔信息
+            doc_filename = data.get('filename', '未知文檔')
+            reference_num = data.get('_reference_number', 0)
+            
+            # 創建一個包含詳細數據的 context
+            context_doc = SemanticContextDocument(
+                document_id=str(data.get('_id', '')),
+                summary_or_chunk_text=f"MongoDB 查詢結果：{json.dumps(data, ensure_ascii=False, indent=2)}",
+                similarity_score=1.0,
+                metadata={
+                    'source': 'mongodb_detail_query',
+                    'filename': doc_filename,
+                    'reference_number': reference_num,
+                    'fields_count': len(data) - 2,  # 排除 _id 和 _reference_number
+                    'detailed_data': data  # 保存完整的詳細數據
+                }
+            )
+            semantic_contexts.append(context_doc)
+        
         return AIQAResponse(
             answer=answer,
             source_documents=target_doc_ids,
@@ -301,11 +410,12 @@ class DocumentDetailQueryHandler:
                 rewritten_queries=[request.question],
                 extracted_parameters={
                     "detail_query_count": len(all_detailed_data),
-                    "target_document_count": len(target_doc_ids)
+                    "target_document_count": len(target_doc_ids),
+                    "total_fields": sum(len(data) - 2 for data in all_detailed_data)  # 排除 _id 和 _reference_number
                 },
                 intent_analysis=classification.reasoning
             ),
-            semantic_search_contexts=[],
+            semantic_search_contexts=semantic_contexts,  # 包含詳細數據
             session_id=request.session_id,
             classification=classification,
             workflow_state={
@@ -313,7 +423,8 @@ class DocumentDetailQueryHandler:
                 "strategy_used": "document_detail_query",
                 "api_calls": api_calls,
                 "documents_queried": len(all_detailed_data),
-                "target_documents": target_doc_ids
+                "target_documents": target_doc_ids,
+                "mongodb_results": all_detailed_data  # 同時保留在 workflow_state 中
             },
             detailed_document_data_from_ai_query=all_detailed_data
         )

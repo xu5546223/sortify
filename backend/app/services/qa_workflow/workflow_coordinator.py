@@ -54,10 +54,10 @@ class WorkflowCoordinator:
         )
         
         # 重新進入智能路由流程(這次會帶上澄清的對話歷史)
-        from app.services.enhanced_ai_qa_service import enhanced_ai_qa_service
+        from app.services.qa_orchestrator import qa_orchestrator
         
         logger.info("澄清後重新路由,AI將看到完整對話上下文")
-        response = await enhanced_ai_qa_service.process_qa_request_intelligent(
+        response = await qa_orchestrator.process_qa_request_intelligent(
             db=db,
             request=new_request,
             user_id=user_id,

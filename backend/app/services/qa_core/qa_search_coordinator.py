@@ -13,6 +13,8 @@ from app.models.vector_models import SemanticSearchResult, QueryRewriteResult
 from app.services.vector.enhanced_search_service import enhanced_search_service
 from app.services.vector.embedding_service import embedding_service
 from app.services.vector.vector_db_service import vector_db_service
+from app.services.qa.utils.search_weight_config import SearchWeightConfig
+from app.services.qa.utils.search_strategy import apply_diversity_optimization
 import asyncio
 
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
@@ -112,6 +114,94 @@ class QASearchCoordinator:
                 user_id=user_id,
                 top_k=top_k,
                 similarity_threshold=similarity_threshold
+            )
+    
+    async def unified_search(
+        self,
+        db: AsyncIOMotorDatabase,
+        queries: List[str],
+        user_id: Optional[str],
+        search_strategy: str = "hybrid",
+        top_k: int = 5,
+        similarity_threshold: float = 0.3,
+        enable_diversity_optimization: bool = True,
+        document_ids: Optional[List[str]] = None,
+        **kwargs
+    ) -> List[SemanticSearchResult]:
+        """
+        統一搜索接口 - 支持多查詢，自動加權合併
+        
+        這是從 enhanced_ai_qa_service 遷移的統一搜索邏輯
+        
+        Args:
+            db: 數據庫連接
+            queries: 查詢列表（通常來自查詢重寫）
+            user_id: 用戶ID
+            search_strategy: 搜索策略
+            top_k: 返回結果數
+            similarity_threshold: 相似度閾值
+            enable_diversity_optimization: 是否啟用多樣性優化
+            document_ids: 限制搜索的文檔ID列表
+            
+        Returns:
+            List[SemanticSearchResult]: 加權合併後的搜索結果
+        """
+        if not queries:
+            logger.warning("查詢列表為空")
+            return []
+        
+        logger.info(f"統一搜索: {len(queries)} 個查詢, strategy={search_strategy}")
+        
+        try:
+            all_results_map: Dict[str, SemanticSearchResult] = {}
+            
+            # 對每個查詢執行搜索
+            for i, query in enumerate(queries):
+                logger.debug(f"執行查詢 {i+1}/{len(queries)}: {query[:50]}...")
+                
+                # 使用 coordinate_search 執行單個查詢
+                query_results = await self.coordinate_search(
+                    db=db,
+                    query=query,
+                    user_id=user_id,
+                    search_strategy=search_strategy,
+                    top_k=top_k * 2 if len(queries) > 1 else top_k,  # 多查詢時獲取更多候選
+                    similarity_threshold=similarity_threshold,
+                    document_ids=document_ids
+                )
+                
+                # 使用 SearchWeightConfig 合併結果（自動加權）
+                SearchWeightConfig.merge_weighted_results(all_results_map, query_results, i)
+                
+                logger.debug(f"查詢 {i+1} 完成，找到 {len(query_results)} 個結果")
+            
+            # 轉換為列表並排序
+            final_results = list(all_results_map.values())
+            final_results.sort(key=lambda x: x.similarity_score, reverse=True)
+            
+            # 可選的多樣性優化
+            if enable_diversity_optimization and len(final_results) > top_k:
+                final_results = apply_diversity_optimization(final_results, top_k)
+                logger.debug(f"應用多樣性優化")
+            
+            result_list = final_results[:top_k]
+            
+            logger.info(f"統一搜索完成: {len(queries)} 個查詢 → {len(result_list)} 個最終結果")
+            return result_list
+            
+        except Exception as e:
+            logger.error(f"統一搜索失敗: {e}", exc_info=True)
+            # 回退到單查詢搜索
+            primary_query = queries[0]
+            logger.warning(f"回退到單查詢搜索: {primary_query[:50]}...")
+            return await self.coordinate_search(
+                db=db,
+                query=primary_query,
+                user_id=user_id,
+                search_strategy=search_strategy,
+                top_k=top_k,
+                similarity_threshold=similarity_threshold,
+                document_ids=document_ids
             )
     
     async def _traditional_single_stage_search(

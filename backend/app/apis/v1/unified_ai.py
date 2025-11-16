@@ -11,7 +11,7 @@ from app.core.logging_utils import AppLogger
 from app.models.ai_models_simplified import AIPromptRequest, TokenUsage
 from app.services.ai.unified_ai_service_simplified import unified_ai_service_simplified, AIRequest, TaskType
 from app.services.ai.prompt_manager_simplified import PromptType
-from app.services.enhanced_ai_qa_service import enhanced_ai_qa_service
+from app.services.qa_orchestrator import qa_orchestrator
 from app.models.vector_models import AIQARequest, AIQAResponse
 from fastapi import Request # Added
 from app.core.logging_utils import log_event, LogLevel # Added
@@ -230,9 +230,9 @@ async def ai_question_answer(
     )
 
     try:
-        # 使用智能路由處理(如果啟用)
+        # 使用智能路由處理(如果啟用) - 通過 qa_orchestrator
         # 會根據問題意圖自動選擇最優處理策略
-        response = await enhanced_ai_qa_service.process_qa_request_intelligent(
+        response = await qa_orchestrator.process_qa_request_intelligent(
             db=db,
             request=request_data,
             user_id=current_user.id,
@@ -584,17 +584,17 @@ async def get_qa_config(
     獲取問答系統配置
     """
     try:
-        from app.services.enhanced_ai_qa_service import enhanced_ai_qa_service
+        from app.services.qa_orchestrator import qa_orchestrator
         from app.services.qa_workflow.question_classifier_service import question_classifier_service
         
         return {
             "success": True,
             "config": {
-                "intelligent_routing_enabled": enhanced_ai_qa_service.enable_intelligent_routing,
+                "intelligent_routing_enabled": qa_orchestrator.enable_intelligent_routing,
                 "classifier_enabled": question_classifier_service.config.enabled,
                 "classifier_model": question_classifier_service.config.model,
                 "confidence_threshold": question_classifier_service.config.confidence_threshold,
-                "hybrid_search_enabled": enhanced_ai_qa_service.enable_hybrid_search_for_aiqa
+                "hybrid_search_enabled": True  # 已統一使用新的搜索協調器
             }
         }
     except Exception as e:
@@ -614,12 +614,12 @@ async def update_qa_config(
     更新問答系統配置 (需要管理員權限)
     """
     try:
-        from app.services.enhanced_ai_qa_service import enhanced_ai_qa_service
+        from app.services.qa_orchestrator import qa_orchestrator
         from app.services.qa_workflow.question_classifier_service import question_classifier_service
         
         # 更新配置
         if "intelligent_routing_enabled" in config_data:
-            enhanced_ai_qa_service.enable_intelligent_routing = config_data["intelligent_routing_enabled"]
+            qa_orchestrator.enable_intelligent_routing = config_data["intelligent_routing_enabled"]
         
         if "classifier_enabled" in config_data:
             question_classifier_service.config.enabled = config_data["classifier_enabled"]

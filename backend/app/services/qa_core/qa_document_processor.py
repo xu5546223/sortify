@@ -14,37 +14,9 @@ from app.models.vector_models import SemanticContextDocument
 from app.models.ai_models_simplified import AIDocumentSelectionOutput
 from app.services.ai.unified_ai_service_simplified import unified_ai_service_simplified
 from app.crud.crud_documents import get_documents_by_ids
+from app.services.qa.utils.mongodb_utils import remove_projection_path_collisions
 
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
-
-
-def remove_projection_path_collisions(projection: dict) -> dict:
-    """
-    移除 MongoDB projection 中的父子欄位衝突,只保留最底層欄位
-    
-    保留原有邏輯,確保 MongoDB 查詢正常工作
-    """
-    if not projection or not isinstance(projection, dict):
-        return projection
-    
-    keys = list(projection.keys())
-    keys_to_remove = set()
-    
-    for k in keys:
-        for other in keys:
-            if k == other:
-                continue
-            # k 是 other 的子欄位,則移除父欄位 other
-            if k.startswith(other + "."):
-                keys_to_remove.add(other)
-            # other 是 k 的子欄位,則移除父欄位 k
-            elif other.startswith(k + "."):
-                keys_to_remove.add(k)
-    
-    for k in keys_to_remove:
-        projection.pop(k, None)
-    
-    return projection
 
 
 class QADocumentProcessor:
