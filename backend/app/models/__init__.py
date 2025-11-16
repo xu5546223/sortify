@@ -41,35 +41,79 @@ from .clustering_models import (
     ClusteringJobStatus,
     ClusterSummary
 )
+# 響應模型
+from .response_models import (
+    MessageResponse,
+    BasicResponse,
+    SuccessResponse,
+    PaginatedResponse,
+    StatusResponse,
+    HealthCheckResponse
+)
+# 錯誤模型
+from .error_models import (
+    ErrorDetail,
+    ErrorResponse,
+    ValidationErrorResponse,
+    ServiceHealthError,
+    BatchOperationError,
+    APIErrorResponse,
+    DocumentErrorResponse,
+    AIServiceErrorResponse,
+    AuthErrorResponse
+)
 
 __all__ = [
+    # 系統設定模型
     "SettingsDataResponse",
     "UpdatableSettingsData",
     "DBSettingsSchema",
     "AIServiceSettingsInput",
     "AIServiceSettingsStored",
-    "DatabaseSettings", # Add DatabaseSettings to __all__
+    "DatabaseSettings",
     "ConnectionInfo",
     "TunnelStatus",
+    # 用戶模型
     "User",
     "UserCreate",
     "UserUpdate",
     "UserInDB",
     "ConnectedDevice",
+    # 文檔模型
     "Document",
     "DocumentCreate",
     "DocumentUpdate",
     "DocumentStatus",
     "DocumentAnalysis",
+    # 日誌模型
     "LogEntryCreate",
     "LogEntryDB",
     "LogEntryPublic",
     "LogLevel",
+    # 認證模型
     "Token",
     "TokenData",
+    # 儀表板模型
     "SystemStats",
     "ActivityItem",
     "RecentActivities",
+    # 響應模型
+    "MessageResponse",
+    "BasicResponse",
+    "SuccessResponse",
+    "PaginatedResponse",
+    "StatusResponse",
+    "HealthCheckResponse",
+    # 錯誤模型
+    "ErrorDetail",
+    "ErrorResponse",
+    "ValidationErrorResponse",
+    "ServiceHealthError",
+    "BatchOperationError",
+    "APIErrorResponse",
+    "DocumentErrorResponse",
+    "AIServiceErrorResponse",
+    "AuthErrorResponse",
     # 向量模型相關
     "VectorDocumentStatus",
     "SemanticSummary",

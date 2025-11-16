@@ -1,35 +1,41 @@
-import logging # 新增
-import logging # 新增
-from fastapi import FastAPI, Depends, HTTPException, Request # Add Request
-from fastapi.exceptions import RequestValidationError # Add RequestValidationError
-from fastapi.responses import JSONResponse # Add JSONResponse
-from fastapi import status  # 添加 status 模組導入
-from contextlib import asynccontextmanager
-from .db.mongodb_utils import db_manager # 更改為相對導入
-from .apis.v1 import api_v1_router as generic_v1_router # 引入 v1 路由並更改為相對導入, 並重命名
-from .apis.v1 import logs as logs_api_v1 # 新增
-from .apis.v1 import dashboard as dashboard_api_v1 # 新增
-from .apis.v1 import auth as auth_api_v1 # <--- 新增 auth router 導入
-from .apis.v1 import system as system_api_v1 # 新增 system_routes 導入
-from .apis.v1 import vector_db as vector_db_api_v1 # 新增 vector_db router 導入
-from .apis.v1 import embedding as embedding_api_v1 # 新增 embedding router 導入
-from .apis.v1 import unified_ai as unified_ai_api_v1 # 新增統一AI router導入
-from .apis.v1 import cache_monitoring as cache_monitoring_api_v1 # 新增緩存監控 router 導入
-from .apis.v1 import gmail as gmail_api_v1 # 新增 Gmail router 導入
-from .apis.v1 import clustering as clustering_api_v1 # 新增聚類 router 導入
-from .apis.v1 import conversations as conversations_api_v1 # 新增對話 router 導入
-from .apis.v1 import device_auth as device_auth_api_v1 # 新增 Device Auth router 導入
-
-
-from motor.motor_asyncio import AsyncIOMotorDatabase
-from .dependencies import get_db
-from .core.middleware import RequestContextLogMiddleware # 新增中介軟體
-from .core.logging_utils import log_event # 新增日誌工具
-from .models.log_models import LogLevel # 新增 LogLevel
-from fastapi.middleware.cors import CORSMiddleware # 新增 CORS 中介軟體
-from .core.startup import preload_on_startup
+import logging
 import asyncio
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Depends, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.routing import APIRoute
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from .db.mongodb_utils import db_manager
+from .dependencies import get_db
+from .core.middleware import RequestContextLogMiddleware
+from .core.logging_utils import log_event
+from .models.log_models import LogLevel
+from .core.startup import preload_on_startup
 from .core.config import settings
+from .core.exceptions import SortifyBaseException
+
+# API 路由導入
+from .apis.v1 import api_v1_router as generic_v1_router
+from .apis.v1 import (
+    logs as logs_api_v1,
+    dashboard as dashboard_api_v1,
+    auth as auth_api_v1,
+    system as system_api_v1,
+    vector_db as vector_db_api_v1,
+    embedding as embedding_api_v1,
+    unified_ai as unified_ai_api_v1,
+    cache_monitoring as cache_monitoring_api_v1,
+    gmail as gmail_api_v1,
+    clustering as clustering_api_v1,
+    conversations as conversations_api_v1,
+    device_auth as device_auth_api_v1,
+    qa_analytics as qa_analytics_api_v1,
+    qa_stream as qa_stream_api_v1,
+    suggested_questions as suggested_questions_api_v1,
+)
 
 # 配置標準日誌記錄器
 logging.basicConfig(
@@ -180,6 +186,31 @@ app.add_middleware(RequestContextLogMiddleware)
 
 # --- Custom Exception Handlers ---
 
+@app.exception_handler(SortifyBaseException)
+async def sortify_exception_handler(request: Request, exc: SortifyBaseException):
+    """處理自定義 Sortify 異常"""
+    db = await get_db()
+    request_id = request.state.request_id if hasattr(request.state, "request_id") else "N/A"
+    
+    # 記錄錯誤
+    await log_event(
+        db=db,
+        level=LogLevel.ERROR if exc.status_code >= 500 else LogLevel.WARNING,
+        message=f"Sortify Exception: {exc.message}",
+        source="sortify_exception_handler",
+        request_id=request_id,
+        details={
+            "error_code": exc.error_code,
+            "status_code": exc.status_code,
+            **exc.details
+        }
+    )
+    
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict()
+    )
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     db = await get_db() # Get DB instance for logging
@@ -267,68 +298,29 @@ async def test_db_connection(db: AsyncIOMotorDatabase = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"資料庫連接測試失敗: {str(e)}")
 
-# 註冊 V1 API 路由
-# 假設 api_v1_router 是從 apis/v1/__init__.py 匯總的路由
-# 如果不是，並且您希望將所有 v1 路由都放在 /api/v1 下，
-# 則 logs 和 dashboard 的 prefix 也應包含 /api/v1
-app.include_router(generic_v1_router, prefix="/api/v1") # 為 generic_v1_router 添加 /api/v1 前綴
+# 註冊 V1 API 路由 - 使用配置列表統一管理
+ROUTERS_CONFIG = [
+    {"router": generic_v1_router, "prefix": "/api/v1", "tags": ["v1"]},
+    {"router": logs_api_v1.router, "prefix": "/api/v1/logs", "tags": ["v1 - Logs"]},
+    {"router": dashboard_api_v1.router, "prefix": "/api/v1/dashboard", "tags": ["v1 - Dashboard"]},
+    {"router": auth_api_v1.router, "prefix": "/api/v1/auth", "tags": ["v1 - Authentication"]},
+    {"router": system_api_v1.router, "prefix": "/api/v1/system", "tags": ["v1 - System"]},
+    {"router": vector_db_api_v1.router, "prefix": "/api/v1/vector-db", "tags": ["v1 - Vector Database"]},
+    {"router": embedding_api_v1.router, "prefix": "/api/v1/embedding", "tags": ["v1 - Embedding"]},
+    {"router": unified_ai_api_v1.router, "prefix": "/api/v1/unified-ai", "tags": ["v1 - Unified AI Services"]},
+    {"router": cache_monitoring_api_v1.router, "prefix": "/api/v1/cache", "tags": ["v1 - Cache Monitoring"]},
+    {"router": gmail_api_v1.router, "prefix": "/api/v1/gmail", "tags": ["v1 - Gmail Services"]},
+    {"router": clustering_api_v1.router, "prefix": "/api/v1/clustering", "tags": ["v1 - Clustering"]},
+    {"router": conversations_api_v1.router, "prefix": "/api/v1", "tags": ["v1 - Conversations"]},
+    {"router": qa_analytics_api_v1.router, "prefix": "/api/v1/qa/analytics", "tags": ["v1 - QA Analytics"]},
+    {"router": qa_stream_api_v1.router, "prefix": "/api/v1", "tags": ["v1 - QA Streaming"]},
+    {"router": device_auth_api_v1.router, "prefix": "/api/v1/device-auth", "tags": ["v1 - Device Authentication"]},
+    {"router": suggested_questions_api_v1.router, "prefix": "/api/v1", "tags": ["v1 - Suggested Questions"]},
+]
 
-# 註冊新的 Logs 和 Dashboard 路由
-app.include_router(logs_api_v1.router, prefix="/api/v1/logs", tags=["v1 - Logs"])
-app.include_router(dashboard_api_v1.router, prefix="/api/v1/dashboard", tags=["v1 - Dashboard"])
+# 批量註冊路由
+for config in ROUTERS_CONFIG:
+    app.include_router(**config)
 
-# 註冊新的 Auth 路由
-app.include_router(auth_api_v1.router, prefix="/api/v1/auth", tags=["v1 - Authentication"]) # <--- 新增 auth router 註冊
-
-# 註冊新的 System 路由
-app.include_router(system_api_v1.router, prefix="/api/v1/system", tags=["v1 - System"])
-
-# 註冊新的向量資料庫路由
-app.include_router(vector_db_api_v1.router, prefix="/api/v1/vector-db", tags=["v1 - Vector Database"])
-
-# 註冊新的 Embedding 模型路由
-app.include_router(embedding_api_v1.router, prefix="/api/v1/embedding", tags=["v1 - Embedding"])
-
-# 註冊新的統一AI路由
-app.include_router(unified_ai_api_v1.router, prefix="/api/v1/unified-ai", tags=["v1 - Unified AI Services"])
-
-# 註冊新的緩存監控路由
-app.include_router(cache_monitoring_api_v1.router, prefix="/api/v1/cache", tags=["v1 - Cache Monitoring"])
-
-# 註冊新的 Gmail 路由
-app.include_router(gmail_api_v1.router, prefix="/api/v1/gmail", tags=["v1 - Gmail Services"])
-
-# 註冊新的聚類路由
-app.include_router(clustering_api_v1.router, prefix="/api/v1/clustering", tags=["v1 - Clustering"])
-
-# 註冊新的對話路由
-app.include_router(conversations_api_v1.router, prefix="/api/v1", tags=["v1 - Conversations"])
-
-# 註冊QA統計分析路由
-from .apis.v1 import qa_analytics as qa_analytics_api_v1
-app.include_router(qa_analytics_api_v1.router, prefix="/api/v1/qa/analytics", tags=["v1 - QA Analytics"])
-
-# 註冊流式 QA 路由
-from .apis.v1 import qa_stream as qa_stream_api_v1
-app.include_router(qa_stream_api_v1.router, prefix="/api/v1", tags=["v1 - QA Streaming"])
-
-# 註冊 Device Auth 路由
-app.include_router(device_auth_api_v1.router, prefix="/api/v1/device-auth", tags=["v1 - Device Authentication"])
-
-# 註冊建議問題路由
-from .apis.v1 import suggested_questions as suggested_questions_api_v1
-app.include_router(suggested_questions_api_v1.router, prefix="/api/v1", tags=["v1 - Suggested Questions"])
-
-
-
-# ---- 用於調試路由 ----
-from fastapi.routing import APIRoute
-print("---- Registered Routes ----")
-for route in app.routes:
-    if isinstance(route, APIRoute):
-        print(f"Path: {route.path}, Name: {route.name}, Methods: {route.methods}")
-    else:
-        # Could be Mount or WebSocketRoute etc.
-        print(f"Path: {route.path if hasattr(route, 'path') else 'N/A'}, Type: {type(route)}")
-print("---- End of Routes ----") 
+std_logger.info(f"已註冊 {len(ROUTERS_CONFIG)} 個路由模組") 
 

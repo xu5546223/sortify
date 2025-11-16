@@ -36,6 +36,7 @@ class SimpleFactualHandler:
         self,
         request: AIQARequest,
         classification: QuestionClassification,
+        context: Optional[dict] = None,
         db: Optional[AsyncIOMotorDatabase] = None,
         user_id: Optional[str] = None,
         request_id: Optional[str] = None
@@ -52,6 +53,7 @@ class SimpleFactualHandler:
         Args:
             request: AI QA 請求
             classification: 問題分類結果
+            context: 對話上下文（未使用）
             db: 數據庫連接
             user_id: 用戶ID
             request_id: 請求ID
