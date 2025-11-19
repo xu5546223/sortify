@@ -135,7 +135,7 @@ class TestUserAuthentication:
         場景：使用正確的用戶名和密碼登錄
         預期：認證成功，返回用戶
         """
-        # test_user 的密碼是 "testpass123"（在 conftest.py 中設置）
+        # test_user 的密碼是 "test"（在 conftest.py 中設置）
         user = await crud_users.get_user_by_username(test_db, username="testuser")
         
         # 驗證用戶存在
@@ -143,7 +143,7 @@ class TestUserAuthentication:
         assert user.username == "testuser"
         
         # 驗證密碼
-        is_valid = security_verify_password("testpass123", user.hashed_password)
+        is_valid = security_verify_password("test", user.hashed_password)
         assert is_valid is True
     
     @pytest.mark.asyncio

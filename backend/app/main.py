@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from .db.mongodb_utils import db_manager
+from .db.db_init import create_database_indexes
 from .dependencies import get_db
 from .core.middleware import RequestContextLogMiddleware
 from .core.logging_utils import log_event
@@ -55,6 +56,9 @@ async def lifespan(app: FastAPI):
     
     try:
         await db_manager.connect_to_mongo() # 確保連接已建立
+        if db_manager.db is not None:
+            await create_database_indexes(db_manager.db) # 創建索引
+
         
         # 連接到 Redis
         try:
