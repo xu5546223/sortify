@@ -68,7 +68,8 @@ class QASearchCoordinator:
                     user_id=str(user_id) if user_id else None,
                     search_type="summary_only",
                     stage2_top_k=top_k,
-                    similarity_threshold=similarity_threshold
+                    similarity_threshold=similarity_threshold,
+                    document_ids=document_ids  # ✅ 傳遞 document_ids
                 )
             
             elif search_strategy == "rrf_fusion":
@@ -80,7 +81,8 @@ class QASearchCoordinator:
                     search_type="rrf_fusion",
                     stage1_top_k=min(top_k * 2, 15),
                     stage2_top_k=top_k,
-                    similarity_threshold=similarity_threshold
+                    similarity_threshold=similarity_threshold,
+                    document_ids=document_ids  # ✅ 傳遞 document_ids
                 )
             
             elif search_strategy == "traditional":
@@ -103,7 +105,8 @@ class QASearchCoordinator:
                     search_type="hybrid",
                     stage1_top_k=min(top_k * 2, 10),
                     stage2_top_k=top_k,
-                    similarity_threshold=similarity_threshold
+                    similarity_threshold=similarity_threshold,
+                    document_ids=document_ids  # ✅ 傳遞 document_ids
                 )
         
         except Exception as e:

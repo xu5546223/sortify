@@ -1,4 +1,4 @@
-export type LogLevel = 'info' | 'warning' | 'error' | 'debug';
+export type LogLevel = 'INFO' | 'WARNING' | 'ERROR' | 'DEBUG';
 
 export interface TokenUsage {
   prompt_tokens: number;
@@ -135,15 +135,11 @@ export interface DatabaseSettings {
 export interface SettingsData {
   aiService?: AIServiceSettings;
   database?: DatabaseSettings;
-  autoConnect?: boolean | null;
-  autoSync?: boolean | null;
 }
 
 export interface UpdatableSettingsPayload {
   aiService?: AIServiceSettingsUpdate;
   database?: DatabaseSettings;
-  autoConnect?: boolean | null;
-  autoSync?: boolean | null;
 }
 
 export interface TestDBConnectionRequest {

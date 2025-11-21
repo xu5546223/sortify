@@ -42,21 +42,42 @@ def _build_document_filter_query(
         query["tags"] = {"$in": tags_include}
     
     # 新增: 聚類相關過濾
+    or_conditions = []
+    
     if cluster_id:
-        query["cluster_info.cluster_id"] = cluster_id
+        # 特殊處理：當 cluster_id 為字符串 'null' 時，查詢未分類文件
+        # （cluster_info.cluster_id 為 null 或不存在）
+        if cluster_id == 'null':
+            or_conditions.append({
+                "$or": [
+                    {"cluster_info.cluster_id": {"$exists": False}},
+                    {"cluster_info.cluster_id": None}
+                ]
+            })
+        else:
+            query["cluster_info.cluster_id"] = cluster_id
     
     # 聚類狀態過濾
     if clustering_status:
         if clustering_status == 'pending':
             # pending 表示尚未分類：clustering_status 不存在、為 null 或明確為 'pending'
-            query["$or"] = [
-                {"clustering_status": {"$exists": False}},
-                {"clustering_status": None},
-                {"clustering_status": 'pending'}
-            ]
+            or_conditions.append({
+                "$or": [
+                    {"clustering_status": {"$exists": False}},
+                    {"clustering_status": None},
+                    {"clustering_status": 'pending'}
+                ]
+            })
         else:
             # 其他狀態（excluded, clustered 等）直接匹配
             query["clustering_status"] = clustering_status
+    
+    # 如果有多個 $or 條件，使用 $and 包裝
+    if or_conditions:
+        if len(or_conditions) == 1:
+            query.update(or_conditions[0])
+        else:
+            query["$and"] = or_conditions
     
     if has_enriched_data is not None:
         if has_enriched_data:

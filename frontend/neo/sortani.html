@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Sorting Animation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --c-green: #29bf12;
+            --c-teal: #08bdbd;
+            --c-lime: #abff4f;
+            --c-red: #f21b3f;
+            --c-orange: #ff9914;
+            --c-black: #000000;
+            --c-white: #ffffff;
+            --c-bg: #f3f4f6;
+            
+            --border: 3px solid var(--c-black);
+            --shadow: 4px 4px 0px 0px var(--c-black);
+        }
+
+        body {
+            background-color: var(--c-bg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            font-family: 'Space Grotesk', sans-serif;
+            overflow: hidden;
+        }
+
+        /* 主要容器 */
+        .factory-container {
+            position: relative;
+            width: 800px;
+            height: 400px;
+            background: var(--c-bg);
+            /* border: 2px dashed #ccc; Debug用 */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* 1. 傳送帶軌道 (裝飾) */
+        .conveyor-track {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            width: 100%;
+            height: 10px;
+            background: var(--c-black);
+            transform: translateY(-50%);
+            z-index: 0;
+        }
+
+        /* 2. AI 核心掃描儀 (Scanner) */
+        .scanner-box {
+            position: relative;
+            width: 140px;
+            height: 140px;
+            background: var(--c-white);
+            border: var(--border);
+            box-shadow: var(--shadow);
+            z-index: 20;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        /* 掃描光束動畫 */
+        .scan-beam {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            height: 4px;
+            background: var(--c-lime);
+            box-shadow: 0 0 10px var(--c-lime);
+            animation: scanMove 1.5s infinite ease-in-out;
+            opacity: 0.8;
+        }
+        
+        /* 掃描儀狀態燈 */
+        .scanner-eye {
+            width: 60px;
+            height: 60px;
+            background: var(--c-black);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .scanner-pupil {
+            width: 20px;
+            height: 20px;
+            background: var(--c-green);
+            border-radius: 50%;
+            animation: eyeLook 3s infinite;
+        }
+
+        /* 3. 文件 (Files) */
+        .file-item {
+            position: absolute;
+            width: 50px;
+            height: 64px;
+            background: var(--c-white);
+            border: 2px solid var(--c-black);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            top: 50%;
+            margin-top: -32px;
+            left: -60px; /* 初始位置在螢幕外 */
+        }
+        
+        /* 文件圖標 */
+        .file-item i { font-size: 24px; color: var(--c-black); }
+        
+        /* 文件動畫路徑 */
+        /* 
+           我們要創建三個不同的文件，分別去往不同的資料夾 
+           File 1 -> Teal Folder (Up)
+           File 2 -> Orange Folder (Down)
+           File 3 -> Green Folder (Straight)
+        */
+        
+        .file-1 { animation: pathTypeA 4s infinite linear; }
+        .file-2 { animation: pathTypeB 4s infinite linear 1.3s; } /* 延遲 */
+        .file-3 { animation: pathTypeC 4s infinite linear 2.6s; } /* 延遲 */
+
+        /* 4. 資料夾接收端 (Buckets) */
+        .bucket-container {
+            position: absolute;
+            right: 50px;
+            height: 300px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            z-index: 15;
+        }
+
+        .folder-bucket {
+            width: 100px;
+            height: 80px;
+            background: var(--c-white);
+            border: var(--border);
+            box-shadow: 4px 4px 0px rgba(0,0,0,0.2);
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        /* 資料夾開口效果 */
+        .folder-bucket::before {
+            content: '';
+            position: absolute;
+            left: -10px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 20px;
+            height: 40px;
+            background: var(--c-black); /* 入口 */
+            border-radius: 0 4px 4px 0;
+        }
+        
+        .bucket-teal { border-color: var(--c-black); }
+        .bucket-teal .label { background: var(--c-teal); color: white; }
+        
+        .bucket-green { border-color: var(--c-black); }
+        .bucket-green .label { background: var(--c-green); color: black; }
+
+        .bucket-orange { border-color: var(--c-black); }
+        .bucket-orange .label { background: var(--c-orange); color: black; }
+
+        .folder-label {
+            position: absolute;
+            bottom: -15px;
+            right: -10px;
+            padding: 4px 8px;
+            border: 2px solid var(--c-black);
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        /* --- Animations --- */
+
+        @keyframes scanMove {
+            0%, 100% { top: 10px; }
+            50% { top: 126px; }
+        }
+
+        @keyframes eyeLook {
+            0%, 100% { transform: translate(0, 0); }
+            25% { transform: translate(-5px, 0); }
+            50% { transform: translate(0, 5px); }
+            75% { transform: translate(5px, 0); }
+        }
+
+        /* 路徑 A: 向上分類 */
+        @keyframes pathTypeA {
+            0% { left: -60px; transform: rotate(0deg); background: white; }
+            40% { left: 330px; top: 50%; transform: rotate(0deg); background: white; } /* 到達掃描儀中心 */
+            50% { left: 330px; top: 50%; transform: scale(1.1); background: var(--c-lime); border-color: var(--c-black); } /* 掃描變色 */
+            60% { left: 450px; top: 50%; background: var(--c-teal); } /* 移出並變成目標色 */
+            90% { left: 650px; top: 16%; transform: rotate(-10deg); opacity: 1; } /* 進入上面的資料夾 */
+            100% { left: 700px; top: 16%; opacity: 0; }
+        }
+
+        /* 路徑 B: 向下分類 */
+        @keyframes pathTypeB {
+            0% { left: -60px; transform: rotate(0deg); background: white; }
+            40% { left: 330px; top: 50%; transform: rotate(0deg); background: white; }
+            50% { left: 330px; top: 50%; transform: scale(1.1); background: var(--c-lime); }
+            60% { left: 450px; top: 50%; background: var(--c-orange); }
+            90% { left: 650px; top: 84%; transform: rotate(10deg); opacity: 1; } /* 進入下面的資料夾 */
+            100% { left: 700px; top: 84%; opacity: 0; }
+        }
+
+        /* 路徑 C: 直行分類 */
+        @keyframes pathTypeC {
+            0% { left: -60px; transform: rotate(0deg); background: white; }
+            40% { left: 330px; top: 50%; transform: rotate(0deg); background: white; }
+            50% { left: 330px; top: 50%; transform: scale(1.1); background: var(--c-lime); }
+            60% { left: 450px; top: 50%; background: var(--c-green); }
+            90% { left: 650px; top: 50%; transform: rotate(0deg); opacity: 1; } /* 進入中間的資料夾 */
+            100% { left: 700px; top: 50%; opacity: 0; }
+        }
+
+        /* 狀態文字閃爍 */
+        .status-text {
+            position: absolute;
+            top: -40px;
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: bold;
+            background: var(--c-black);
+            color: var(--c-lime);
+            padding: 4px 12px;
+            border: 2px solid var(--c-lime);
+            box-shadow: 4px 4px 0px rgba(0,0,0,0.2);
+        }
+        .status-text::after {
+            content: '_';
+            animation: blink 1s infinite;
+        }
+        @keyframes blink { 50% { opacity: 0; } }
+
+    </style>
+</head>
+<body>
+
+    <div class="factory-container">
+        
+        <!-- 1. 狀態文字 -->
+        <div class="status-text">AI PROCESSING...</div>
+
+        <!-- 2. 傳送帶線條 -->
+        <div class="conveyor-track"></div>
+
+        <!-- 3. 中央掃描儀 (The AI) -->
+        <div class="scanner-box">
+            <div class="scan-beam"></div>
+            <div class="scanner-eye">
+                <div class="scanner-pupil"></div>
+            </div>
+            <div class="mt-4 font-mono text-[10px] font-bold bg-black text-white px-1">SORTIFY_V2</div>
+        </div>
+
+        <!-- 4. 移動的文件 (The Files) -->
+        <!-- File 1: 去 Finance (Teal) -->
+        <div class="file-item file-1">
+            <i class="ph-fill ph-receipt"></i>
+        </div>
+
+        <!-- File 2: 去 Unknown (Orange) -->
+        <div class="file-item file-2">
+            <i class="ph-fill ph-warning-octagon"></i>
+        </div>
+
+        <!-- File 3: 去 Contracts (Green) -->
+        <div class="file-item file-3">
+            <i class="ph-fill ph-signature"></i>
+        </div>
+
+        <!-- 5. 接收資料夾 (Buckets) -->
+        <div class="bucket-container">
+            
+            <!-- Folder A: Teal -->
+            <div class="folder-bucket bucket-teal">
+                <i class="ph-fill ph-folder text-4xl text-[var(--c-teal)]"></i>
+                <div class="folder-label label">FINANCE</div>
+            </div>
+
+            <!-- Folder B: Green -->
+            <div class="folder-bucket bucket-green">
+                <i class="ph-fill ph-folder text-4xl text-[var(--c-green)]"></i>
+                <div class="folder-label label">DOCS</div>
+            </div>
+
+            <!-- Folder C: Orange -->
+            <div class="folder-bucket bucket-orange">
+                <i class="ph-fill ph-folder text-4xl text-[var(--c-orange)]"></i>
+                <div class="folder-label label">REVIEW</div>
+            </div>
+
+        </div>
+
+    </div>
+
+</body>
+</html>

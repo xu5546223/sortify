@@ -9,15 +9,30 @@ interface MessageBoxPCProps {
 const MessageBoxPC = React.memo<MessageBoxPCProps>(({ message, type, visible }) => {
   if (!visible) return null;
 
-  let bgColor = 'bg-surface-800'; // Default for info
-  if (type === 'error') bgColor = 'bg-red-600';
-  else if (type === 'success') bgColor = 'bg-green-600';
+  // Neo-Brutalism 樣式配置
+  let bgColor = 'bg-neo-hover'; // info 預設
+  let textColor = 'text-neo-black';
+  let icon = 'ℹ️';
+  
+  if (type === 'error') {
+    bgColor = 'bg-neo-error';
+    textColor = 'text-neo-white';
+    icon = '❌';
+  } else if (type === 'success') {
+    bgColor = 'bg-neo-primary';
+    textColor = 'text-neo-black';
+    icon = '✅';
+  }
 
   return (
-    <div className={`message-box-pc fixed bottom-5 right-5 text-white py-3 px-6 rounded-md shadow-lg z-50 ${bgColor}`}>
-      {message}
+    <div 
+      className={`message-box-pc fixed bottom-8 right-8 ${bgColor} ${textColor} border-3 border-neo-black py-4 px-6 shadow-[8px_8px_0px_0px_#000] z-[9999] animate-slideIn font-display font-bold text-base flex items-center gap-3 min-w-[300px] max-w-[500px]`}
+      role="alert"
+    >
+      <span className="text-2xl flex-shrink-0">{icon}</span>
+      <span className="flex-1 break-words">{message}</span>
     </div>
   );
 });
 
-export default MessageBoxPC; 
+export default MessageBoxPC;

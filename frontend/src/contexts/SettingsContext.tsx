@@ -35,12 +35,6 @@ const defaultDbSettings: DatabaseSettings = {
 const initialSettings: SettingsData = {
   aiService: defaultAiSettings,
   database: defaultDbSettings,
-  autoConnect: false,
-  autoSync: false,
-  // isDatabaseConnected is not part of SettingsData in api.ts, 
-  // but getSettings might return it. We should handle its potential absence/presence.
-  // For initial state, it can be omitted if not strictly part of SettingsData type.
-  // Let's assume getSettings response structure is the source of truth for `settings` state.
 };
 
 export interface SettingsContextType {
@@ -190,6 +184,4 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
 export interface SystemSettingsUpdate {
   aiService?: AIServiceSettingsUpdate; // Use AIServiceSettingsUpdate for apiKey
   database?: Partial<DatabaseSettings>;
-  autoConnect?: boolean;
-  autoSync?: boolean;
 } 

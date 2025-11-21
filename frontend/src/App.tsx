@@ -37,6 +37,8 @@ import MobileStyleTest from './mobile/pages/MobileStyleTest';
 import MobileQuestionBank from './mobile/pages/MobileQuestionBank';
 import { isMobileDevice } from './utils/pwaUtils';
 import { registerServiceWorker } from './utils/pwaUtils';
+// Demo 頁面
+import ReasoningChainDemo from './components/ReasoningChainDemo';
 
 // 裝置檢測和自動導航組件
 const DeviceRouter: React.FC = () => {
@@ -96,6 +98,9 @@ const AppWithTheme: React.FC = () => {
         <Route path="/auth/login" element={<PublicRouteWrapper><LoginPage /></PublicRouteWrapper>} />
         <Route path="/auth/register" element={<PublicRouteWrapper><RegisterPage /></PublicRouteWrapper>} />
         <Route path="/auth/gmail-callback" element={<GmailCallback />} />
+        
+        {/* Demo 測試頁面 */}
+        <Route path="/reasoning-demo" element={<ReasoningChainDemo />} />
         
         {/* 根路由 */}
         <Route path="/" element={<RootRedirect />} />

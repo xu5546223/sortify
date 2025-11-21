@@ -39,10 +39,10 @@ const Table: React.FC<TableProps> = ({
   isSelectAllDisabled = false,
   sortConfig,
 }) => {
-  const defaultTableClass = 'w-full table-fixed divide-y divide-gray-200 shadow-md rounded-lg';
-  const defaultTheadClass = 'bg-surface-100';
-  const defaultThBaseClass = 'px-6 py-3 text-left text-xs font-medium text-surface-700 uppercase tracking-wider';
-  const defaultTbodyClass = 'bg-surface-50 divide-y divide-surface-200';
+  const defaultTableClass = 'w-full text-left text-sm font-bold';
+  const defaultTheadClass = 'bg-gray-100 border-b-3 border-neo-black uppercase text-xs';
+  const defaultThBaseClass = 'px-3 py-3 text-left font-bold';
+  const defaultTbodyClass = 'divide-y-2 divide-neo-black';
 
   const renderHeaderContent = (headerOrConfig: string | HeaderConfig) => {
     // If it's a simple string header (backward compatibility)
@@ -94,7 +94,7 @@ const Table: React.FC<TableProps> = ({
               const thClasses = [
                 defaultThBaseClass,
                 config?.className || '',
-                (config?.sortable ? 'cursor-pointer hover:bg-surface-100' : ''),
+                (config?.sortable ? 'cursor-pointer hover:bg-neo-hover hover:bg-opacity-30' : ''),
               ].filter(Boolean).join(' ');
 
               // If it's a config object and has onSort, use it, otherwise no onClick

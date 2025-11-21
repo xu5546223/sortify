@@ -1,515 +1,245 @@
-/* 導入我們的主題配置 - 包含正確的 Tailwind CSS v3 導入 */
+/* Sortify 主樣式入口 - 統一 Neo-Brutalism 主題系統 */
+
+/* 導入核心主題（包含 Tailwind + Neo-Brutalism） */
 @import "./theme.css";
-@import "./utilities.css";
-@import "./semanticSearch.css";
 
-/* 確保主題配置被正確應用 */
-:root {
-  /* 強制初始化 CSS 變量 */
-  color-scheme: light dark;
-}
+/* ==========================================
+   全局樣式 - 只保留不衝突的部分
+   ========================================== */
 
-/* 暗黑模式支持 */
-[data-theme="dark"] {
-  color-scheme: dark;
-  background-color: var(--color-surface-50);
-}
-
-[data-theme="light"] {
-  color-scheme: light;
-}
-
-[data-theme="dark"] body {
-  background-color: var(--color-surface-50);
-}
-
-[data-theme="dark"] #root {
-  background-color: var(--color-surface-50);
-}
-
-/* 確保平滑過渡 */
-* {
-  transition-property: color, background-color, border-color;
-  transition-duration: 0.2s;
-  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
-}
-
-/* 滾動條樣式 */
+/* 滾動條樣式 - 適配 Neo-Brutalism */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-surface-100);
+  background: var(--color-bg);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-surface-400);
-  border-radius: 4px;
+  background: var(--color-black);
+  border: 1px solid var(--color-white);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-surface-500);
+  background: var(--color-primary);
 }
 
-/* 暗色模式下的滾動條優化 */
-[data-theme="dark"] ::-webkit-scrollbar-track {
-  background: var(--color-surface-100);
-}
-
-[data-theme="dark"] ::-webkit-scrollbar-thumb {
-  background: var(--color-surface-500);
-}
-
-[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-surface-600);
-}
-
-/* Focus 樣式優化 */
+/* Focus 樣式 - 使用 Neo-Brutalism 配色 */
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid var(--color-primary-500);
+  outline: 3px solid var(--color-active);
   outline-offset: 2px;
 }
 
-/* 禁用狀態透明度 */
+/* 禁用狀態 */
 :disabled {
-  opacity: 0.6;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
-/* 選擇文字樣式 */
-::selection {
-  background-color: var(--color-primary-500);
-  color: white;
+/* ==========================================
+   Ant Design 組件覆蓋
+   ========================================== */
+
+/* Tooltip - Neo-Brutalism 風格 */
+.ant-tooltip-inner {
+  background-color: var(--color-black) !important;
+  color: var(--color-white) !important;
+  border: 2px solid var(--color-black) !important;
+  box-shadow: var(--shadow-md) !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  font-size: 12px !important;
+  padding: 8px 12px !important;
 }
 
+.ant-tooltip-arrow-content {
+  background-color: var(--color-black) !important;
+}
+
+/* Alert 組件 - Neo-Brutalism 風格 */
+.ant-alert {
+  border: 3px solid var(--color-black) !important;
+  box-shadow: var(--shadow-md) !important;
+  border-radius: 0 !important;
+  font-weight: 700 !important;
+}
+
+.ant-alert-warning {
+  background-color: var(--color-warn) !important;
+  border-color: var(--color-black) !important;
+  color: var(--color-black) !important;
+}
+
+.ant-alert-info {
+  background-color: var(--color-active) !important;
+  border-color: var(--color-black) !important;
+  color: var(--color-black) !important;
+}
+
+.ant-alert-error {
+  background-color: var(--color-error) !important;
+  border-color: var(--color-black) !important;
+  color: var(--color-white) !important;
+}
+
+.ant-alert-success {
+  background-color: var(--color-primary) !important;
+  border-color: var(--color-black) !important;
+  color: var(--color-black) !important;
+}
+
+/* ==========================================
+   舊系統相容層 - 將舊類名映射到新系統
+   ========================================== */
+
+/* 將舊的 .card 映射到 .neo-card */
+.card:not(.neo-card) {
+  background-color: var(--color-white);
+  border: var(--border-width-pc) solid var(--color-black);
+  box-shadow: var(--shadow-lg);
+  padding: var(--spacing-card);
+  border-radius: var(--radius-card);
+}
+
+/* 將舊的 .btn 映射到新按鈕系統 */
+.btn:not([class*="neo-btn"]) {
+  background-color: var(--color-white);
+  color: var(--color-black);
+  border: 2px solid var(--color-black);
+  box-shadow: var(--shadow-md);
+  font-weight: 700;
+  text-transform: uppercase;
+  transition: var(--trans-bounce);
+  padding: 0.5rem 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+/* 舊的側邊欄樣式（如果還在使用）*/
 .sidebar {
-    width: 260px;
-    background-color: #343a40;
-    color: white;
-    /* position: fixed; /* Removed for potentially more flexible layout handled by App.tsx */
-    /* top: 0; */
-    /* left: 0; */
-    /* height: 100%; */ 
-    /* overflow-y: auto; */
+  background-color: var(--color-black);
+  color: var(--color-white);
+  border-right: 3px solid var(--color-black);
 }
 
 .sidebar a {
-    display: block;
-    padding: 12px 20px;
-    color: #adb5bd;
-    text-decoration: none;
-    transition: background-color 0.2s ease, color 0.2s ease;
-    border-left: 3px solid transparent;
+  display: block;
+  padding: 12px 20px;
+  color: var(--color-white);
+  text-decoration: none;
+  transition: var(--trans-bounce);
+  border-left: 3px solid transparent;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .sidebar a:hover,
 .sidebar a.active {
-    background-color: #495057;
-    color: white;
-    border-left-color: #007bff;
+  background-color: var(--color-primary);
+  color: var(--color-black);
+  border-left-color: var(--color-active);
 }
 
-.sidebar .logo {
-    padding: 20px;
-    text-align: center;
-    font-size: 1.5rem;
-    font-weight: 600;
-    border-bottom: 1px solid #495057;
+/* ==========================================
+   工具類 - AI 功能專用
+   ========================================== */
+
+/* AI 警告文字 */
+.ai-warning-text {
+  color: var(--color-warn);
+  font-weight: 700;
 }
 
-.content {
-    /* margin-left: 260px; /* This will be handled by the layout in App.tsx */
-    padding: 20px;
-    width: 100%; /* Ensure content takes remaining width */
+.ai-error-text {
+  color: var(--color-error);
+  font-weight: 700;
 }
 
-.card {
-    background-color: white;
-    border-radius: 8px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    margin-bottom: 20px;
-    padding: 20px;
+.ai-info-text {
+  color: var(--color-active);
+  font-weight: 700;
 }
 
-.card-header {
-    font-size: 1.25rem;
-    font-weight: 600;
-    margin-bottom: 15px;
-    color: #333;
-    border-bottom: 1px solid #eee;
-    padding-bottom: 10px;
+.ai-success-text {
+  color: var(--color-primary);
+  font-weight: 700;
 }
 
-.btn {
-    padding: 10px 15px;
-    border-radius: 6px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background-color 0.3s ease;
-    display: inline-flex; /* For icon alignment */
-    align-items: center;
-    justify-content: center;
+/* AI 問答警告框 */
+.ai-qa-alert {
+  border: 3px solid var(--color-black) !important;
+  box-shadow: var(--shadow-md) !important;
+  border-radius: 0 !important;
+  margin: 16px 0;
+  font-weight: 700;
 }
 
-.btn i.fa-fw {
-    width: 1.25em;
-}
+/* ==========================================
+   響應式輔助
+   ========================================== */
 
-.btn-primary {
-    background-color: #007bff;
-    color: white;
-}
-
-.btn-primary:hover {
-    background-color: #0056b3;
-}
-
-.btn-secondary {
-    background-color: #6c757d;
-    color: white;
-}
-
-.btn-secondary:hover {
-    background-color: #545b62;
-}
-
-.btn-danger {
-    background-color: #dc3545;
-    color: white;
-}
-
-.btn-danger:hover {
-    background-color: #b02a37;
-}
-
-.table th,
-.table td {
-    padding: 12px 15px;
-    border-bottom: 1px solid #dee2e6;
-    vertical-align: middle;
-}
-
-.table th {
-    background-color: #f8f9fa;
-    font-weight: 600;
-    text-align: left;
-}
-
-.qr-code-placeholder {
-    width: 200px;
-    height: 200px;
-    background-color: #e9ecef;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin: 0 auto;
-    border: 1px solid #ced4da;
-    border-radius: 4px;
-}
-
-.qr-code-placeholder img {
-    max-width: 100%;
-    max-height: 100%;
-}
-
-.stat-card {
-    padding: 15px;
-    border-radius: 6px;
-    color: white;
-    margin-bottom: 15px;
-    position: relative;
-    overflow: hidden;
-}
-
-.stat-card .value {
-    font-size: 1.75rem;
-    font-weight: bold;
-}
-
-.stat-card .label {
-    font-size: 0.9rem;
-}
-
-.stat-card .stat-icon {
-    opacity: 0.2;
-    position: absolute;
-    right: 15px;
-    bottom: 10px;
-    font-size: 3rem;
-}
-
-.bg-stat-blue {
-    background-color: #17a2b8;
-}
-
-.bg-stat-green {
-    background-color: #28a745;
-}
-
-.bg-stat-yellow {
-    background-color: #ffc107;
-    color: #212529;
-}
-
-.bg-stat-red {
-    background-color: #dc3545;
-}
-
-/* .main-content-page { display: none; } We will handle page visibility with React Router */
-/* .main-content-page.active { display: block; } */
-
-.message-box-pc {
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    background-color: #333;
-    color: white;
-    padding: 12px 24px;
-    border-radius: 6px;
-    z-index: 1000;
-    /* display: none; /* Will be controlled by React state */
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-}
-
-.chart-container {
-    height: 300px;
-    position: relative;
-}
-
-/* Ensure Tailwind utility classes take precedence where needed, or define specific component styles here */
-
-/* 確保所有主要容器在暗色模式下有正確背景 */
-[data-theme="dark"] .content {
-  background-color: var(--color-surface-50);
-}
-
-/* 傳統 CSS 類的暗色模式覆蓋 */
-[data-theme="dark"] .card {
-  background-color: var(--color-surface-100);
-  border-color: var(--color-surface-300);
-  color: var(--color-surface-900);
-}
-
-[data-theme="dark"] .card-header {
-  color: var(--color-surface-900);
-  border-bottom-color: var(--color-surface-300);
-}
-
-[data-theme="dark"] .table th {
-  background-color: var(--color-surface-200);
-  color: var(--color-surface-900);
-  border-bottom-color: var(--color-surface-300);
-}
-
-[data-theme="dark"] .table th,
-[data-theme="dark"] .table td {
-  border-bottom-color: var(--color-surface-300);
-  color: var(--color-surface-900);
-}
-
-/* 深色模式下 Alert 組件的優化 */
-[data-theme="dark"] .ant-alert {
-  background-color: var(--color-surface-200);
-  border-color: var(--color-surface-400);
-}
-
-[data-theme="dark"] .ant-alert-warning {
-  background-color: #F59E0B !important;
-  border-color: #F59E0B !important;
-  color: #1C1E22 !important;
-}
-
-[data-theme="dark"] .ant-alert-warning .ant-alert-message,
-[data-theme="dark"] .ant-alert-warning .ant-alert-description {
-  color: #1C1E22 !important;
-}
-
-[data-theme="dark"] .ant-alert-info {
-  background-color: #6366F1 !important;
-  border-color: #6366F1 !important;
-  color: #FFFFFF !important;
-}
-
-[data-theme="dark"] .ant-alert-info .ant-alert-message,
-[data-theme="dark"] .ant-alert-info .ant-alert-description {
-  color: #FFFFFF !important;
-}
-
-[data-theme="dark"] .ant-alert-error {
-  background-color: #EF4444 !important;
-  border-color: #EF4444 !important;
-  color: #FFFFFF !important;
-}
-
-[data-theme="dark"] .ant-alert-error .ant-alert-message,
-[data-theme="dark"] .ant-alert-error .ant-alert-description {
-  color: #FFFFFF !important;
-}
-
-[data-theme="dark"] .ant-alert-success {
-  background-color: #10B981 !important;
-  border-color: #10B981 !important;
-  color: #FFFFFF !important;
-}
-
-[data-theme="dark"] .ant-alert-success .ant-alert-message,
-[data-theme="dark"] .ant-alert-success .ant-alert-description {
-  color: #FFFFFF !important;
-}
-
-/* 深色模式下 Alert 圖標顏色優化 */
-[data-theme="dark"] .ant-alert-warning .ant-alert-icon {
-  color: #1C1E22 !important;
-}
-
-[data-theme="dark"] .ant-alert-info .ant-alert-icon,
-[data-theme="dark"] .ant-alert-error .ant-alert-icon,
-[data-theme="dark"] .ant-alert-success .ant-alert-icon {
-  color: #FFFFFF !important;
-}
-
-/* 深色模式下其他文字組件的優化 */
-[data-theme="dark"] .ant-typography {
-  color: var(--color-surface-900);
-}
-
-[data-theme="dark"] .ant-typography-caption {
-  color: var(--color-surface-600);
-}
-
-/* 深色模式下 Tag 組件的優化 */
-[data-theme="dark"] .ant-tag {
-  background-color: var(--color-surface-200);
-  border-color: var(--color-surface-300);
-  color: var(--color-surface-900);
-}
-
-/* 確保所有警告和提示文字在深色模式下可見 */
-[data-theme="dark"] .text-warning {
-  color: #F59E0B !important;
-}
-
-[data-theme="dark"] .text-error {
-  color: #EF4444 !important;
-}
-
-[data-theme="dark"] .text-info {
-  color: #6366F1 !important;
-}
-
-[data-theme="dark"] .text-success {
-  color: #10B981 !important;
-}
-
-/* 系統偏好深色模式下的 Alert 組件優化 */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .ant-alert {
-    background-color: var(--color-surface-200);
-    border-color: var(--color-surface-400);
-  }
-
-  :root:not([data-theme="light"]) .ant-alert-warning {
-    background-color: #F59E0B !important;
-    border-color: #F59E0B !important;
-    color: #1C1E22 !important;
-  }
-
-  :root:not([data-theme="light"]) .ant-alert-warning .ant-alert-message,
-  :root:not([data-theme="light"]) .ant-alert-warning .ant-alert-description {
-    color: #1C1E22 !important;
-  }
-
-  :root:not([data-theme="light"]) .ant-alert-info {
-    background-color: #6366F1 !important;
-    border-color: #6366F1 !important;
-    color: #FFFFFF !important;
-  }
-
-  :root:not([data-theme="light"]) .ant-alert-info .ant-alert-message,
-  :root:not([data-theme="light"]) .ant-alert-info .ant-alert-description {
-    color: #FFFFFF !important;
-  }
-
-  :root:not([data-theme="light"]) .ant-alert-error {
-    background-color: #EF4444 !important;
-    border-color: #EF4444 !important;
-    color: #FFFFFF !important;
-  }
-
-  :root:not([data-theme="light"]) .ant-alert-error .ant-alert-message,
-  :root:not([data-theme="light"]) .ant-alert-error .ant-alert-description {
-    color: #FFFFFF !important;
-  }
-
-  :root:not([data-theme="light"]) .ant-alert-success {
-    background-color: #10B981 !important;
-    border-color: #10B981 !important;
-    color: #FFFFFF !important;
-  }
-
-  :root:not([data-theme="light"]) .ant-alert-success .ant-alert-message,
-  :root:not([data-theme="light"]) .ant-alert-success .ant-alert-description {
-    color: #FFFFFF !important;
-  }
-
-  /* 系統偏好深色模式下的 Alert 圖標顏色 */
-  :root:not([data-theme="light"]) .ant-alert-warning .ant-alert-icon {
-    color: #1C1E22 !important;
-  }
-
-  :root:not([data-theme="light"]) .ant-alert-info .ant-alert-icon,
-  :root:not([data-theme="light"]) .ant-alert-error .ant-alert-icon,
-  :root:not([data-theme="light"]) .ant-alert-success .ant-alert-icon {
-    color: #FFFFFF !important;
-  }
-
-  /* 系統偏好深色模式下的文字顏色 */
-  :root:not([data-theme="light"]) .text-warning {
-    color: #F59E0B !important;
-  }
-
-  :root:not([data-theme="light"]) .text-error {
-    color: #EF4444 !important;
-  }
-
-  :root:not([data-theme="light"]) .text-info {
-    color: #6366F1 !important;
-  }
-
-  :root:not([data-theme="light"]) .text-success {
-    color: #10B981 !important;
+/* 移動端優化 */
+@media (max-width: 768px) {
+  .sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 3px solid var(--color-black);
   }
 }
 
-/* Tooltip 樣式優化 - 增加對比度 */
-.ant-tooltip {
-  max-width: 300px;
+/* 高對比度模式 */
+@media (prefers-contrast: high) {
+  * {
+    border-width: 3px !important;
+    font-weight: 900 !important;
+  }
 }
 
-.ant-tooltip-inner {
-  background-color: #1f2937 !important;
-  color: #ffffff !important;
-  font-size: 13px !important;
-  font-weight: 500 !important;
-  padding: 8px 12px !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+/* 減少動畫模式 */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
 }
 
-.ant-tooltip-arrow-content {
-  background-color: #1f2937 !important;
+/* ==========================================
+   Neo-Brutalism Drawer 樣式
+   ========================================== */
+
+/* Document Preview Drawer - 符合 Neo-Brutalism 設計 */
+.neo-drawer .ant-drawer-header {
+  background-color: var(--color-white);
+  border-bottom: 3px solid var(--color-black);
+  padding: 16px 24px;
 }
 
-/* 確保深色模式下 Tooltip 仍然清晰 */
-[data-theme="dark"] .ant-tooltip-inner {
-  background-color: #1f2937 !important;
-  color: #ffffff !important;
+.neo-drawer .ant-drawer-body {
+  background-color: var(--color-bg);
+  padding: 20px;
 }
 
-[data-theme="dark"] .ant-tooltip-arrow-content {
-  background-color: #1f2937 !important;
-} 
+.neo-drawer .ant-drawer-close {
+  color: var(--color-black);
+  font-size: 18px;
+  font-weight: bold;
+  transition: all 0.15s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.neo-drawer .ant-drawer-close:hover {
+  color: var(--color-critical);
+  transform: scale(1.1);
+}
+
+/* Empty State */
+.neo-drawer .ant-empty-description {
+  color: var(--color-black);
+  font-weight: 500;
+}

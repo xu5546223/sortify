@@ -49,8 +49,9 @@ const DocumentTableActions: React.FC<DocumentTableActionsProps> = ({
   // 計算下拉菜單的位置（使用 fixed 定位）
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
   
-  useEffect(() => {
-    if (isOpen && buttonRef.current) {
+  // 計算菜單位置的函數
+  const calculateMenuPosition = () => {
+    if (buttonRef.current) {
       const buttonRect = buttonRef.current.getBoundingClientRect();
       const viewportHeight = window.innerHeight;
       const spaceBelow = viewportHeight - buttonRect.bottom;
@@ -62,8 +63,8 @@ const DocumentTableActions: React.FC<DocumentTableActionsProps> = ({
         setDropdownPosition('top');
         setMenuStyle({
           position: 'fixed',
-          top: buttonRect.top - dropdownHeight + 'px',
-          right: (window.innerWidth - buttonRect.right) + 'px',
+          bottom: (viewportHeight - buttonRect.top + 8) + 'px',
+          left: (buttonRect.right - 192) + 'px', // 192px = w-48
           zIndex: 9999
         });
       } else {
@@ -72,10 +73,17 @@ const DocumentTableActions: React.FC<DocumentTableActionsProps> = ({
         setMenuStyle({
           position: 'fixed',
           top: buttonRect.bottom + 8 + 'px',
-          right: (window.innerWidth - buttonRect.right) + 'px',
+          left: (buttonRect.right - 192) + 'px', // 192px = w-48
           zIndex: 9999
         });
       }
+    }
+  };
+  
+  // 當菜單打開時計算位置（作為備用）
+  useEffect(() => {
+    if (isOpen) {
+      calculateMenuPosition();
     }
   }, [isOpen]);
 
@@ -137,6 +145,10 @@ const DocumentTableActions: React.FC<DocumentTableActionsProps> = ({
         ref={buttonRef}
         onClick={(e) => {
           e.stopPropagation();
+          if (!isOpen) {
+            // 打開前先計算位置
+            calculateMenuPosition();
+          }
           setIsOpen(!isOpen);
         }}
         disabled={isLoading || isDeleting}

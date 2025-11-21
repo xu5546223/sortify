@@ -12,7 +12,7 @@ import {
   Descriptions, 
   Tag, 
   Progress, 
-  Modal, 
+  Modal,
   Tabs, 
   List,
   Statistic,
@@ -67,6 +67,7 @@ import {
 } from '../services/documentService';
 import ModelConfigCard from '../components/settings/ModelConfigCard';
 import SemanticSearchInterface from '../components/SemanticSearchInterface';
+import ConfirmDialog from '../components/ConfirmDialog';
 
 const { Title, Paragraph, Text } = Typography;
 const { TabPane } = Tabs;
@@ -102,6 +103,15 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
   // 模態框狀態 (除了搜索模態框)
   const [showVectorizeModal, setShowVectorizeModal] = useState(false);
   const [isDeletingFromVectorDB, setIsDeletingFromVectorDB] = useState<string | null>(null);
+  
+  // 確認對話框狀態
+  const [deleteSingleConfirmDialog, setDeleteSingleConfirmDialog] = useState<{
+    isOpen: boolean;
+    docId: string | null;
+  }>({ isOpen: false, docId: null });
+  
+  const [deleteBatchConfirmDialog, setDeleteBatchConfirmDialog] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // 加載數據的函數
   const loadData = useCallback(async (page = pagination.current, pageSize = pagination.pageSize) => {
@@ -209,63 +219,58 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
   };
 
   // 從向量數據庫刪除單個文檔
-  const handleDeleteFromVectorDB = async (docId: string) => {
-    Modal.confirm({
-      title: '確認刪除',
-      content: '您確定要從向量數據庫中刪除此文檔的向量嗎？這不會刪除原始文檔。',
-      okText: '確認刪除',
-      okType: 'danger',
-      cancelText: '取消',
-      onOk: async () => {
-        try {
-          setIsDeletingFromVectorDB(docId);
-          await deleteDocumentFromVectorDB(docId);
-          showPCMessage('已從向量數據庫刪除文檔向量', 'success');
-          // 可選擇刷新數據，或者僅從UI移除（如果後端不返回更新列表）
-          // 這裡我們刷新整個列表
-          await refreshData(); 
-        } catch (error) {
-          console.error('從向量數據庫刪除失敗:', error);
-          showPCMessage('從向量數據庫刪除失敗', 'error');
-        } finally {
-          setIsDeletingFromVectorDB(null);
-        }
-      },
-    });
+  const handleDeleteFromVectorDB = (docId: string) => {
+    setDeleteSingleConfirmDialog({ isOpen: true, docId });
+  };
+  
+  const confirmDeleteSingleFromVectorDB = async () => {
+    if (!deleteSingleConfirmDialog.docId) return;
+    
+    setIsDeleting(true);
+    try {
+      setIsDeletingFromVectorDB(deleteSingleConfirmDialog.docId);
+      await deleteDocumentFromVectorDB(deleteSingleConfirmDialog.docId);
+      showPCMessage('已從向量數據庫刪除文檔向量', 'success');
+      await refreshData(); 
+    } catch (error) {
+      console.error('從向量數據庫刪除失敗:', error);
+      showPCMessage('從向量數據庫刪除失敗', 'error');
+    } finally {
+      setIsDeleting(false);
+      setIsDeletingFromVectorDB(null);
+      setDeleteSingleConfirmDialog({ isOpen: false, docId: null });
+    }
   };
 
   // 從向量數據庫批量刪除選中文檔的向量
-  const handleBatchDeleteFromVectorDB = async () => {
+  const handleBatchDeleteFromVectorDB = () => {
     if (selectedDocIds.length === 0) {
       showPCMessage('請選擇要從向量數據庫刪除的文檔', 'info');
       return;
     }
-
-    Modal.confirm({
-      title: `確認批量刪除 ${selectedDocIds.length} 個文檔的向量`,
-      content: '您確定要從向量數據庫中刪除所選文檔的向量嗎？這不會刪除原始文檔。',
-      okText: '確認刪除',
-      okType: 'danger',
-      cancelText: '取消',
-      onOk: async () => {
-        setIsBatchDeleting(true);
-        try {
-          const response: BasicResponse = await deleteDocumentsFromVectorDB(selectedDocIds);
-          if (response.success) {
-            showPCMessage(`成功刪除 ${selectedDocIds.length} 個文檔的向量`, 'success');
-          } else {
-            showPCMessage(response.message || '批量刪除向量時發生錯誤', 'error');
-          }
-          setSelectedDocIds([]); // 清空選擇
-          await refreshData(); // 刷新數據
-        } catch (error) {
-          console.error('批量刪除向量失敗:', error);
-          showPCMessage('批量刪除向量操作失敗', 'error');
-        } finally {
-          setIsBatchDeleting(false);
-        }
-      },
-    });
+    setDeleteBatchConfirmDialog(true);
+  };
+  
+  const confirmBatchDeleteFromVectorDB = async () => {
+    setIsBatchDeleting(true);
+    setIsDeleting(true);
+    try {
+      const response: BasicResponse = await deleteDocumentsFromVectorDB(selectedDocIds);
+      if (response.success) {
+        showPCMessage(`成功刪除 ${selectedDocIds.length} 個文檔的向量`, 'success');
+      } else {
+        showPCMessage(response.message || '批量刪除向量時發生錯誤', 'error');
+      }
+      setSelectedDocIds([]);
+      await refreshData();
+    } catch (error) {
+      console.error('批量刪除向量失敗:', error);
+      showPCMessage('批量刪除向量操作失敗', 'error');
+    } finally {
+      setIsBatchDeleting(false);
+      setIsDeleting(false);
+      setDeleteBatchConfirmDialog(false);
+    }
   };
 
   const handleTableChange = (newPagination: any) => {
@@ -639,215 +644,299 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
           />
         )}
 
-        {/* 語義搜索模態框 - 支持混合搜索 */}
-        <Modal
-          title={
-            <div className="flex items-center space-x-2">
-              <SearchOutlined />
-              <span>智能語義搜索</span>
-              <Tag color="blue">Two-Stage Hybrid Retrieval</Tag>
-            </div>
-          }
-          open={showSearchModal}
-          onCancel={() => setShowSearchModal(false)}
-          footer={null}
-          width={1000}
-          className="semantic-search-modal"
-        >
-          <SemanticSearchInterface 
-            showPCMessage={showPCMessage}
-            cardTitle="智能文檔搜索"
-            extraActions={
-              <Button
-                size="small"
-                icon={<InfoCircleOutlined />}
-                type="text"
-                onClick={() => showPCMessage('支持摘要向量和文本塊的兩階段混合檢索，提供更精確的搜索結果', 'info')}
-              >
-                搜索說明
-              </Button>
-            }
-          />
-        </Modal>
-
-        {/* 文檔向量化模態框 - 修改標題 */}
-        <Modal
-          title="管理文檔向量"
-          open={showVectorizeModal}
-          onCancel={() => setShowVectorizeModal(false)}
-          footer={[
-            <Button key="cancel" onClick={() => setShowVectorizeModal(false)}>
-              取消
-            </Button>,
-            <Button
-              key="vectorizeSelected"
-              loading={isProcessing}
-              onClick={handleBatchVectorize}
-              disabled={selectedDocIds.length === 0}
-              icon={<ThunderboltOutlined />}
+        {/* 語義搜索彈出框 - 支持混合搜索 */}
+        {showSearchModal && (
+          <div
+            className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-50"
+            onClick={() => setShowSearchModal(false)}
+          >
+            <div
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="w-full max-w-6xl max-h-[95vh] bg-white border-3 border-neo-black shadow-[8px_8px_0px_0px_black] flex flex-col"
             >
-              向量化選中項 ({selectedDocIds.length})
-            </Button>,
-            <Button
-              key="batchDeleteSelected"
-              danger
-              loading={isBatchDeleting}
-              onClick={handleBatchDeleteFromVectorDB}
-              disabled={selectedDocIds.length === 0}
-              icon={<CloseCircleOutlined />}
-            >
-              移除選中項向量 ({selectedDocIds.length})
-            </Button>
-          ]}
-          width={900}
-        >
-          <div className="space-y-4">
-            <Alert
-              message="管理文檔向量"
-              description="對文檔進行向量化、重新向量化或移除已生成的向量。向量化後的文檔可用於語義搜索。"
-              type="info"
-              showIcon
-              className="ai-qa-alert"
-            />
-
-            <div className="mb-4">
-              <Space>
-                <Button
-                  size="small"
-                  onClick={isCurrentPageSelected ? deselectCurrentPage : selectCurrentPage}
-                  disabled={documents.length === 0}
+              {/* Header */}
+              <div className="bg-neo-primary text-neo-white px-6 py-4 border-b-3 border-neo-black flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <SearchOutlined className="text-xl" />
+                  <h2 className="font-display font-bold text-lg">智能語義搜索</h2>
+                  <span className="px-3 py-1 text-xs font-black border-2 border-neo-black bg-neo-lime text-neo-black">
+                    Two-Stage Hybrid Retrieval
+                  </span>
+                </div>
+                <button
+                  onClick={() => setShowSearchModal(false)}
+                  className="flex-shrink-0 w-10 h-10 flex items-center justify-center bg-red-600 text-white border-2 border-neo-black shadow-neo-sm hover:bg-red-700 transition-colors font-bold text-xl"
+                  aria-label="關閉"
                 >
-                  {isCurrentPageSelected ? '取消選中當前頁面' : '選中當前頁面'}
-                </Button>
-                <Button
-                  size="small"
-                  onClick={selectedDocIds.length === totalDocuments ? deselectAllDocuments : selectAllDocuments}
-                  disabled={totalDocuments === 0}
-                >
-                  {selectedDocIds.length === totalDocuments ? '取消全選' : `全選 (${totalDocuments} 個文檔)`}
-                </Button>
-                <Text type="secondary">
-                  已選中 {selectedDocIds.length} 個文檔
-                </Text>
-              </Space>
-            </div>
+                  ✕
+                </button>
+              </div>
 
-            <Table
-              headers={[
-                { key: 'selector', label: '選擇', className: 'w-12' },
-                { key: 'filename', label: '文件名' },
-                { key: 'vector_status', label: '向量狀態' },
-                { key: 'actions', label: '操作', className: 'w-auto' }
-              ]}
-              isSelectAllChecked={isCurrentPageSelected}
-              onSelectAllChange={(e) => {
-                if (e.target.checked) {
-                  selectCurrentPage();
-                } else {
-                  deselectCurrentPage();
-                }
-              }}
-            >
-              {documents.map((doc) => {
-                const isCurrentDocDeleting = isDeletingFromVectorDB === doc.id;
-
-                return (
-                  <TableRow key={doc.id}>
-                    <TableCell>
-                      <input
-                        type="checkbox"
-                        checked={selectedDocIds.includes(doc.id)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedDocIds(prev => [...prev, doc.id]);
-                          } else {
-                            setSelectedDocIds(prev => prev.filter(id => id !== doc.id));
-                          }
-                        }}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Tooltip title={doc.filename}>
-                        <span className="truncate">{doc.filename}</span>
-                      </Tooltip>
-                      <div><Text type="secondary" style={{fontSize: '12px'}}>內容狀態: {doc.status}</Text></div>
-                    </TableCell>
-                    <TableCell>
-                      {doc.vector_status === 'vectorized' && <Tag color="green">已向量化</Tag>}
-                      {doc.vector_status === 'not_vectorized' && <Tag color="orange">未向量化</Tag>}
-                      {doc.vector_status === 'processing' && <Tag color="blue">處理中...</Tag>}
-                      {doc.vector_status === 'failed' && <Tag color="red">向量化失敗</Tag>}
-                      {(!doc.vector_status) && <Tag>未知</Tag>}
-                    </TableCell>
-                    <TableCell>
-                      <Space>
-                        {(doc.vector_status === 'not_vectorized' || doc.vector_status === 'failed') && (
-                          <Button
-                            size="small"
-                            onClick={() => handleSingleVectorize(doc.id)}
-                            icon={<ThunderboltOutlined />}
-                          >
-                            {doc.vector_status === 'failed' ? '重試向量化' : '向量化'}
-                          </Button>
-                        )}
-                        {doc.vector_status === 'vectorized' && (
-                          <>
-                            <Button
-                              size="small"
-                              onClick={() => handleSingleVectorize(doc.id)}
-                              icon={<SyncOutlined />}
-                            >
-                              重新向量化
-                            </Button>
-                            <Button
-                              size="small"
-                              danger
-                              onClick={() => handleDeleteFromVectorDB(doc.id)}
-                              icon={<CloseCircleOutlined />}
-                              loading={isCurrentDocDeleting}
-                              disabled={isCurrentDocDeleting}
-                            >
-                              移除向量
-                            </Button>
-                          </>
-                        )}
-                        {doc.vector_status === 'processing' && (
-                           <Spin size="small" />
-                        )}
-                      </Space>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </Table>
-
-            <div className="flex justify-between items-center mt-4">
-              <Text type="secondary">
-                顯示 {((pagination.current - 1) * pagination.pageSize) + 1}-{Math.min(pagination.current * pagination.pageSize, totalDocuments)} 項，共 {totalDocuments} 項
-              </Text>
-              <Pagination
-                current={pagination.current}
-                pageSize={pagination.pageSize}
-                total={totalDocuments}
-                showSizeChanger={true}
-                pageSizeOptions={['10', '20', '50', '100']}
-                onChange={(page, size) => {
-                  const newPagination = {
-                    current: page,
-                    pageSize: size ?? pagination.pageSize,
-                  };
-                  setPagination(newPagination);
-                  loadData(page, size ?? pagination.pageSize);
-                }}
-                showTotal={(total, range) => `${range[0]}-${range[1]} 共 ${total} 項`}
-              />
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto p-6 bg-neo-bg">
+                <SemanticSearchInterface 
+                  showPCMessage={showPCMessage}
+                  cardTitle="智能文檔搜索"
+                  extraActions={
+                    <Button
+                      size="small"
+                      icon={<InfoCircleOutlined />}
+                      type="text"
+                      onClick={() => showPCMessage('支持摘要向量和文本塊的兩階段混合檢索，提供更精確的搜索結果', 'info')}
+                    >
+                      搜索說明
+                    </Button>
+                  }
+                />
+              </div>
             </div>
           </div>
-        </Modal>
+        )}
+
+        {/* 文檔向量化彈出框 */}
+        {showVectorizeModal && (
+          <div
+            className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-50"
+            onClick={() => setShowVectorizeModal(false)}
+          >
+            <div
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="w-full max-w-6xl max-h-[95vh] bg-white border-3 border-neo-black shadow-[8px_8px_0px_0px_black] flex flex-col"
+            >
+              {/* Header */}
+              <div className="bg-neo-primary text-neo-white px-6 py-4 border-b-3 border-neo-black flex items-center justify-between shrink-0">
+                <h2 className="font-display font-bold text-lg">管理文檔向量</h2>
+                <button
+                  onClick={() => setShowVectorizeModal(false)}
+                  className="flex-shrink-0 w-10 h-10 flex items-center justify-center bg-red-600 text-white border-2 border-neo-black shadow-neo-sm hover:bg-red-700 transition-colors font-bold text-xl"
+                  aria-label="關閉"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto p-6 bg-neo-bg">
+                <div className="space-y-4">
+                  <Alert
+                    message="管理文檔向量"
+                    description="對文檔進行向量化、重新向量化或移除已生成的向量。向量化後的文檔可用於語義搜索。"
+                    type="info"
+                    showIcon
+                    className="ai-qa-alert"
+                  />
+
+                  <div className="mb-4">
+                    <Space>
+                      <Button
+                        size="small"
+                        onClick={isCurrentPageSelected ? deselectCurrentPage : selectCurrentPage}
+                        disabled={documents.length === 0}
+                      >
+                        {isCurrentPageSelected ? '取消選中當前頁面' : '選中當前頁面'}
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={selectedDocIds.length === totalDocuments ? deselectAllDocuments : selectAllDocuments}
+                        disabled={totalDocuments === 0}
+                      >
+                        {selectedDocIds.length === totalDocuments ? '取消全選' : `全選 (${totalDocuments} 個文檔)`}
+                      </Button>
+                      <Text type="secondary">
+                        已選中 {selectedDocIds.length} 個文檔
+                      </Text>
+                    </Space>
+                  </div>
+
+                  <Table
+                    headers={[
+                      { key: 'selector', label: '選擇', className: 'w-12' },
+                      { key: 'filename', label: '文件名' },
+                      { key: 'vector_status', label: '向量狀態' },
+                      { key: 'actions', label: '操作', className: 'w-auto' }
+                    ]}
+                    isSelectAllChecked={isCurrentPageSelected}
+                    onSelectAllChange={(e) => {
+                      if (e.target.checked) {
+                        selectCurrentPage();
+                      } else {
+                        deselectCurrentPage();
+                      }
+                    }}
+                  >
+                    {documents.map((doc) => {
+                      const isCurrentDocDeleting = isDeletingFromVectorDB === doc.id;
+
+                      return (
+                        <TableRow key={doc.id}>
+                          <TableCell>
+                            <input
+                              type="checkbox"
+                              checked={selectedDocIds.includes(doc.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedDocIds(prev => [...prev, doc.id]);
+                                } else {
+                                  setSelectedDocIds(prev => prev.filter(id => id !== doc.id));
+                                }
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Tooltip title={doc.filename}>
+                              <span className="truncate">{doc.filename}</span>
+                            </Tooltip>
+                            <div><Text type="secondary" style={{fontSize: '12px'}}>內容狀態: {doc.status}</Text></div>
+                          </TableCell>
+                          <TableCell>
+                            {doc.vector_status === 'vectorized' && <Tag color="green">已向量化</Tag>}
+                            {doc.vector_status === 'not_vectorized' && <Tag color="orange">未向量化</Tag>}
+                            {doc.vector_status === 'processing' && <Tag color="blue">處理中...</Tag>}
+                            {doc.vector_status === 'failed' && <Tag color="red">向量化失敗</Tag>}
+                            {(!doc.vector_status) && <Tag>未知</Tag>}
+                          </TableCell>
+                          <TableCell>
+                            <Space>
+                              {(doc.vector_status === 'not_vectorized' || doc.vector_status === 'failed') && (
+                                <Button
+                                  size="small"
+                                  onClick={() => handleSingleVectorize(doc.id)}
+                                  icon={<ThunderboltOutlined />}
+                                >
+                                  {doc.vector_status === 'failed' ? '重試向量化' : '向量化'}
+                                </Button>
+                              )}
+                              {doc.vector_status === 'vectorized' && (
+                                <>
+                                  <Button
+                                    size="small"
+                                    onClick={() => handleSingleVectorize(doc.id)}
+                                    icon={<SyncOutlined />}
+                                  >
+                                    重新向量化
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    danger
+                                    onClick={() => handleDeleteFromVectorDB(doc.id)}
+                                    icon={<CloseCircleOutlined />}
+                                    loading={isCurrentDocDeleting}
+                                    disabled={isCurrentDocDeleting}
+                                  >
+                                    移除向量
+                                  </Button>
+                                </>
+                              )}
+                              {doc.vector_status === 'processing' && (
+                                 <Spin size="small" />
+                              )}
+                            </Space>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </Table>
+
+                  <div className="flex justify-between items-center mt-4">
+                    <Text type="secondary">
+                      顯示 {((pagination.current - 1) * pagination.pageSize) + 1}-{Math.min(pagination.current * pagination.pageSize, totalDocuments)} 項，共 {totalDocuments} 項
+                    </Text>
+                    <Pagination
+                      current={pagination.current}
+                      pageSize={pagination.pageSize}
+                      total={totalDocuments}
+                      showSizeChanger={true}
+                      pageSizeOptions={['10', '20', '50', '100']}
+                      onChange={(page, size) => {
+                        const newPagination = {
+                          current: page,
+                          pageSize: size ?? pagination.pageSize,
+                        };
+                        setPagination(newPagination);
+                        loadData(page, size ?? pagination.pageSize);
+                      }}
+                      showTotal={(total, range) => `${range[0]}-${range[1]} 共 ${total} 項`}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="border-t-3 border-neo-black p-4 bg-white flex justify-end gap-3 shrink-0">
+                <button
+                  onClick={() => setShowVectorizeModal(false)}
+                  className="px-6 py-2 bg-gray-100 text-gray-700 border-2 border-neo-black shadow-neo-sm hover:bg-gray-200 hover:shadow-none hover:translate-x-1 hover:translate-y-1 transition-all font-bold"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleBatchVectorize}
+                  disabled={selectedDocIds.length === 0 || isProcessing}
+                  className="px-6 py-2 bg-neo-primary text-neo-white border-2 border-neo-black shadow-neo-sm hover:bg-neo-primaryDark hover:shadow-none hover:translate-x-1 hover:translate-y-1 transition-all font-bold disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isProcessing ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                      處理中...
+                    </>
+                  ) : (
+                    <>
+                      <ThunderboltOutlined />
+                      向量化選中項 ({selectedDocIds.length})
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={handleBatchDeleteFromVectorDB}
+                  disabled={selectedDocIds.length === 0 || isBatchDeleting}
+                  className="px-6 py-2 bg-red-600 text-white border-2 border-neo-black shadow-neo-sm hover:bg-red-700 hover:shadow-none hover:translate-x-1 hover:translate-y-1 transition-all font-bold disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isBatchDeleting ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                      刪除中...
+                    </>
+                  ) : (
+                    <>
+                      <CloseCircleOutlined />
+                      移除選中項向量 ({selectedDocIds.length})
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 確認刪除單個文檔對話框 */}
+        <ConfirmDialog
+          isOpen={deleteSingleConfirmDialog.isOpen}
+          onClose={() => setDeleteSingleConfirmDialog({ isOpen: false, docId: null })}
+          onConfirm={confirmDeleteSingleFromVectorDB}
+          title="確認刪除"
+          content="您確定要從向量數據庫中刪除此文檔的向量嗎？這不會刪除原始文檔。"
+          confirmText="確認刪除"
+          cancelText="取消"
+          isDanger
+          isLoading={isDeleting}
+        />
+
+        {/* 確認批量刪除對話框 */}
+        <ConfirmDialog
+          isOpen={deleteBatchConfirmDialog}
+          onClose={() => setDeleteBatchConfirmDialog(false)}
+          onConfirm={confirmBatchDeleteFromVectorDB}
+          title={`確認批量刪除 ${selectedDocIds.length} 個文檔的向量`}
+          content="您確定要從向量數據庫中刪除所選文檔的向量嗎？這不會刪除原始文檔。"
+          confirmText="確認刪除"
+          cancelText="取消"
+          isDanger
+          isLoading={isDeleting}
+        />
 
       </Space>
     </div>
   );
 };
 
-export default VectorDatabasePage; 
+export default VectorDatabasePage;

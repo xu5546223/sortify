@@ -2,505 +2,457 @@
 @import "tailwindcss/components";
 @import "tailwindcss/utilities";
 
-/* Sortify 全局主題配置 */
+/* Sortify Design System v2.0: Neo-Brutalism Green Edition */
 :root {
-  /* 品牌顏色系統 */
-  --color-primary-50: oklch(0.98 0.01 220);
-  --color-primary-100: oklch(0.94 0.03 220);
-  --color-primary-200: oklch(0.89 0.06 220);
-  --color-primary-300: oklch(0.8 0.11 220);
-  --color-primary-400: oklch(0.7 0.15 220);
-  --color-primary-500: oklch(0.6 0.19 220);
-  --color-primary-600: oklch(0.5 0.23 220);
-  --color-primary-700: oklch(0.4 0.19 220);
-  --color-primary-800: oklch(0.3 0.15 220);
-  --color-primary-900: oklch(0.2 0.11 220);
+  /* --- Brand Colors (保持不變) --- */
+  --color-primary: #29bf12;  /* Bright Fern */
+  --color-active: #08bdbd;   /* Tropical Teal */
+  --color-hover: #abff4f;    /* Green Yellow */
+  --color-error: #f21b3f;    /* Lipstick Red */
+  --color-warn: #ff9914;     /* Deep Saffron */
+  
+  /* --- Light Mode (Default) --- */
+  --color-bg: #f3f4f6;       /* Engine Gray */
+  --color-card: #ffffff;     /* Paper White */
+  --color-text: #000000;     /* Ink Black */
+  --color-text-sub: #4b5563; /* Gray 600 */
+  --color-border: #000000;   /* Black */
+  --shadow-color: #000000;   /* Black */
+  
+  /* Legacy support */
+  --color-black: #000000;
+  --color-white: #ffffff;
 
-  /* 成功狀態顏色 */
-  --color-success-50: oklch(0.98 0.01 130);
-  --color-success-100: oklch(0.93 0.03 130);
-  --color-success-200: oklch(0.87 0.06 130);
-  --color-success-300: oklch(0.77 0.11 130);
-  --color-success-400: oklch(0.67 0.15 130);
-  --color-success-500: oklch(0.57 0.19 130);
-  --color-success-600: oklch(0.47 0.23 130);
-  --color-success-700: oklch(0.37 0.19 130);
-  --color-success-800: oklch(0.27 0.15 130);
-  --color-success-900: oklch(0.17 0.11 130);
+  /* --- Typography --- */
+  --font-heading: 'Space Grotesk', 'JetBrains Mono', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
 
-  /* 警告狀態顏色 */
-  --color-warning-50: oklch(0.98 0.01 60);
-  --color-warning-100: oklch(0.95 0.03 60);
-  --color-warning-200: oklch(0.9 0.06 60);
-  --color-warning-300: oklch(0.8 0.11 60);
-  --color-warning-400: oklch(0.7 0.15 60);
-  --color-warning-500: oklch(0.6 0.19 60);
-  --color-warning-600: oklch(0.5 0.23 60);
-  --color-warning-700: oklch(0.4 0.19 60);
-  --color-warning-800: oklch(0.3 0.15 60);
-  --color-warning-900: oklch(0.2 0.11 60);
+  /* --- Borders --- */
+  --border-width-pc: 3px;
+  --border-width-m: 2px;
+  --border-main: var(--border-width-pc) solid var(--color-border);
 
-  /* 錯誤狀態顏色 */
-  --color-error-50: oklch(0.98 0.01 20);
-  --color-error-100: oklch(0.94 0.03 20);
-  --color-error-200: oklch(0.89 0.06 20);
-  --color-error-300: oklch(0.8 0.11 20);
-  --color-error-400: oklch(0.7 0.15 20);
-  --color-error-500: oklch(0.6 0.19 20);
-  --color-error-600: oklch(0.5 0.23 20);
-  --color-error-700: oklch(0.4 0.19 20);
-  --color-error-800: oklch(0.3 0.15 20);
-  --color-error-900: oklch(0.2 0.11 20);
-
-  /* 中性顏色 */
-  --color-surface-50: oklch(0.99 0 0);
-  --color-surface-100: oklch(0.97 0 0);
-  --color-surface-200: oklch(0.94 0 0);
-  --color-surface-300: oklch(0.87 0 0);
-  --color-surface-400: oklch(0.75 0 0);
-  --color-surface-500: oklch(0.6 0 0);
-  --color-surface-600: oklch(0.45 0 0);
-  --color-surface-700: oklch(0.3 0 0);
-  --color-surface-800: oklch(0.15 0 0);
-  --color-surface-900: oklch(0.08 0 0);
-
-  /* 品牌字體 */
-  --font-brand: "Inter", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-  --font-heading: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-
-  /* 自定義間距 */
+  /* --- Shadows (Hard Shadows) --- */
+  --shadow-sm: 2px 2px 0px 0px var(--shadow-color);
+  --shadow-md: 4px 4px 0px 0px var(--shadow-color);
+  --shadow-lg: 6px 6px 0px 0px var(--shadow-color);
+  --shadow-xl: 8px 8px 0px 0px var(--shadow-color);
+  
+  /* --- Spacing --- */
   --spacing-section: 4rem;
   --spacing-card: 1.5rem;
   --spacing-component: 1rem;
 
-  /* 自定義圓角 */
-  --radius-card: 0.75rem;
-  --radius-button: 0.5rem;
-  --radius-input: 0.375rem;
-  --radius-modal: 1rem;
+  /* --- Radius --- */
+  --radius-card: 0px;        /* Default Desktop */
+  --radius-button: 0px;
+  --radius-input: 0px;
+  --radius-modal: 0px;
 
-  /* 陰影系統 */
-  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
-  --shadow-card-hover: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-  --shadow-modal: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
-  --shadow-button: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-
-  /* 動畫緩動 */
-  --ease-ui: cubic-bezier(0.2, 0, 0, 1);
-  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
-  --ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
-
-  /* 自定義斷點 */
-  --breakpoint-xs: 30rem;
-  --breakpoint-3xl: 100rem;
-
-  /* 自定義動畫 */
-  --animate-fade-in: fade-in 0.3s ease-out;
-  --animate-slide-up: slide-up 0.3s ease-out;
-  --animate-scale-in: scale-in 0.2s ease-out;
+  /* --- Transitions --- */
+  --trans-bounce: all 0.15s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
-/* 暗黑模式主題 */
+/* Dark Mode - 反轉與霓虹 (Invert & Neon) */
+.dark,
 [data-theme="dark"] {
-  /* 暗黑模式下的品牌顏色調整 */
-  --color-primary-50: oklch(0.15 0.11 220);
-  --color-primary-100: oklch(0.2 0.15 220);
-  --color-primary-200: oklch(0.3 0.19 220);
-  --color-primary-300: oklch(0.4 0.23 220);
-  --color-primary-400: oklch(0.5 0.19 220);
-  --color-primary-500: oklch(0.6 0.19 220);
-  --color-primary-600: oklch(0.7 0.15 220);
-  --color-primary-700: oklch(0.8 0.11 220);
-  --color-primary-800: oklch(0.89 0.06 220);
-  --color-primary-900: oklch(0.94 0.03 220);
-
-  /* 暗黑模式下的表面顏色 */
-  --color-surface-50: oklch(0.08 0 0);
-  --color-surface-100: oklch(0.12 0 0);
-  --color-surface-200: oklch(0.16 0 0);
-  --color-surface-300: oklch(0.22 0 0);
-  --color-surface-400: oklch(0.28 0 0);
-  --color-surface-500: oklch(0.4 0 0);
-  --color-surface-600: oklch(0.55 0 0);
-  --color-surface-700: oklch(0.7 0 0);
-  --color-surface-800: oklch(0.85 0 0);
-  --color-surface-900: oklch(0.95 0 0);
+  /* 骨架反轉 (Skeleton Inversion) */
+  --color-bg: #121212;       /* Deep Carbon - 深灰背景避免 OLED 拖影 */
+  --color-card: #000000;     /* Pure Black - 黑洞策略，純黑卡片 */
+  --color-text: #ffffff;     /* Paper White - 主要文字 */
+  --color-text-sub: #9ca3af; /* Gray 400 - 次要文字 */
+  --color-border: #ffffff;   /* Paper White - 粗白框 (核心特徵) */
+  --shadow-color: #ffffff;   /* Paper White - 白色硬陰影 (發光效果) */
+  
+  /* 霓虹保留 (Neon Retention) - 品牌色保持鮮豔 */
+  --color-primary: #29bf12;  /* Fern Green - 保持不變 */
+  --color-active: #08bdbd;   /* Tropical Teal - 保持不變 */
+  --color-hover: #abff4f;    /* Green Yellow - 保持不變 */
+  --color-error: #f21b3f;    /* Lipstick Red - 保持不變 */
+  --color-warn: #ff9914;     /* Deep Saffron - 保持不變 */
 }
 
-/* 系統偏好暗黑模式 */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) {
-    /* 暗黑模式下的品牌顏色調整 */
-    --color-primary-50: oklch(0.15 0.11 220);
-    --color-primary-100: oklch(0.2 0.15 220);
-    --color-primary-200: oklch(0.3 0.19 220);
-    --color-primary-300: oklch(0.4 0.23 220);
-    --color-primary-400: oklch(0.5 0.19 220);
-    --color-primary-500: oklch(0.6 0.19 220);
-    --color-primary-600: oklch(0.7 0.15 220);
-    --color-primary-700: oklch(0.8 0.11 220);
-    --color-primary-800: oklch(0.89 0.06 220);
-    --color-primary-900: oklch(0.94 0.03 220);
-
-    /* 暗黑模式下的表面顏色 */
-    --color-surface-50: oklch(0.08 0 0);
-    --color-surface-100: oklch(0.12 0 0);
-    --color-surface-200: oklch(0.16 0 0);
-    --color-surface-300: oklch(0.22 0 0);
-    --color-surface-400: oklch(0.28 0 0);
-    --color-surface-500: oklch(0.4 0 0);
-    --color-surface-600: oklch(0.55 0 0);
-    --color-surface-700: oklch(0.7 0 0);
-    --color-surface-800: oklch(0.85 0 0);
-    --color-surface-900: oklch(0.95 0 0);
+/* Mobile Adjustments */
+@media (max-width: 768px) {
+  :root {
+    --border-width-pc: 2px; /* Use thinner border on mobile */
+    --radius-card: 12px;
+    --radius-button: 8px;
+    --radius-input: 8px;
+    --radius-modal: 12px;
   }
 }
 
-/* 動畫關鍵幀 */
-@keyframes fade-in {
-  0% {
-    opacity: 0;
-  }
-  100% {
-    opacity: 1;
-  }
-}
-
-@keyframes slide-up {
-  0% {
-    opacity: 0;
-    transform: translateY(1rem);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes scale-in {
-  0% {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-/* 全局基礎樣式 */
 @layer base {
-  * {
-    border-color: var(--color-surface-300);
-  }
-
   body {
+    background-color: var(--color-bg);
+    color: var(--color-text);
     font-family: var(--font-body);
-    background-color: var(--color-surface-50);
-    color: var(--color-surface-900);
-    line-height: 1.6;
-    min-height: 100vh;
+    transition: background-color 0.3s, color 0.3s;
   }
-
-  /* 確保根元素也有正確的背景色 */
-  html {
-    background-color: var(--color-surface-50);
-  }
-
-  /* 確保應用程式根容器有正確的背景 */
-  #root {
-    background-color: var(--color-surface-50);
-    min-height: 100vh;
-  }
-
+  
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-heading);
-    font-weight: 600;
-    color: var(--color-surface-900);
-  }
-
-  input, textarea, select {
-    border-radius: var(--radius-input);
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--color-text);
   }
 
   button {
-    border-radius: var(--radius-button);
-    transition: all 0.2s var(--ease-ui);
+    transition: var(--trans-bounce);
+  }
+
+  /* Text Selection - 文字選中樣式 */
+  ::selection {
+    background-color: var(--color-primary); /* 綠色背景 */
+    color: var(--color-black); /* 黑色文字 */
+  }
+
+  ::-moz-selection {
+    background-color: var(--color-primary);
+    color: var(--color-black);
+  }
+
+  /* 針對白色背景上的文字選中 */
+  .neo-card ::selection,
+  .stat-card ::selection,
+  input::selection,
+  textarea::selection {
+    background-color: var(--color-active); /* 青色背景 */
+    color: var(--color-white); /* 白色文字 */
+  }
+
+  .neo-card ::-moz-selection,
+  .stat-card ::-moz-selection,
+  input::-moz-selection,
+  textarea::-moz-selection {
+    background-color: var(--color-active);
+    color: var(--color-white);
+  }
+
+  /* 針對深色背景的文字選中 */
+  .stat-card-dark ::selection,
+  .card-header ::selection,
+  .neo-btn-danger ::selection {
+    background-color: var(--color-hover); /* 亮綠色背景 */
+    color: var(--color-black); /* 黑色文字 */
+  }
+
+  .stat-card-dark ::-moz-selection,
+  .card-header ::-moz-selection,
+  .neo-btn-danger ::-moz-selection {
+    background-color: var(--color-hover);
+    color: var(--color-black);
   }
 }
 
-/* 組件樣式層 */
 @layer components {
-  /* 卡片組件 */
-  .card {
-    background-color: var(--color-surface-50);
-    border-radius: var(--radius-card);
-    box-shadow: var(--shadow-card);
-    padding: var(--spacing-card);
-    transition: box-shadow 0.2s var(--ease-ui);
-    border: 1px solid var(--color-surface-200);
+  /* --- Utility Classes for Neo-Brutalism --- */
+  
+  .neo-box {
+    background-color: var(--color-card);
+    border: var(--border-width-pc) solid var(--color-border);
+    box-shadow: var(--shadow-lg);
   }
-
-  .card:hover {
-    box-shadow: var(--shadow-card-hover);
-  }
-
-  /* 按鈕基礎樣式 */
-  .btn-base {
+  
+  /* --- Buttons --- */
+  .neo-btn-primary,
+  .btn-primary {
+    background-color: var(--color-primary);
+    color: var(--color-black);
+    border: 2px solid var(--color-border);
+    box-shadow: var(--shadow-md);
+    font-weight: 700;
+    text-transform: uppercase;
+    transition: var(--trans-bounce);
+    padding: 0.5rem 1.5rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0.5rem 1rem;
-    font-weight: 500;
-    border-radius: var(--radius-button);
-    transition: all 0.2s var(--ease-ui);
     cursor: pointer;
-    box-shadow: var(--shadow-button);
-    border: none;
   }
 
-  .btn-base:disabled {
+  .neo-btn-primary:hover:not(:disabled),
+  .btn-primary:hover:not(:disabled) {
+    background-color: var(--color-hover);
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px 0px var(--shadow-color);
+  }
+
+  .neo-btn-primary:active:not(:disabled),
+  .btn-primary:active:not(:disabled) {
+    transform: translate(2px, 2px);
+    box-shadow: 0px 0px 0px 0px var(--shadow-color);
+  }
+
+  .neo-btn-primary:disabled,
+  .btn-primary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
   }
-
-  /* 主要按鈕 */
-  .btn-primary {
-    background-color: var(--color-primary-600);
-    color: white;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    background-color: var(--color-primary-700);
-  }
-
-  /* 次要按鈕 */
-  .btn-secondary {
-    background-color: var(--color-surface-100);
-    color: var(--color-surface-900);
-    border: 1px solid var(--color-surface-300);
-  }
-
-  .btn-secondary:hover:not(:disabled) {
-    background-color: var(--color-surface-200);
-  }
-
-  /* 危險按鈕 */
-  .btn-danger {
-    background-color: var(--color-error-600);
-    color: white;
-  }
-
-  .btn-danger:hover:not(:disabled) {
-    background-color: var(--color-error-700);
-  }
-
-  /* 成功按鈕 */
-  .btn-success {
-    background-color: var(--color-success-600);
-    color: white;
-  }
-
-  .btn-success:hover:not(:disabled) {
-    background-color: var(--color-success-700);
-  }
-
-  /* 輪廓按鈕 */
-  .btn-outline {
-    background-color: transparent;
-    color: var(--color-primary-600);
-    border: 1px solid var(--color-primary-600);
-  }
-
-  .btn-outline:hover:not(:disabled) {
-    background-color: var(--color-primary-50);
-    border-color: var(--color-primary-700);
-    color: var(--color-primary-700);
-  }
-
-  /* 狀態標籤 */
-  .status-tag {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.25rem 0.75rem;
-    border-radius: 9999px;
-    font-size: 0.875rem;
-    font-weight: 500;
-  }
-
-  .status-success {
-    background-color: var(--color-success-100);
-    color: var(--color-success-800);
-  }
-
-  .status-warning {
-    background-color: var(--color-warning-100);
-    color: var(--color-warning-800);
-  }
-
-  .status-error {
-    background-color: var(--color-error-100);
-    color: var(--color-error-800);
-  }
-
-  .status-info {
-    background-color: var(--color-primary-100);
-    color: var(--color-primary-800);
-  }
-
-  /* 輸入框樣式 */
+  
+  /* --- Inputs --- */
+  .neo-input,
   .input-base {
-    display: block;
-    width: 100%;
+    background-color: var(--color-card);
+    border: 2px solid var(--color-border);
+    box-shadow: var(--shadow-sm);
     padding: 0.5rem 0.75rem;
-    border: 1px solid var(--color-surface-300);
+    width: 100%;
+    transition: var(--trans-bounce);
+    color: var(--color-text);
     border-radius: var(--radius-input);
-    background-color: var(--color-surface-50);
-    color: var(--color-surface-900);
-    font-size: 0.875rem;
-    transition: all 0.2s var(--ease-ui);
   }
 
+  .neo-input:focus,
   .input-base:focus {
     outline: none;
-    border-color: var(--color-primary-500);
-    box-shadow: 0 0 0 3px rgb(from var(--color-primary-500) r g b / 0.1);
+    box-shadow: 4px 4px 0px 0px var(--color-primary);
   }
 
-  .input-error {
-    border-color: var(--color-error-500);
-  }
-
-  .input-error:focus {
-    border-color: var(--color-error-500);
-    box-shadow: 0 0 0 3px rgb(from var(--color-error-500) r g b / 0.1);
-  }
-
-  /* 模態框樣式 */
-  .modal-overlay {
-    position: fixed;
-    inset: 0;
-    background-color: rgb(0 0 0 / 0.5);
-    z-index: 50;
-    animation: var(--animate-fade-in);
-  }
-
-  .modal-content {
-    position: relative;
-    background-color: var(--color-surface-50);
-    border-radius: var(--radius-modal);
-    box-shadow: var(--shadow-modal);
-    animation: var(--animate-scale-in);
-  }
-
-  /* 表格樣式 */
-  .table-container {
-    overflow: hidden;
+  /* --- Cards --- */
+  .neo-card,
+  .card {
+    background-color: var(--color-card);
+    border: var(--border-width-pc) solid var(--color-border);
+    box-shadow: var(--shadow-lg);
+    padding: var(--spacing-card);
     border-radius: var(--radius-card);
-    box-shadow: var(--shadow-card);
-    background-color: var(--color-surface-50);
   }
 
-  .table-base {
-    width: 100%;
-    border-collapse: collapse;
-    background-color: var(--color-surface-50);
-  }
-
-  .table-header {
-    background-color: var(--color-surface-100);
-    border-bottom: 1px solid var(--color-surface-200);
-  }
-
-  .table-header th {
-    padding: 0.75rem 1rem;
-    text-align: left;
-    font-weight: 600;
-    color: var(--color-surface-700);
-    font-size: 0.875rem;
-  }
-
-  .table-row {
-    border-bottom: 1px solid var(--color-surface-200);
-    transition: background-color 0.2s var(--ease-ui);
-    background-color: var(--color-surface-50);
-  }
-
-  .table-row:hover {
-    background-color: var(--color-surface-100);
-  }
-
-  .table-cell {
-    padding: 0.75rem 1rem;
-    font-size: 0.875rem;
-    color: var(--color-surface-900);
-  }
-
-  /* 頁面標題樣式 */
+  /* --- Page Title --- */
   .page-title {
-    font-size: 2rem;
+    font-size: 2.25rem;
+    font-weight: 900;
+    color: var(--color-text);
+    text-transform: uppercase;
+    letter-spacing: -0.05em;
+    margin: 0;
+  }
+
+  /* --- Card Headers --- */
+  .card-header {
+    background-color: var(--color-black);
+    color: var(--color-white);
+    padding: 1rem 1.5rem;
+    margin: -1.5rem -1.5rem 1.5rem -1.5rem;
+    font-size: 1.125rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .card-header-success {
+    background-color: var(--color-primary);
+    color: var(--color-black);
+  }
+
+  .card-header-warning {
+    background-color: var(--color-warn);
+    color: var(--color-black);
+  }
+
+  .card-header-danger {
+    background-color: var(--color-error);
+    color: var(--color-white);
+  }
+
+  .card-header-info {
+    background-color: var(--color-active);
+    color: var(--color-black);
+  }
+
+  /* --- Button Variants --- */
+  .neo-btn-danger,
+  .btn-danger {
+    background-color: var(--color-error);
+    color: var(--color-white);
+    border: 2px solid var(--color-black);
+    box-shadow: var(--shadow-md);
     font-weight: 700;
-    color: var(--color-surface-900);
-    margin-bottom: var(--spacing-component);
+    text-transform: uppercase;
+    transition: var(--trans-bounce);
+    padding: 0.5rem 1.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
   }
 
-  /* 區塊標題樣式 */
-  .section-title {
-    font-size: 1.5rem;
+  .neo-btn-danger:hover:not(:disabled),
+  .btn-danger:hover:not(:disabled) {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px 0px var(--color-black);
+  }
+
+  .neo-btn-danger:active:not(:disabled),
+  .btn-danger:active:not(:disabled) {
+    transform: translate(2px, 2px);
+    box-shadow: 0px 0px 0px 0px var(--color-black);
+  }
+
+  .neo-btn-secondary,
+  .btn-secondary {
+    background-color: var(--color-white);
+    color: var(--color-black);
+    border: 2px solid var(--color-black);
+    box-shadow: var(--shadow-md);
+    font-weight: 700;
+    text-transform: uppercase;
+    transition: var(--trans-bounce);
+    padding: 0.5rem 1.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+
+  .neo-btn-secondary:hover:not(:disabled),
+  .btn-secondary:hover:not(:disabled) {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px 0px var(--color-black);
+  }
+
+  /* --- Stats Cards --- */
+  .stat-card {
+    background-color: var(--color-card);
+    border: var(--border-width-pc) solid var(--color-border);
+    padding: 1.5rem;
+    box-shadow: var(--shadow-lg);
+    transition: var(--trans-bounce);
+  }
+
+  .stat-card-active {
+    border-color: var(--color-active);
+  }
+
+  .stat-card-success {
+    border-color: var(--color-primary);
+  }
+
+  .stat-card-danger {
+    border-color: var(--color-error);
+  }
+
+  .stat-card-dark {
+    background-color: var(--color-text);
+    color: var(--color-primary);
+  }
+
+  /* --- Badges --- */
+  .neo-badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border: 2px solid var(--color-border);
+    background-color: var(--color-primary);
+    color: var(--color-black);
+    font-size: 0.75rem;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  .neo-badge-danger {
+    background-color: var(--color-error);
+    color: var(--color-white);
+  }
+
+  .neo-badge-warning {
+    background-color: var(--color-warn);
+    color: var(--color-black);
+  }
+
+  /* --- Info Grid --- */
+  .info-row {
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    padding: 0.75rem 0;
+    border-bottom: 2px solid var(--color-border);
+    align-items: center;
+  }
+
+  .info-label {
+    font-weight: 900;
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    color: var(--color-text);
+    letter-spacing: 0.025em;
+  }
+
+  .info-value {
+    font-size: 1rem;
+    color: var(--color-text);
     font-weight: 600;
-    color: var(--color-surface-800);
-    margin-bottom: var(--spacing-component);
   }
 
-  /* 側邊欄樣式 */
-  .sidebar {
-    background-color: var(--color-surface-900);
-    color: var(--color-surface-100);
+  /* --- Messages / Alerts --- */
+  .neo-message {
+    padding: 1rem 1.5rem;
+    border: var(--border-width-pc) solid var(--color-border);
+    margin-bottom: 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    box-shadow: var(--shadow-md);
   }
 
-  .sidebar-link {
-    display: block;
-    padding: 0.75rem 1rem;
-    color: var(--color-surface-300);
-    text-decoration: none;
-    transition: all 0.2s var(--ease-ui);
-    border-left: 3px solid transparent;
+  .neo-message-success {
+    background-color: var(--color-primary);
+    color: var(--color-black);
   }
 
-  .sidebar-link:hover,
-  .sidebar-link.active {
-    background-color: var(--color-surface-800);
-    color: white;
-    border-left-color: var(--color-primary-500);
+  .neo-message-error {
+    background-color: var(--color-error);
+    color: var(--color-white);
   }
 
-  /* 訊息提示樣式 */
-  .message-toast {
-    position: fixed;
-    bottom: 1.25rem;
-    right: 1.25rem;
-    max-width: 24rem;
-    padding: 1rem;
-    border-radius: var(--radius-button);
-    box-shadow: var(--shadow-modal);
-    z-index: 50;
-    animation: var(--animate-slide-up);
+  .neo-message-warning {
+    background-color: var(--color-warn);
+    color: var(--color-black);
   }
 
-  .message-success {
-    background-color: var(--color-success-600);
-    color: white;
+  /* --- Warning Banner --- */
+  .warning-banner {
+    background-color: var(--color-warn);
+    border: var(--border-width-pc) solid var(--color-border);
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: var(--color-black);
+    box-shadow: var(--shadow-md);
   }
 
-  .message-error {
-    background-color: var(--color-error-600);
-    color: white;
+  /* --- Input Focus States --- */
+  .neo-input:focus {
+    outline: none;
+    border-color: var(--color-active);
+    box-shadow: 4px 4px 0px 0px var(--color-active);
   }
 
-  .message-info {
-    background-color: var(--color-primary-600);
-    color: white;
+  .neo-input-danger:focus {
+    border-color: var(--color-error);
+    box-shadow: 4px 4px 0px 0px var(--color-error);
   }
-} 
+
+  /* --- Sidebar Specific --- */
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .sidebar-hover {
+    transition: var(--trans-bounce);
+  }
+
+  .sidebar-hover:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px 0px var(--color-black);
+  }
+}

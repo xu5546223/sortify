@@ -226,7 +226,7 @@ async def list_documents(
     db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
     skip: int = Query(0, ge=0, description="跳過的記錄數，用於分頁"),
-    limit: int = Query(20, ge=1, le=100, description="返回的最大記錄數"),
+    limit: int = Query(20, ge=1, le=10000, description="返回的最大記錄數（最大10000）"),
     status_in: Optional[List[DocumentStatus]] = Query(None, description="根據一個或多個文件狀態過濾"),
     filename_contains: Optional[str] = Query(None, description="根據文件名包含的文字過濾 (不區分大小寫)"),
     tags_include: Optional[List[str]] = Query(None, description="根據包含的標籤過濾 (傳入一個或多個標籤)"),

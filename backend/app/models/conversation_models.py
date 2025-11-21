@@ -9,6 +9,10 @@ class ConversationMessage(BaseModel):
     content: str = Field(..., description="消息內容")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="消息時間戳")
     tokens_used: Optional[int] = Field(None, description="該消息使用的 token 數量")
+    source_documents: Optional[List[str]] = Field(
+        default=None, 
+        description="本輪回答引用的文檔ID列表 (僅 assistant 消息有效)"
+    )
     
     class Config:
         json_schema_extra = {
@@ -51,7 +55,31 @@ class ConversationInDB(ConversationBase):
     
     # 對話級別的文檔緩存
     cached_documents: List[str] = Field(default_factory=list, description="對話中已查詢過的文檔ID列表")
-    cached_document_data: Optional[dict] = Field(default=None, description="緩存的文檔詳細數據")
+    cached_document_data: Optional[dict] = Field(
+        default=None, 
+        description="""
+        緩存的文檔摘要數據 (會話文檔池)
+        格式: {
+            "doc_id": {
+                "document_id": str,
+                "filename": str,
+                "summary": str,           # 100-200字摘要
+                "key_concepts": [str],    # 關鍵概念
+                "semantic_tags": [str],   # 語義標籤
+                
+                # 會話級元數據
+                "first_mentioned_round": int,
+                "last_accessed_round": int,
+                "relevance_score": float,
+                "access_count": int,
+                "topic": Optional[str]
+            }
+        }
+        """
+    )
+    
+    # 置頂狀態
+    is_pinned: bool = Field(default=False, description="是否置頂")
     
     class Config:
         from_attributes = True
@@ -78,6 +106,7 @@ class Conversation(BaseModel):
     message_count: int = Field(..., description="消息總數")
     total_tokens: int = Field(..., description="累計使用的 token 數量")
     cached_documents: List[str] = Field(default_factory=list, description="已緩存的文檔ID")
+    is_pinned: bool = Field(default=False, description="是否置頂")
     
     class Config:
         from_attributes = True
@@ -85,6 +114,10 @@ class Conversation(BaseModel):
 class ConversationWithMessages(Conversation):
     """包含完整消息的對話模型"""
     messages: List[ConversationMessage] = Field(..., description="對話消息列表")
+    cached_document_data: Optional[dict] = Field(
+        default=None, 
+        description="緩存的文檔摘要數據 (會話文檔池)"
+    )
     
     class Config:
         from_attributes = True

@@ -101,3 +101,15 @@ class DeviceRevokeResponse(BaseModel):
     success: bool = Field(..., description="是否成功")
     message: str = Field(..., description="消息")
 
+
+class UpdateDeviceNameRequest(BaseModel):
+    """更新裝置名稱請求模型"""
+    device_name: str = Field(..., min_length=1, max_length=50, description="新的裝置名稱")
+
+
+class UpdateDeviceNameResponse(BaseModel):
+    """更新裝置名稱響應模型"""
+    success: bool = Field(..., description="是否成功")
+    message: str = Field(..., description="消息")
+    device_name: str = Field(..., description="更新後的裝置名稱")
+

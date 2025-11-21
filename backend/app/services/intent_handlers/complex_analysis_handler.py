@@ -29,14 +29,21 @@ logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
 
 class ComplexAnalysisHandler:
     """
-    複雜分析處理器 - 使用完整RAG流程
+    複雜分析處理器 - 使用完整RAG流程（統一策略版）
     
-    保留所有原有功能:
+    統一策略（2024優化版）:
     - ✅ AI查詢重寫
-    - ✅ RRF融合檢索
+    - ✅ RRF融合檢索（優先搜索文檔池）
     - ✅ AI智能文檔選擇
     - ✅ MongoDB詳細查詢
+    - ✅ 統一對話歷史載入（unified_context_helper）
+    - ✅ 文檔池優先級支持
     - ✅ 答案生成
+    
+    優勢:
+    - 與其他策略保持一致的上下文處理
+    - 優先使用文檔池提高相關性
+    - 完整RAG流程保證高質量
     """
     
     async def handle(
@@ -48,31 +55,59 @@ class ComplexAnalysisHandler:
         user_id: Optional[str] = None,
         request_id: Optional[str] = None
     ) -> AIQAResponse:
-        """處理複雜分析請求"""
+        """處理複雜分析請求（統一策略版）"""
         start_time = time.time()
         total_tokens = 0
         
-        logger.info(f"複雜分析(模塊化): {request.question}")
+        logger.info(f"複雜分析(統一策略): {request.question}")
         
         try:
-            # Step 1: 查詢重寫
+            # 獲取文檔池優先級信息（如果有）
+            priority_document_ids = context.get('priority_document_ids', []) if context else []
+            should_reuse_cached = context.get('should_reuse_cached', False) if context else False
+            
+            if priority_document_ids:
+                logger.info(f"🎯 文檔池包含 {len(priority_document_ids)} 個優先文檔")
+            
+            # Step 1: 查詢重寫（传递 @ 文件信息）
+            # ✅ 如果用户 @ 了文件，告诉查询重写器
+            document_context = None
+            if request.document_ids:
+                logger.info(f"🎯 查询重写：用户选择了 {len(request.document_ids)} 个文件")
+                document_context = {
+                    "document_ids": request.document_ids,
+                    "document_count": len(request.document_ids)
+                }
+            
             query_rewrite_result, rewrite_tokens = await qa_query_rewriter.rewrite_query(
                 db=db,
                 original_query=request.question,
                 user_id=str(user_id) if user_id else None,
-                request_id=request_id
+                request_id=request_id,
+                document_context=document_context  # ✅ 传递文档上下文
             )
             total_tokens += rewrite_tokens
             
-            # Step 2: RRF融合檢索
+            # Step 2: RRF融合檢索（優先使用文檔池）
             search_strategy = qa_search_coordinator.extract_search_strategy(query_rewrite_result)
+            
+            # ✅ 优先级：1. request.document_ids (@ 文件) 2. priority_document_ids (如果建议重用)
+            document_ids_filter = None
+            if request.document_ids:
+                document_ids_filter = request.document_ids
+                logger.info(f"🎯 使用 @ 文件: {len(request.document_ids)} 個")
+            elif priority_document_ids and should_reuse_cached:
+                document_ids_filter = priority_document_ids
+                logger.info(f"🎯 使用優先文檔池: {len(priority_document_ids)} 個")
+            
             semantic_results = await qa_search_coordinator.coordinate_search(
                 db=db,
                 query=query_rewrite_result.rewritten_queries[0] if query_rewrite_result.rewritten_queries else request.question,
                 user_id=str(user_id) if user_id else None,
                 search_strategy=search_strategy,
                 top_k=getattr(request, 'max_documents_for_selection', 8),
-                similarity_threshold=getattr(request, 'similarity_threshold', 0.3)
+                similarity_threshold=getattr(request, 'similarity_threshold', 0.3),
+                document_ids=document_ids_filter  # 優先搜索 @ 文件或文檔池
             )
             
             semantic_contexts = [
@@ -131,9 +166,20 @@ class ComplexAnalysisHandler:
                     if detail:
                         detailed_data.append(detail)
             
-            # Step 6: 生成答案
-            conv_history = self._format_conversation_history(context) if context else None
+            # Step 6: 載入對話歷史（統一方式）
+            from app.services.qa_workflow.unified_context_helper import unified_context_helper
             
+            conversation_history_text = await unified_context_helper.load_and_format_conversation_history(
+                db=db,
+                conversation_id=request.conversation_id,
+                user_id=user_id,
+                limit=5,
+                max_content_length=2000
+            )
+            
+            logger.info(f"載入對話歷史: {len(conversation_history_text) if conversation_history_text else 0} 字符")
+            
+            # Step 7: 生成答案
             answer, answer_tokens, confidence, contexts = await qa_answer_service.generate_answer(
                 db=db,
                 original_query=request.question,
@@ -144,7 +190,7 @@ class ComplexAnalysisHandler:
                 user_id=str(user_id) if user_id else None,
                 request_id=request_id,
                 model_preference=request.model_preference,
-                conversation_history=conv_history
+                conversation_history=conversation_history_text
             )
             total_tokens += answer_tokens
             
@@ -152,6 +198,11 @@ class ComplexAnalysisHandler:
             
             # 保存對話
             if db is not None:
+                # ✅ 合併搜索結果 + 用戶 @ 的文件
+                all_doc_ids = set(str(d.id) for d in documents)
+                if request.document_ids:
+                    all_doc_ids.update(request.document_ids)
+                
                 await conversation_helper.save_qa_to_conversation(
                     db=db,
                     conversation_id=request.conversation_id,
@@ -159,10 +210,19 @@ class ComplexAnalysisHandler:
                     question=request.question,
                     answer=answer,
                     tokens_used=total_tokens,
-                    source_documents=[str(d.id) for d in documents]
+                    source_documents=list(all_doc_ids)
                 )
             
-            logger.info(f"複雜分析完成: {processing_time:.2f}秒, Token: {total_tokens}")
+            # ✅ 正确计算是否使用了文档池
+            used_document_pool = bool(request.document_ids) or (bool(priority_document_ids) and should_reuse_cached)
+            doc_pool_size = len(request.document_ids) if request.document_ids else (len(priority_document_ids) if priority_document_ids else 0)
+            
+            logger.info(
+                f"複雜分析完成: {processing_time:.2f}秒, Token: {total_tokens}, "
+                f"使用 @ 文件: {bool(request.document_ids)}, "
+                f"使用文檔池: {used_document_pool}, "
+                f"文檔數: {doc_pool_size}"
+            )
             
             return AIQAResponse(
                 answer=answer,
@@ -177,8 +237,12 @@ class ComplexAnalysisHandler:
                 classification=classification,
                 workflow_state={
                     "current_step": "completed",
-                    "strategy_used": "complex_analysis_modular",
-                    "api_calls": 4 + len(selected_doc_ids) if selected_doc_ids else 4
+                    "strategy_used": "complex_analysis_unified",
+                    "api_calls": 4 + len(selected_doc_ids) if selected_doc_ids else 4,
+                    "used_conversation_history": bool(conversation_history_text),
+                    "used_document_pool": used_document_pool,
+                    "document_pool_size": doc_pool_size,
+                    "used_at_mention_files": bool(request.document_ids)
                 },
                 detailed_document_data_from_ai_query=detailed_data if detailed_data else None
             )
@@ -186,19 +250,6 @@ class ComplexAnalysisHandler:
         except Exception as e:
             logger.error(f"複雜分析失敗: {e}", exc_info=True)
             return self._create_error_response(request, str(e), time.time() - start_time, total_tokens, classification)
-    
-    def _format_conversation_history(self, context: dict) -> Optional[str]:
-        """格式化對話歷史"""
-        if not context or not context.get('recent_messages'):
-            return None
-        
-        history_parts = ["=== 對話歷史(最近5條) ==="]
-        for msg in context['recent_messages']:
-            role = "用戶" if msg.get("role") == "user" else "助手"
-            content = msg.get("content", "")[:200]
-            history_parts.append(f"{role}: {content}")
-        history_parts.append("=== 當前問題 ===")
-        return "\n".join(history_parts)
     
     def _create_no_results_response(self, request, query_rewrite_result, semantic_contexts, tokens_used, processing_time, classification, db, user_id):
         """創建無結果響應"""

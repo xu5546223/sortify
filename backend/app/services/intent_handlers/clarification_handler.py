@@ -92,6 +92,11 @@ class ClarificationHandler:
         # 保存對話記錄
         if db is not None:
             from app.services.qa_workflow.conversation_helper import conversation_helper
+            
+            # ✅ 如果用戶提供了 @ 文件，傳遞給 save_qa_to_conversation
+            # 它會自動調用 _update_document_pool
+            source_docs = request.document_ids if request.document_ids else []
+            
             await conversation_helper.save_qa_to_conversation(
                 db=db,
                 conversation_id=request.conversation_id,
@@ -99,7 +104,7 @@ class ClarificationHandler:
                 question=request.question,
                 answer=answer,
                 tokens_used=api_calls * 50,
-                source_documents=[]
+                source_documents=source_docs
             )
         
         # 記錄日誌
@@ -144,10 +149,10 @@ class ClarificationHandler:
                 "api_calls": api_calls,
                 "clarification_question": clarification_question,
                 "suggested_responses": suggested_responses,
-                "pending_action": "provide_clarification"
+                "is_clarification": True  # 標記這是澄清問題，不需要批准流程
             },
-            next_action="provide_clarification",
-            pending_approval="clarification"
+            next_action=None,  # 澄清問題不需要 next_action
+            pending_approval=None  # 澄清問題不需要批准
         )
     
     def _build_clarification_answer(

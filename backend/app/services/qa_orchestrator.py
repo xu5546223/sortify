@@ -35,6 +35,12 @@ from app.services.qa_workflow.question_classifier_service import question_classi
 from app.services.qa_workflow.context_loader_service import context_loader_service
 from app.services.qa.utils.search_strategy import extract_search_strategy
 
+# 導入統一上下文管理器
+from app.services.context.conversation_context_manager import (
+    ConversationContextManager,
+    ContextPurpose
+)
+
 # 導入意圖處理器
 from app.services.intent_handlers.greeting_handler import greeting_handler
 from app.services.intent_handlers.clarification_handler import clarification_handler
@@ -495,38 +501,62 @@ class QAOrchestrator:
                 })
                 await asyncio.sleep(0.05)
             
-            # === 步驟 1: 載入對話上下文 ===
-            from app.services.qa_workflow.unified_context_helper import unified_context_helper
-            
+            # === 步驟 1: 創建統一上下文管理器並載入上下文 ===
+            context_manager = None
             conversation_context = None
             cached_documents_info_for_classifier = None
             
-            if request.conversation_id:
-                conversation_context = await unified_context_helper.load_conversation_history_list(
-                    db=db,
-                    conversation_id=request.conversation_id,
-                    user_id=str(user_id) if user_id else None,
-                    limit=10
-                )
-                
-                if conversation_context:
-                    logger.info(f"載入了 {len(conversation_context)} 條歷史消息")
-                
-                # 獲取緩存文檔信息
-                cached_documents_info_for_classifier = await self._get_cached_documents_info(
-                    db, request.conversation_id, user_id
-                )
+            if request.conversation_id and user_id:
+                try:
+                    # 創建上下文管理器
+                    context_manager = ConversationContextManager(
+                        db=db,
+                        conversation_id=request.conversation_id,
+                        user_id=str(user_id)
+                    )
+                    
+                    # 為意圖分類載入上下文
+                    classification_context = await context_manager.load_context(
+                        purpose=ContextPurpose.CLASSIFICATION,
+                        max_history_messages=10
+                    )
+                    
+                    conversation_context = classification_context.conversation_history_list
+                    cached_documents_info_for_classifier = classification_context.cached_documents_info
+                    
+                    if conversation_context:
+                        logger.info(f"✅ 統一管理器載入: {len(conversation_context)} 條消息, {len(cached_documents_info_for_classifier or [])} 個文檔池")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ 統一管理器初始化失敗，回退到舊方式: {e}")
+                    # 回退到舊方式
+                    from app.services.qa_workflow.unified_context_helper import unified_context_helper
+                    
+                    conversation_context = await unified_context_helper.load_conversation_history_list(
+                        db=db,
+                        conversation_id=request.conversation_id,
+                        user_id=str(user_id) if user_id else None,
+                        limit=10
+                    )
+                    cached_documents_info_for_classifier = await self._get_cached_documents_info(
+                        db, request.conversation_id, user_id
+                    )
             
             # === 步驟 1.5: 處理澄清回答 ===
             effective_question = request.question
+            clarification_provided = False
             if getattr(request, 'workflow_action', None) == 'provide_clarification' and getattr(request, 'clarification_text', None):
                 logger.info(f"📝 收到澄清回答: {request.clarification_text}")
+                clarification_provided = True
                 
                 # 保存澄清回答到對話
-                if request.conversation_id:
-                    from app.crud import crud_conversations
-                    from uuid import UUID
+                if request.conversation_id and context_manager:
                     try:
+                        # 使用統一管理器重新載入（保存操作會在後面統一處理）
+                        # 這裡只是重新載入上下文以包含澄清回答
+                        from app.crud import crud_conversations
+                        from uuid import UUID
+                        
                         conversation_uuid = UUID(request.conversation_id)
                         user_uuid = UUID(str(user_id)) if not isinstance(user_id, UUID) else user_id
                         
@@ -539,23 +569,40 @@ class QAOrchestrator:
                             tokens_used=None
                         )
                         
-                        # 使緩存失效並重新載入
-                        from app.services.cache.conversation_cache_service import conversation_cache_service
-                        await conversation_cache_service.invalidate_conversation(
-                            user_id=user_uuid,
-                            conversation_id=conversation_uuid
-                        )
+                        # 使統一管理器的緩存失效
+                        context_manager._cache_loaded = False
+                        context_manager._message_cache = None
                         
-                        conversation_context = await unified_context_helper.load_conversation_history_list(
-                            db=db,
-                            conversation_id=request.conversation_id,
-                            user_id=str(user_id) if user_id else None,
-                            limit=10
+                        # 重新載入上下文
+                        classification_context = await context_manager.load_context(
+                            purpose=ContextPurpose.CLASSIFICATION,
+                            max_history_messages=10
                         )
+                        conversation_context = classification_context.conversation_history_list
+                        
+                        logger.info(f"✅ 澄清回答已保存，重新載入了 {len(conversation_context or [])} 條消息")
                     except Exception as e:
-                        logger.error(f"❌ 保存澄清回答失敗: {e}")
+                        logger.error(f"❌ 處理澄清回答失敗: {e}")
                 
                 effective_question = f"{request.question} → {request.clarification_text}"
+            
+            # === 步驟 1.8: 保存 @ 文件到文檔池（在分類之前）===
+            if request.document_ids and request.conversation_id and context_manager:
+                try:
+                    logger.info(f"📎 在分類前保存 @ 文件到文檔池: {len(request.document_ids)} 個")
+                    await context_manager._update_document_pool(
+                        new_document_ids=request.document_ids
+                    )
+                    
+                    # 重新載入上下文，以包含新添加的文檔
+                    classification_context = await context_manager.load_context(
+                        purpose=ContextPurpose.CLASSIFICATION,
+                        max_history_messages=10
+                    )
+                    cached_documents_info_for_classifier = classification_context.cached_documents_info
+                    logger.info(f"✅ 文檔池已更新，現有 {len(cached_documents_info_for_classifier or [])} 個文檔")
+                except Exception as e:
+                    logger.warning(f"⚠️ 保存 @ 文件到文檔池失敗: {e}")
             
             # === 步驟 2: 問題分類（批准操作跳過進度發送）===
             if not is_approval_action:
@@ -610,10 +657,49 @@ class QAOrchestrator:
             
             logger.info(f"→ 路由到: {handler.__class__.__name__ if hasattr(handler, '__class__') else classification.intent}")
             
+            # 如果提供了澄清，更新 request.question 為 effective_question
+            # 這樣 handler 可以使用完整的上下文進行處理
+            if clarification_provided:
+                logger.info(f"🔄 更新 request.question: '{request.question}' → '{effective_question}'")
+                request.question = effective_question
+            
+            # === 步驟 3.5: 獲取檢索優先文檔（如果是文檔相關意圖）===
+            priority_document_ids = []
+            should_reuse_cached = False
+            
+            if context_manager and classification.intent in [
+                QuestionIntent.DOCUMENT_SEARCH,
+                QuestionIntent.DOCUMENT_DETAIL_QUERY,
+                QuestionIntent.COMPLEX_ANALYSIS
+            ]:
+                try:
+                    search_context = await context_manager.load_context(
+                        purpose=ContextPurpose.SEARCH_RETRIEVAL
+                    )
+                    priority_document_ids = search_context.priority_document_ids or []
+                    should_reuse_cached = search_context.should_reuse_cached
+                    
+                    if priority_document_ids:
+                        logger.info(f"🎯 檢索優先文檔: {len(priority_document_ids)} 個, 重用緩存: {should_reuse_cached}")
+                except Exception as e:
+                    logger.warning(f"獲取優先文檔失敗: {e}")
+            
             # 載入上下文
             context = await self._load_context_if_needed(
                 db, request, user_id, classification
             )
+            
+            # 將優先文檔信息添加到 context
+            if context is None:
+                context = {}
+            if priority_document_ids:
+                context['priority_document_ids'] = priority_document_ids
+                context['should_reuse_cached'] = should_reuse_cached
+            
+            # ✅ 将文档池信息添加到 context（用于查询重写的指代词解析）
+            if cached_documents_info_for_classifier:
+                context['cached_documents'] = cached_documents_info_for_classifier
+                logger.info(f"📦 添加 {len(cached_documents_info_for_classifier)} 个文档到 context 用于查询重写")
             
             # 檢查 handler 是否有流式版本
             if hasattr(handler, 'handle_stream'):
@@ -637,19 +723,18 @@ class QAOrchestrator:
                     response = await handler.handle(
                         request, classification, context, db, user_id, request_id
                     )
-                    # 發送澄清請求，包含完整信息
-                    approval_data = {
+                    # 澄清問題：發送完整答案，並附帶 workflow_state 用於前端判斷
+                    # 前端會檢查 workflow_state.is_clarification 或 current_step === 'need_clarification'
+                    yield StreamEvent('complete', {
+                        'answer': response.answer,
                         'workflow_state': response.workflow_state,
-                        'classification': response.classification.model_dump() if response.classification else None,
-                        'next_action': response.next_action,
-                        'pending_approval': response.pending_approval
-                    }
-                    yield StreamEvent('approval_needed', approval_data)
+                        'classification': response.classification.model_dump() if response.classification else None
+                    })
                     
                 elif classification.intent == QuestionIntent.SIMPLE_FACTUAL:
-                    # 簡單事實查詢（context = None）
+                    # 簡單事實查詢（需要 context 以访问文档池）
                     response = await handler.handle(
-                        request, classification, None, db, user_id, request_id
+                        request, classification, context, db, user_id, request_id  # ✅ 传递 context
                     )
                     if response.answer:
                         yield StreamEvent('complete', {'answer': response.answer})
@@ -669,11 +754,38 @@ class QAOrchestrator:
                         
                         # 執行查詢重寫
                         from app.services.qa_core.qa_query_rewriter import qa_query_rewriter
+                        
+                        # ✅ 构建 document_context（用于指代词解析）
+                        document_context = None
+                        if request.document_ids or (context and context.get('cached_documents')):
+                            document_ids = request.document_ids or []
+                            document_summaries = []
+                            
+                            # 从 context 中提取文档摘要
+                            if context and 'cached_documents' in context:
+                                for doc in context['cached_documents']:
+                                    doc_id = doc.get('document_id')
+                                    if not document_ids or doc_id in document_ids:
+                                        document_summaries.append({
+                                            'document_id': doc_id,
+                                            'filename': doc.get('filename', ''),
+                                            'summary': doc.get('summary', ''),
+                                            'key_concepts': doc.get('key_concepts', [])
+                                        })
+                                logger.info(f"📄 批准操作的查询重写：获取到 {len(document_summaries)} 个文档摘要")
+                            
+                            document_context = {
+                                "document_ids": document_ids,
+                                "document_count": len(document_summaries),
+                                "document_summaries": document_summaries
+                            }
+                        
                         query_rewrite_result, rewrite_tokens = await qa_query_rewriter.rewrite_query(
                             db=db,
                             original_query=request.question,
                             user_id=user_id,
-                            request_id=request_id
+                            request_id=request_id,
+                            document_context=document_context  # ✅ 传递完整的 document_context
                         )
                         
                         # 立即發送查詢重寫結果
@@ -687,14 +799,15 @@ class QAOrchestrator:
                                 }
                             })
                             await asyncio.sleep(0.05)
+                            
+                            # 將查詢重寫結果存入 context，避免 handler 重複執行
+                            if context is None:
+                                context = {}
+                            context['pre_rewritten_query_result'] = query_rewrite_result
                     
-                    # 如果是詳細查詢批准，發送 MongoDB 查詢進度
-                    if is_approval_action and classification.intent == QuestionIntent.DOCUMENT_DETAIL_QUERY:
-                        yield StreamEvent('progress', {
-                            'stage': 'mongodb_query',
-                            'message': '🔍 正在執行 MongoDB 詳細查詢...'
-                        })
-                        await asyncio.sleep(0.05)
+                    # 移除預設的 MongoDB 查詢進度（由 handler 自己決定）
+                    # DocumentDetailQueryHandler 可能會降級為 document_search
+                    # 所以不應該在這裡預設發送固定的 progress 事件
                     
                     # 調用 handler（這些 handlers 接受 context 參數）
                     response = await handler.handle(
@@ -703,12 +816,27 @@ class QAOrchestrator:
                     
                     # 發送完成進度
                     if is_approval_action:
-                        # 如果是文檔搜索，顯示找到的文檔數
+                        # 如果是文檔搜索，顯示找到的文檔數和文檔列表
                         if classification.intent == QuestionIntent.DOCUMENT_SEARCH and response.source_documents:
                             doc_count = len(response.source_documents)
+                            
+                            # 構建文檔列表用於前端顯示
+                            doc_list = []
+                            for idx, doc in enumerate(response.source_documents[:10], 1):  # 限制最多10個
+                                doc_list.append({
+                                    'document_id': idx,
+                                    'filename': getattr(doc, 'filename', f'文檔 {idx}'),
+                                    'score': getattr(doc, 'score', 0.0) if hasattr(doc, 'score') else 0.0,
+                                    'extracted_text': getattr(doc, 'extracted_text', '')[:200] if hasattr(doc, 'extracted_text') else ''
+                                })
+                            
                             yield StreamEvent('progress', {
                                 'stage': 'vector_search',
-                                'message': f'✅ 已搜索到 {doc_count} 個相關文檔'
+                                'message': f'✅ 已搜索到 {doc_count} 個相關文檔',
+                                'detail': {
+                                    'queries': doc_list,
+                                    'count': doc_count
+                                }
                             })
                             await asyncio.sleep(0.05)
                         
@@ -757,6 +885,18 @@ class QAOrchestrator:
                     # 檢查是否需要批准（pending_approval 是 response 的直接屬性）
                     if response.pending_approval or (response.workflow_state and response.workflow_state.get('pending_approval')):
                         logger.info(f"需要批准: {response.pending_approval or response.workflow_state.get('pending_approval')}")
+                        
+                        # ✅ 关键修复：在发送 approval_needed 前保存文档池到数据库
+                        # 这样批准后重新加载时就能看到文档了
+                        if context_manager and request.document_ids:
+                            try:
+                                logger.info(f"💾 批准前保存文档池到数据库: {len(request.document_ids)} 个")
+                                # 直接保存当前状态到 MongoDB
+                                await context_manager._save_document_pool_to_db()
+                                logger.info("✅ 文档池已保存，批准后可以读取")
+                            except Exception as e:
+                                logger.error(f"保存文档池失败: {e}", exc_info=True)
+                        
                         # 發送批准請求，包含完整信息
                         approval_data = {
                             'workflow_state': response.workflow_state,
@@ -784,12 +924,54 @@ class QAOrchestrator:
                             yield StreamEvent('chunk', {'text': chunk})
                             await asyncio.sleep(0.01)
                         
-                        # 發送元數據
-                        yield StreamEvent('metadata', {
+                        # 發送元數據（包含文檔池信息）
+                        metadata_payload = {
                             'tokens_used': response.tokens_used,
                             'source_documents': response.source_documents if response.source_documents else [],
                             'processing_time': response.processing_time
-                        })
+                        }
+                        
+                        # 添加文檔池信息（重新載入以獲取最新狀態）
+                        # ⚠️ handler 已經保存了文檔池，需要重新載入以獲取最新的文檔池
+                        if request.conversation_id and user_id:
+                            try:
+                                # 等待一小段時間確保數據庫更新完成
+                                await asyncio.sleep(0.1)
+                                
+                                # 創建臨時 context_manager 來讀取文檔池（禁用緩存）
+                                temp_ctx_mgr = ConversationContextManager(
+                                    db=db,
+                                    conversation_id=request.conversation_id,
+                                    user_id=str(user_id),
+                                    enable_caching=False  # 禁用緩存，強制從數據庫讀取
+                                )
+                                
+                                # 強制重新載入文檔池
+                                await temp_ctx_mgr._load_document_pool()
+                                
+                                if temp_ctx_mgr._document_pool:
+                                    # 轉換為前端可用的格式
+                                    document_pool_data = {}
+                                    for doc_id, doc_ref in temp_ctx_mgr._document_pool.items():
+                                        document_pool_data[doc_id] = {
+                                            'document_id': doc_id,
+                                            'filename': doc_ref.filename,
+                                            'summary': doc_ref.summary,
+                                            'relevance_score': doc_ref.relevance_score,
+                                            'access_count': doc_ref.access_count,
+                                            'first_mentioned_round': doc_ref.first_mentioned_round,
+                                            'last_accessed_round': doc_ref.last_accessed_round
+                                        }
+                                    
+                                    metadata_payload['document_pool'] = document_pool_data
+                                    metadata_payload['document_pool_count'] = len(document_pool_data)
+                                    logger.info(f"📚 發送文檔池信息: {len(document_pool_data)} 個文檔")
+                                else:
+                                    logger.debug(f"📚 文檔池為空")
+                            except Exception as e:
+                                logger.warning(f"⚠️ 載入文檔池失敗: {e}")
+                        
+                        yield StreamEvent('metadata', metadata_payload)
                         
                         yield StreamEvent('complete', {'message': '✅ 處理完成'})
                     else:

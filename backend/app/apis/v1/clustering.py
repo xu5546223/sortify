@@ -661,3 +661,135 @@ async def get_clustering_statistics(
             detail=f"獲取聚類統計失敗: {str(e)}"
         )
 
+
+@router.get("/folder-order", response_model=List[str], summary="獲取資料夾顯示順序")
+async def get_folder_display_order(
+    request: Request,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db)
+):
+    """
+    獲取當前用戶自定義的資料夾顯示順序
+    
+    Returns:
+        List[str]: 資料夾ID陣列（按顯示順序排列）
+    """
+    request_id = request.state.request_id if hasattr(request.state, 'request_id') else None
+    
+    try:
+        # 從資料庫讀取用戶的資料夾排序設置
+        folder_order_doc = await db.user_preferences.find_one({
+            "_id": f"folder_order_{current_user.id}"
+        })
+        
+        if folder_order_doc and "folder_order" in folder_order_doc:
+            folder_order = folder_order_doc["folder_order"]
+            
+            await log_event(
+                db=db,
+                level=LogLevel.DEBUG,
+                message=f"用戶 {current_user.username} 獲取資料夾排序",
+                source="api.clustering.get_folder_order",
+                user_id=str(current_user.id),
+                request_id=request_id,
+                details={"folder_count": len(folder_order)}
+            )
+            
+            return folder_order
+        else:
+            # 如果沒有自定義排序，返回空陣列
+            await log_event(
+                db=db,
+                level=LogLevel.DEBUG,
+                message=f"用戶 {current_user.username} 沒有自定義資料夾排序",
+                source="api.clustering.get_folder_order",
+                user_id=str(current_user.id),
+                request_id=request_id
+            )
+            return []
+            
+    except Exception as e:
+        await log_event(
+            db=db,
+            level=LogLevel.ERROR,
+            message=f"獲取資料夾排序失敗: {str(e)}",
+            source="api.clustering.get_folder_order.error",
+            user_id=str(current_user.id),
+            request_id=request_id,
+            details={"error": str(e)}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"獲取資料夾排序失敗: {str(e)}"
+        )
+
+
+@router.post("/folder-order", response_model=BasicResponse, summary="保存資料夾顯示順序")
+async def save_folder_display_order(
+    folder_order: List[str],
+    request: Request,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db)
+):
+    """
+    保存當前用戶自定義的資料夾顯示順序
+    
+    Args:
+        folder_order: 資料夾ID陣列（按顯示順序排列）
+    
+    Returns:
+        BasicResponse: 保存結果
+    """
+    request_id = request.state.request_id if hasattr(request.state, 'request_id') else None
+    
+    try:
+        from datetime import datetime, UTC
+        
+        # 保存到資料庫
+        result = await db.user_preferences.update_one(
+            {"_id": f"folder_order_{current_user.id}"},
+            {
+                "$set": {
+                    "owner_id": current_user.id,
+                    "folder_order": folder_order,
+                    "updated_at": datetime.now(UTC)
+                },
+                "$setOnInsert": {
+                    "created_at": datetime.now(UTC)
+                }
+            },
+            upsert=True
+        )
+        
+        await log_event(
+            db=db,
+            level=LogLevel.INFO,
+            message=f"用戶 {current_user.username} 保存資料夾排序",
+            source="api.clustering.save_folder_order",
+            user_id=str(current_user.id),
+            request_id=request_id,
+            details={
+                "folder_count": len(folder_order),
+                "folder_ids": folder_order[:5]  # 只記錄前5個
+            }
+        )
+        
+        return BasicResponse(
+            success=True,
+            message=f"資料夾排序已保存（共{len(folder_order)}個資料夾）"
+        )
+        
+    except Exception as e:
+        await log_event(
+            db=db,
+            level=LogLevel.ERROR,
+            message=f"保存資料夾排序失敗: {str(e)}",
+            source="api.clustering.save_folder_order.error",
+            user_id=str(current_user.id),
+            request_id=request_id,
+            details={"error": str(e)}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"保存資料夾排序失敗: {str(e)}"
+        )

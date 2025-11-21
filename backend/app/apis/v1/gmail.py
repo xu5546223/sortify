@@ -550,11 +550,42 @@ async def list_gmail_messages(
     except HTTPException:
         raise
     except Exception as e:
+        error_str = str(e)
         logger.error(f"Failed to list Gmail messages: {e}")
+        
+        # 🔥 檢查是否為 Token 過期錯誤
+        if "invalid_grant" in error_str.lower() or "token has been expired or revoked" in error_str.lower():
+            logger.warning(f"Gmail token expired for user {current_user.id}, clearing credentials")
+            
+            # 清除過期的憑證
+            try:
+                from app.models.user_models import UserUpdate
+                user_update = UserUpdate(google_credentials=None)
+                await crud_users.update_user(db, current_user.id, user_update)
+                logger.info(f"Cleared expired Gmail credentials for user {current_user.id}")
+            except Exception as clear_error:
+                logger.error(f"Failed to clear expired credentials: {clear_error}")
+            
+            await log_event(
+                db=db,
+                level=LogLevel.WARNING,
+                message="Gmail authorization expired, credentials cleared",
+                source="gmail.list_messages.token_expired",
+                user_id=str(current_user.id),
+                request_id=request.headers.get("X-Request-ID")
+            )
+            
+            # 返回 401，觸發前端重新授權
+            raise HTTPException(
+                status_code=401, 
+                detail="Gmail 授權已過期或被撤銷，請重新授權"
+            )
+        
+        # 其他錯誤
         await log_event(
             db=db,
             level=LogLevel.ERROR,
-            message=f"Failed to list Gmail messages: {str(e)}",
+            message=f"Failed to list Gmail messages: {error_str}",
             source="gmail.list_messages.error",
             user_id=str(current_user.id),
             request_id=request.headers.get("X-Request-ID")

@@ -1,0 +1,663 @@
+/**
+ * Reasoning Chain Demo Styles
+ * Neo-Brutalism 風格完整展示頁面
+ */
+
+/* 主容器 */
+.reasoning-demo-container {
+  min-height: 100vh;
+  background: #f3f4f6;
+  padding: 24px;
+}
+
+.reasoning-demo-main {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+/* 標題 */
+.reasoning-demo-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 24px;
+  color: #000;
+  letter-spacing: -0.02em;
+}
+
+/* 按鈕樣式 */
+.demo-btn-primary {
+  background: #6366f1 !important;
+  border-color: #000 !important;
+  color: white !important;
+  font-weight: 600 !important;
+  height: 40px !important;
+  padding: 0 24px !important;
+  border-radius: 8px !important;
+  box-shadow: 3px 3px 0px black !important;
+  transition: all 0.2s !important;
+}
+
+.demo-btn-primary:hover:not(:disabled) {
+  transform: translate(2px, 2px) !important;
+  box-shadow: 1px 1px 0px black !important;
+}
+
+.demo-btn-primary:disabled {
+  opacity: 0.6 !important;
+  cursor: not-allowed !important;
+}
+
+.demo-btn-secondary {
+  background: white !important;
+  border: 2px solid #e5e7eb !important;
+  color: #6b7280 !important;
+  font-weight: 600 !important;
+  height: 40px !important;
+  padding: 0 24px !important;
+  border-radius: 8px !important;
+  transition: all 0.2s !important;
+}
+
+.demo-btn-secondary:hover {
+  border-color: #000 !important;
+  color: #000 !important;
+}
+
+/* 用戶問題氣泡 */
+.demo-user-bubble {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 24px;
+  justify-content: flex-end;
+  animation: fadeIn 0.3s ease-out;
+}
+
+.demo-user-avatar {
+  width: 40px;
+  height: 40px;
+  background: #000;
+  border: 2px solid #000;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 20px;
+  flex-shrink: 0;
+  order: 2;
+}
+
+.demo-user-content {
+  background: #000;
+  color: white;
+  padding: 12px 20px;
+  border-radius: 16px 16px 0 16px;
+  max-width: 70%;
+  box-shadow: 4px 4px 0px rgba(0,0,0,0.2);
+  order: 1;
+}
+
+.demo-user-content p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* AI 回答氣泡 */
+.demo-ai-bubble {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 24px;
+  animation: fadeIn 0.3s ease-out;
+}
+
+.demo-ai-avatar {
+  width: 40px;
+  height: 40px;
+  background: #29bf12;
+  border: 2px solid #000;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 16px;
+  color: #000;
+  flex-shrink: 0;
+  box-shadow: 2px 2px 0px black;
+}
+
+.demo-ai-container {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 答案內容區 */
+.demo-answer-content {
+  margin-top: 16px;
+}
+
+.demo-answer-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  transition: color 0.3s;
+}
+
+.demo-answer-label:has(+ .demo-answer-text .demo-cursor) {
+  color: #29bf12;
+}
+
+.demo-answer-text {
+  background: white;
+  border: 2px solid #000;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 4px 4px 0px black;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1f2937;
+}
+
+/* Streamdown Markdown 樣式 */
+.demo-answer-text p {
+  margin-bottom: 16px;
+}
+
+.demo-answer-text p:last-child {
+  margin-bottom: 0;
+}
+
+.demo-answer-text h1,
+.demo-answer-text h2,
+.demo-answer-text h3 {
+  font-weight: 700;
+  margin-top: 24px;
+  margin-bottom: 12px;
+  color: #000;
+}
+
+.demo-answer-text h3 {
+  font-size: 16px;
+  margin-top: 20px;
+}
+
+.demo-answer-text strong {
+  font-weight: 600;
+  color: #000;
+}
+
+.demo-answer-text code {
+  background: #f3f4f6;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: #dc2626;
+  border: 1px solid #e5e7eb;
+}
+
+.demo-answer-text pre {
+  background: #1e1e1e;
+  padding: 16px;
+  border-radius: 8px;
+  border: 2px solid #000;
+  overflow-x: auto;
+  margin: 16px 0;
+}
+
+.demo-answer-text pre code {
+  background: transparent;
+  color: #d4d4d4;
+  border: none;
+  padding: 0;
+}
+
+.demo-answer-text hr {
+  border: none;
+  border-top: 2px solid #e5e7eb;
+  margin: 24px 0;
+}
+
+/* Streamdown 列表樣式 */
+.demo-answer-text ul,
+.demo-answer-text ol {
+  margin: 16px 0;
+  padding-left: 24px;
+}
+
+.demo-answer-text ul {
+  list-style: none;
+}
+
+.demo-answer-text ul li {
+  position: relative;
+  padding-left: 8px;
+  margin-bottom: 8px;
+}
+
+.demo-answer-text ul li::before {
+  content: '•';
+  position: absolute;
+  left: -16px;
+  color: #29bf12;
+  font-weight: bold;
+  font-size: 18px;
+}
+
+.demo-answer-text ol {
+  list-style: decimal;
+}
+
+.demo-answer-text ol li {
+  margin-bottom: 8px;
+}
+
+/* 保留舊的列表樣式以防萬一 */
+.demo-answer-list {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0;
+}
+
+.demo-answer-list li {
+  padding: 8px 0;
+  padding-left: 24px;
+  position: relative;
+}
+
+.demo-answer-list li::before {
+  content: '•';
+  position: absolute;
+  left: 8px;
+  color: #29bf12;
+  font-weight: bold;
+  font-size: 18px;
+}
+
+/* 引用標籤 */
+.demo-citation {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #e5e7eb;
+  border: 1px solid #000;
+  border-radius: 99px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  margin: 0 2px;
+  transition: all 0.2s;
+}
+
+.demo-citation:hover {
+  background: #08bdbd;
+  color: white;
+  transform: translateY(-1px);
+}
+
+.demo-citation i {
+  font-size: 14px;
+}
+
+/* 高亮文字 */
+.demo-highlight {
+  background: #abff4f;
+  padding: 2px 6px;
+  border-bottom: 2px solid #000;
+  font-weight: 600;
+}
+
+/* 答案底部 */
+.demo-answer-footer {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+}
+
+/* 流式游標 */
+.demo-cursor {
+  display: inline-block;
+  color: #29bf12;
+  font-weight: bold;
+  animation: blink 1s infinite;
+  margin-left: 2px;
+}
+
+/* 批准卡片 - Human-in-the-loop */
+.demo-approval-card {
+  background: #fff7ed;
+  border: 2px solid #ff9914;
+  border-radius: 12px;
+  padding: 20px;
+  margin-top: 16px;
+  position: relative;
+  overflow: hidden;
+  animation: fadeIn 0.3s ease-out;
+}
+
+.approval-card-indicator {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 4px;
+  height: 100%;
+  background: #ff9914;
+}
+
+.approval-card-title {
+  font-weight: 700;
+  color: #ff9914;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.approval-card-title i {
+  font-size: 18px;
+}
+
+.approval-card-message {
+  font-size: 14px;
+  color: #1f2937;
+  margin-bottom: 16px;
+  line-height: 1.6;
+}
+
+.approval-card-files {
+  margin-bottom: 20px;
+}
+
+.approval-file-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  background: white;
+  border: 1px solid #d1d5db;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+.approval-file-badge i {
+  font-size: 16px;
+  color: #dc2626;
+}
+
+.approval-card-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.approval-btn-approve {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: #29bf12;
+  color: #000;
+  border: 2px solid #000;
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: 2px 2px 0px black;
+  transition: all 0.2s;
+}
+
+.approval-btn-approve:hover {
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0px black;
+}
+
+.approval-btn-approve:active {
+  transform: translate(2px, 2px);
+  box-shadow: none;
+}
+
+.approval-btn-reject {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: white;
+  color: #6b7280;
+  border: 2px solid #d1d5db;
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.approval-btn-reject:hover {
+  border-color: #000;
+  color: #000;
+}
+
+/* 快捷操作按鈕 */
+.demo-quick-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.demo-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #f9fafb;
+  border: 1px solid #d1d5db;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.demo-action-btn:hover {
+  border-color: #08bdbd;
+  color: #08bdbd;
+  background: white;
+}
+
+.demo-action-btn i {
+  font-size: 16px;
+}
+
+/* 空狀態 */
+.demo-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 40px;
+  background: white;
+  border: 2px dashed #d1d5db;
+  border-radius: 12px;
+  margin-top: 24px;
+}
+
+/* 預覽面板樣式 */
+.demo-preview-drawer .ant-drawer-header {
+  background: #f9fafb;
+  border-bottom: 2px solid #000;
+  padding: 16px 20px;
+}
+
+.demo-preview-drawer .ant-drawer-body {
+  padding: 20px;
+  background: #f3f4f6;
+}
+
+.demo-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 700;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.demo-preview-indicator {
+  width: 4px;
+  height: 24px;
+  background: #08bdbd;
+  border-radius: 2px;
+}
+
+/* 預覽文檔卡片 */
+.demo-preview-doc-card {
+  background: white;
+  border: 2px solid #000;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 4px 4px 0px rgba(0,0,0,0.1);
+  margin-bottom: 16px;
+}
+
+.demo-preview-doc-header {
+  background: #000;
+  color: white;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.demo-preview-doc-header i {
+  font-size: 16px;
+}
+
+.demo-preview-page {
+  margin-left: auto;
+  background: #08bdbd;
+  color: #000;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 700;
+}
+
+.demo-preview-doc-content {
+  padding: 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  font-family: 'JetBrains Mono', monospace;
+  color: #6b7280;
+}
+
+.demo-preview-context-label {
+  font-size: 11px;
+  color: #9ca3af;
+  margin-bottom: 8px;
+  font-style: italic;
+}
+
+.demo-preview-highlight {
+  background: #fef3c7;
+  border-left: 4px solid #fbbf24;
+  padding: 8px 12px;
+  margin: 12px 0;
+  color: #1f2937;
+  font-weight: 500;
+}
+
+.demo-preview-text {
+  color: #6b7280;
+  margin-top: 12px;
+}
+
+.demo-preview-doc-footer {
+  border-top: 2px solid #f3f4f6;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.demo-preview-open-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: #08bdbd;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.demo-preview-open-btn:hover {
+  text-decoration: underline;
+  gap: 8px;
+}
+
+/* 動畫 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* 響應式 */
+@media (max-width: 768px) {
+  .reasoning-demo-container {
+    padding: 16px;
+  }
+  
+  .reasoning-demo-title {
+    font-size: 22px;
+  }
+  
+  .demo-user-content {
+    max-width: 85%;
+  }
+  
+  .demo-answer-text {
+    padding: 16px;
+  }
+  
+  .demo-quick-actions {
+    flex-direction: column;
+  }
+  
+  .demo-action-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}

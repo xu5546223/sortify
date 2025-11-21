@@ -2,42 +2,31 @@
 .auth-container {
   display: flex;
   min-height: 100vh;
-  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  background-color: var(--color-bg);
+  font-family: var(--font-body);
 }
 
 /* ===================== 左側品牌區域 ===================== */
 .auth-brand-section {
   flex: 1;
-  background: linear-gradient(135deg, #52b788 0%, #2d6a4f 100%);
-  color: white;
+  background-color: var(--color-primary); /* Bright Fern */
+  color: var(--color-black);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   padding: 60px 50px;
   position: relative;
   overflow: hidden;
+  border-right: var(--border-width-pc) solid var(--color-black);
+  /* 裝飾圖案: 點陣背景 */
+  background-image: radial-gradient(var(--color-black) 1px, transparent 1px);
+  background-size: 20px 20px;
 }
 
-.auth-brand-section::before {
-  content: '';
-  position: absolute;
-  top: -50%;
-  right: -10%;
-  width: 600px;
-  height: 600px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 50%;
-}
-
+/* 移除舊的裝飾圓圈 */
+.auth-brand-section::before,
 .auth-brand-section::after {
-  content: '';
-  position: absolute;
-  bottom: -50%;
-  left: -10%;
-  width: 500px;
-  height: 500px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 50%;
+  display: none;
 }
 
 /* 品牌 Logo */
@@ -54,108 +43,99 @@
   height: auto;
   object-fit: contain;
   display: block;
-}
-
-.logo-icon {
-  width: 80px;
-  height: 80px;
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 40px;
-  font-weight: bold;
-  backdrop-filter: blur(10px);
-  border: 2px solid rgba(255, 255, 255, 0.3);
+  /* Logo 可能需要黑白濾鏡以適應風格，視實際 Logo 顏色而定 */
+  /* filter: grayscale(100%) contrast(120%); */
 }
 
 /* 品牌名稱 */
 .brand-name {
-  font-size: 48px;
-  font-weight: 700;
+  font-family: var(--font-heading);
+  font-size: 64px;
+  font-weight: 900;
   margin: 0 0 10px 0;
-  letter-spacing: 2px;
+  letter-spacing: -2px;
   z-index: 1;
+  text-transform: uppercase;
+  text-shadow: 4px 4px 0px var(--color-white);
+  -webkit-text-stroke: 2px var(--color-black);
+  color: var(--color-black);
 }
 
 .brand-description {
+  font-family: var(--font-mono);
   font-size: 24px;
-  font-weight: 300;
-  margin: 0 0 5px 0;
-  opacity: 0.95;
+  font-weight: 700;
+  margin: 0 0 10px 0;
   z-index: 1;
+  background-color: var(--color-white);
+  display: inline-block;
+  padding: 4px 12px;
+  border: 2px solid var(--color-black);
+  box-shadow: 4px 4px 0px 0px var(--color-black);
 }
 
 .brand-subtitle {
-  font-size: 16px;
-  opacity: 0.8;
-  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+  margin: 10px 0 0 0;
   z-index: 1;
+  color: var(--color-black);
 }
 
-/* 品牌特性 - 水平排列，無容器背景 */
+/* 品牌特性 */
 .brand-features {
   display: flex;
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  gap: 48px;
+  gap: 24px;
   z-index: 1;
-  background: transparent;
-  padding: 0;
-  border-radius: 0;
-  margin-top: 28px;
-  border: none;
+  margin-top: 40px;
 }
 
 .feature {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  font-size: 15px;
-  font-weight: 600;
-  opacity: 0.95;
-  padding: 0;
-  color: #0f5132;
+  gap: 12px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-black);
+  background-color: var(--color-white);
+  border: 2px solid var(--color-black);
+  padding: 16px;
+  flex: 1;
+  box-shadow: 4px 4px 0px 0px var(--color-black);
+  transition: transform 0.1s;
+}
+
+.feature:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0px 0px var(--color-black);
 }
 
 .feature-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.25);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
-}
-
-/* 品牌頭部 */
-.brand-header {
-  z-index: 1;
+  font-size: 32px;
 }
 
 /* 品牌圖片容器 */
 .brand-image-container {
-  margin: 30px 0 40px 0;
-  border-radius: 16px;
-  overflow: hidden;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+  margin: 40px 0;
+  border: 3px solid var(--color-black);
+  background-color: var(--color-white);
+  box-shadow: 8px 8px 0px 0px var(--color-black);
   z-index: 1;
   min-height: 280px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.1);
+  position: relative;
 }
 
 .brand-image {
   width: 80%;
   height: auto;
   object-fit: contain;
-  display: block;
   max-width: 280px;
 }
 
@@ -166,33 +146,42 @@
   align-items: center;
   justify-content: center;
   padding: 40px 50px;
-  background: white;
+  background-color: var(--color-bg);
 }
 
 .form-wrapper {
   width: 100%;
-  max-width: 420px;
+  max-width: 480px;
+  background-color: var(--color-white);
+  border: 3px solid var(--color-black);
+  box-shadow: 12px 12px 0px 0px var(--color-black);
+  padding: 40px;
 }
 
 .form-title {
-  font-size: 32px;
-  font-weight: 700;
-  color: #333;
+  font-family: var(--font-heading);
+  font-size: 36px;
+  font-weight: 900;
+  color: var(--color-black);
   margin: 0 0 30px 0;
   text-align: left;
+  text-transform: uppercase;
+  border-bottom: 3px solid var(--color-black);
+  padding-bottom: 20px;
 }
 
 /* ===================== 表單群組 ===================== */
 .form-group {
-  margin-bottom: 20px;
+  margin-bottom: 24px;
 }
 
 .form-label {
   display: block;
-  font-size: 14px;
-  font-weight: 600;
-  color: #333;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-black);
   margin-bottom: 8px;
+  text-transform: uppercase;
 }
 
 .input-wrapper {
@@ -204,45 +193,53 @@
 .input-icon {
   position: absolute;
   left: 12px;
-  font-size: 18px;
+  font-size: 20px;
   pointer-events: none;
+  z-index: 2;
 }
 
 .form-input {
   width: 100%;
   padding: 12px 40px 12px 40px;
-  border: 2px solid #e0e0e0;
-  border-radius: 8px;
-  font-size: 14px;
-  transition: all 0.3s ease;
+  border: 2px solid var(--color-black);
+  border-radius: 0; /* 直角 */
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--color-black);
+  background-color: var(--color-white);
+  box-shadow: 4px 4px 0px 0px rgba(0,0,0,0.1);
+  transition: all 0.15s ease;
   box-sizing: border-box;
 }
 
 .form-input:focus {
   outline: none;
-  border-color: #52b788;
-  background-color: #f8fff8;
-  box-shadow: 0 0 0 3px rgba(82, 183, 136, 0.1);
+  border-color: var(--color-black);
+  box-shadow: 4px 4px 0px 0px var(--color-primary);
+  transform: translate(-2px, -2px);
 }
 
 .form-input::placeholder {
-  color: #999;
+  color: #888;
 }
 
 .password-toggle {
   position: absolute;
   right: 12px;
-  background: none;
+  background: var(--color-black);
+  color: var(--color-white);
   border: none;
-  color: #52b788;
   font-size: 12px;
+  font-weight: 700;
   cursor: pointer;
   padding: 4px 8px;
-  transition: color 0.2s;
+  transition: all 0.15s;
+  text-transform: uppercase;
 }
 
 .password-toggle:hover {
-  color: #2d6a4f;
+  background-color: var(--color-primary);
+  color: var(--color-black);
 }
 
 /* ===================== 表單選項 ===================== */
@@ -250,180 +247,232 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
+  margin-bottom: 30px;
   font-size: 14px;
+  font-weight: 600;
 }
 
 .remember-me {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   cursor: pointer;
-  color: #555;
+  color: var(--color-black);
   user-select: none;
 }
 
 .remember-me input {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-black);
+  background-color: var(--color-white);
   cursor: pointer;
-  width: 16px;
-  height: 16px;
+  position: relative;
+}
+
+.remember-me input:checked {
+  background-color: var(--color-active);
+}
+
+.remember-me input:checked::after {
+  content: '✓';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--color-white);
+  font-size: 14px;
+  font-weight: bold;
 }
 
 .forgot-password {
-  color: #52b788;
+  color: var(--color-black);
   text-decoration: none;
-  transition: color 0.2s;
+  border-bottom: 2px solid var(--color-primary);
+  transition: all 0.15s;
 }
 
 .forgot-password:hover {
-  color: #2d6a4f;
-  text-decoration: underline;
+  background-color: var(--color-primary);
+  color: var(--color-black);
 }
 
 /* ===================== 提交按鈕 ===================== */
 .submit-button {
   width: 100%;
-  padding: 14px;
-  background: linear-gradient(135deg, #52b788 0%, #2d6a4f 100%);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-size: 16px;
-  font-weight: 600;
+  padding: 16px;
+  background-color: var(--color-primary);
+  color: var(--color-black);
+  border: 2px solid var(--color-black);
+  border-radius: 0;
+  font-size: 18px;
+  font-weight: 800;
   cursor: pointer;
-  transition: all 0.3s ease;
-  margin-bottom: 20px;
+  transition: all 0.15s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  margin-bottom: 24px;
+  text-transform: uppercase;
+  box-shadow: 4px 4px 0px 0px var(--color-black);
 }
 
 .submit-button:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 20px rgba(82, 183, 136, 0.3);
+  background-color: var(--color-hover);
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0px 0px var(--color-black);
 }
 
 .submit-button:active:not(:disabled) {
-  transform: translateY(0);
+  transform: translate(2px, 2px);
+  box-shadow: 0px 0px 0px 0px var(--color-black);
 }
 
 .submit-button:disabled {
-  opacity: 0.7;
+  background-color: #ccc;
+  border-color: #999;
   cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
 }
 
 /* ===================== 分割線 ===================== */
 .divider {
   display: flex;
   align-items: center;
-  margin: 24px 0;
-  color: #999;
+  margin: 30px 0;
+  color: var(--color-black);
   font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .divider::before,
 .divider::after {
   content: '';
   flex: 1;
-  height: 1px;
-  background: #e0e0e0;
+  height: 2px;
+  background: var(--color-black);
 }
 
 .divider span {
   padding: 0 12px;
+  background-color: var(--color-white);
+  border: 2px solid var(--color-black);
+  padding: 4px 12px;
+  margin: 0 10px;
+  box-shadow: 2px 2px 0px 0px var(--color-black);
 }
 
 /* ===================== OAuth 按鈕 ===================== */
 .oauth-buttons {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-bottom: 24px;
+  gap: 16px;
+  margin-bottom: 30px;
 }
 
 .oauth-button-placeholder {
   padding: 16px;
   background-color: #fff3cd;
   color: #856404;
-  border-radius: 8px;
+  border: 2px solid var(--color-black);
   text-align: center;
-  border: 1px solid #ffeaa7;
   font-size: 14px;
+  box-shadow: 4px 4px 0px 0px var(--color-black);
 }
 
-.oauth-button-placeholder p {
-  margin: 0 0 4px 0;
-  font-weight: 500;
-}
-
-.oauth-button-placeholder small {
-  display: block;
-  opacity: 0.8;
-}
-
-/* 為 Google 登錄按鈕添加樣式 */
+/* Google 按鈕容器 */
 .oauth-buttons > div {
   display: flex;
   justify-content: center !important;
+  /* 覆蓋 Google 預設樣式 */
+  border: 2px solid var(--color-black) !important;
+  box-shadow: 4px 4px 0px 0px var(--color-black) !important;
+  transition: all 0.15s !important;
+  background: white !important;
+  border-radius: 0 !important; /* 直角 */
+  padding: 0 !important; /* 移除 padding 以適應 Google iframe */
+  overflow: hidden;
 }
 
-.oauth-buttons button {
-  width: 100%;
-  padding: 12px;
-  border: 2px solid #e0e0e0;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  background: white;
-  transition: all 0.3s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
+.oauth-buttons > div:hover {
+  transform: translate(-2px, -2px) !important;
+  box-shadow: 6px 6px 0px 0px var(--color-black) !important;
+  background-color: var(--color-hover) !important;
 }
 
-.oauth-buttons button:hover {
-  border-color: #52b788;
-  background-color: #f8fff8;
+/* 強制 Google 登入按鈕 iframe 填滿容器並保持風格 */
+.oauth-buttons iframe {
+  margin: 0 !important;
+  display: block !important;
+  width: 100% !important;
+  border-radius: 0 !important;
 }
 
 /* ===================== 驗證文本 ===================== */
 .error-message {
   padding: 12px;
-  background-color: #ffebee;
-  color: #c62828;
-  border-radius: 8px;
-  margin-bottom: 20px;
+  background-color: var(--color-white);
+  color: var(--color-error);
+  border: 2px solid var(--color-black);
+  margin-bottom: 24px;
   font-size: 14px;
-  border-left: 4px solid #c62828;
+  font-weight: 700;
+  box-shadow: 4px 4px 0px 0px var(--color-error);
+  display: flex;
+  align-items: center;
+}
+
+.error-message::before {
+  content: '!';
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  background-color: var(--color-error);
+  color: white;
+  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  margin-right: 10px;
+  border: 2px solid var(--color-black);
 }
 
 .success-message {
   padding: 12px;
-  background-color: #e8f5e9;
-  color: #2e7d32;
-  border-radius: 8px;
-  margin-bottom: 20px;
+  background-color: var(--color-white);
+  color: #0f5132;
+  border: 2px solid var(--color-black);
+  margin-bottom: 24px;
   font-size: 14px;
-  border-left: 4px solid #2e7d32;
+  font-weight: 700;
+  box-shadow: 4px 4px 0px 0px var(--color-primary);
 }
 
 /* ===================== 帳號切換 ===================== */
 .auth-switch {
   text-align: center;
   font-size: 14px;
-  color: #666;
+  color: var(--color-black);
+  font-weight: 600;
+  border-top: 2px solid var(--color-black);
+  padding-top: 20px;
 }
 
 .auth-link {
-  color: #52b788;
+  color: var(--color-black);
   text-decoration: none;
-  font-weight: 600;
-  transition: color 0.2s;
-  margin-left: 4px;
+  font-weight: 800;
+  background-color: var(--color-primary);
+  padding: 2px 6px;
+  margin-left: 8px;
+  border: 2px solid var(--color-black);
+  box-shadow: 2px 2px 0px 0px var(--color-black);
+  transition: all 0.15s;
 }
 
 .auth-link:hover {
-  color: #2d6a4f;
-  text-decoration: underline;
+  background-color: var(--color-hover);
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0px 0px var(--color-black);
 }
 
 /* ===================== 響應式設計 ===================== */
@@ -434,127 +483,26 @@
 
   .auth-brand-section {
     padding: 40px 30px;
-    min-height: 40vh;
-  }
-
-  .brand-name {
-    font-size: 36px;
-  }
-
-  .brand-description {
-    font-size: 18px;
+    min-height: auto;
+    border-right: none;
+    border-bottom: 3px solid var(--color-black);
   }
 
   .auth-form-section {
-    padding: 30px 20px;
-    min-height: 60vh;
+    padding: 40px 20px;
   }
 
   .form-wrapper {
     max-width: 100%;
-  }
-
-  /* 小螢幕回復為直排 */
-  .brand-features {
-    flex-direction: column;
-    gap: 12px;
   }
 }
 
 @media (max-width: 768px) {
-  .auth-container {
-    flex-direction: column;
-  }
-
-  .auth-brand-section {
-    padding: 30px 20px;
-  }
-
-  .logo-icon {
-    width: 60px;
-    height: 60px;
-    font-size: 30px;
-  }
-
   .brand-name {
-    font-size: 28px;
+    font-size: 48px;
   }
-
-  .brand-description {
-    font-size: 16px;
-  }
-
-  .brand-subtitle {
-    font-size: 14px;
-  }
-
+  
   .brand-features {
-    gap: 10px;
-  }
-
-  .feature {
-    font-size: 13px;
-  }
-
-  .feature-icon {
-    font-size: 18px;
-  }
-
-  .auth-form-section {
-    padding: 25px 15px;
-  }
-
-  .form-wrapper {
-    max-width: 100%;
-  }
-
-  .form-title {
-    font-size: 24px;
-    margin-bottom: 20px;
-  }
-}
-
-@media (max-width: 480px) {
-  .auth-brand-section {
-    padding: 25px 15px;
-  }
-
-  .logo-icon {
-    width: 50px;
-    height: 50px;
-    font-size: 24px;
-  }
-
-  .brand-name {
-    font-size: 24px;
-    margin-bottom: 8px;
-  }
-
-  .brand-description {
-    font-size: 14px;
-    margin-bottom: 4px;
-  }
-
-  .brand-subtitle {
-    font-size: 12px;
-  }
-
-  .auth-form-section {
-    padding: 20px 12px;
-  }
-
-  .form-title {
-    font-size: 20px;
-    margin-bottom: 18px;
-  }
-
-  .form-input {
-    padding: 10px 36px 10px 36px;
-    font-size: 13px;
-  }
-
-  .submit-button {
-    padding: 12px;
-    font-size: 14px;
+    flex-wrap: wrap;
   }
 }

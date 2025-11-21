@@ -3,10 +3,10 @@ import ConnectionPage from '../pages/ConnectionPage';
 import SettingsPage from '../pages/SettingsPage';
 import DocumentsPage from '../pages/DocumentsPage';
 import LogsPage from '../pages/LogsPage';
-import VectorDatabasePage from '../pages/VectorDatabasePage';
-import AIQAPage from '../pages/AIQAPage';
+import VectorDatabasePage from '../pages/VectorDatabasePage.neo';
+import AIQAPage from '../pages/AIQAPage.neo';
 import CacheMonitoring from '../pages/CacheMonitoring';
-import { ThemeShowcasePage } from '../pages/ThemeShowcasePage';
+import ThemeSettingsPage from '../pages/ThemeSettingsPage';
 import React from 'react'; // React 可能被 React.ComponentType<any> 需要
 
 // 導航項目定義
@@ -24,5 +24,5 @@ export const navItems: Array<{
   { path: "/cache-monitoring", name: "緩存監控", icon: "fa-memory", component: CacheMonitoring },
   { path: "/settings", name: "系統設定", icon: "fa-sliders-h", component: SettingsPage },
   { path: "/logs", name: "系統日誌", icon: "fa-clipboard-list", component: LogsPage },
-  { path: "/theme", name: "主題管理", icon: "fa-palette", component: ThemeShowcasePage },
+  { path: "/theme", name: "主題管理", icon: "fa-palette", component: ThemeSettingsPage },
 ]; 

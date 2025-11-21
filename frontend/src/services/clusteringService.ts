@@ -205,6 +205,38 @@ export const pollClusteringStatus = (
   return stopPolling;
 };
 
+/**
+ * 獲取資料夾顯示順序
+ * @returns 資料夾ID陣列（按顯示順序排列）
+ */
+export const getFolderDisplayOrder = async (): Promise<string[]> => {
+  try {
+    const response = await apiClient.get<string[]>('/clustering/folder-order');
+    return response.data;
+  } catch (error: any) {
+    // 如果沒有設置過順序，返回空陣列
+    if (error.response?.status === 404) {
+      return [];
+    }
+    throw error;
+  }
+};
+
+/**
+ * 保存資料夾顯示順序
+ * @param folderOrder 資料夾ID陣列（按顯示順序排列）
+ * @returns 保存結果
+ */
+export const saveFolderDisplayOrder = async (
+  folderOrder: string[]
+): Promise<{ success: boolean; message: string }> => {
+  const response = await apiClient.post(
+    '/clustering/folder-order',
+    folderOrder
+  );
+  return response.data;
+};
+
 export default {
   triggerClustering,
   triggerHierarchicalClustering,
@@ -216,5 +248,7 @@ export default {
   getClustersTree,
   getClusteringStatistics,
   pollClusteringStatus,
+  getFolderDisplayOrder,
+  saveFolderDisplayOrder,
 };
 

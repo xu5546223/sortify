@@ -1,0 +1,463 @@
+/**
+ * AI Sort Animation Styles
+ * Neo-Brutalism 風格文件分類動畫
+ */
+
+/* 主要容器 */
+.ai-sort-factory-container {
+  position: relative !important;
+  width: 100% !important;
+  height: 400px !important;
+  background: #f3f4f6 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+}
+
+/* 1. 傳送帶軌道 */
+.ai-sort-conveyor-track {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 10px;
+  background: #000000;
+  transform: translateY(-50%);
+  z-index: 0;
+}
+
+/* 2. AI 核心掃描儀 */
+.ai-sort-scanner-box {
+  position: relative;
+  width: 140px;
+  height: 140px;
+  background: #ffffff;
+  border: 3px solid #000000;
+  box-shadow: 4px 4px 0px 0px #000000;
+  z-index: 200 !important; /* 確保掃描儀在文件上方 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 掃描光束 - 隱藏不用 */
+.ai-sort-scan-beam {
+  display: none;
+}
+
+/* 掃描儀眼睛外圈 */
+.ai-sort-scanner-eye {
+  width: 60px !important;
+  height: 60px !important;
+  background: #000000 !important;
+  border-radius: 50% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  animation: ai-sort-eyePulse 1.2s infinite ease-in-out !important;
+}
+
+/* 掃描儀眼睛瞳孔 - 綠色閃爍 */
+.ai-sort-scanner-pupil {
+  width: 20px !important;
+  height: 20px !important;
+  background: #29bf12 !important;
+  border-radius: 50% !important;
+  animation: ai-sort-pupilZap 1.8s infinite ease-in-out !important; /* 放慢扎眼速度 */
+  box-shadow: 0 0 10px #29bf12 !important;
+}
+
+/* 3. 文件 */
+.ai-sort-file-item {
+  position: absolute !important;
+  width: 60px !important;
+  height: 70px !important;
+  background: #ffffff; /* 不用 !important，讓動畫可以改變顏色 */
+  border: 2px solid #000000 !important;
+  border-radius: 6px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 4px !important;
+  z-index: 10 !important; /* 低於資料夾(15)，在資料夾下面 */
+  will-change: left, top, background, transform !important;
+  box-shadow: 2px 2px 0 rgba(0,0,0,0.1) !important;
+  /* 初始位置由動畫控制 */
+}
+
+/* 文件圖標樣式 */
+.ai-sort-file-item i {
+  transition: color 0.3s ease;
+}
+
+.ai-sort-file-1 { 
+  animation: ai-sort-pathTypeA 5s infinite linear !important;
+  animation-fill-mode: both !important;
+}
+.ai-sort-file-2 { 
+  animation: ai-sort-pathTypeB 5s infinite linear 1.3s !important;
+  animation-fill-mode: both !important;
+}
+.ai-sort-file-3 { 
+  animation: ai-sort-pathTypeC 5s infinite linear 2.6s !important;
+  animation-fill-mode: both !important;
+}
+
+/* 4. 資料夾接收端 */
+.ai-sort-bucket-container {
+  position: absolute;
+  right: 50px;
+  height: 300px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  z-index: 15;
+}
+
+.ai-sort-folder-bucket {
+  width: 100px;
+  height: 80px;
+  background: #ffffff;
+  border: 3px solid #000000;
+  box-shadow: 4px 4px 0px rgba(0,0,0,0.2);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 資料夾開口效果 */
+.ai-sort-folder-bucket::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 40px;
+  background: #000000;
+  border-radius: 0 4px 4px 0;
+}
+
+.ai-sort-bucket-teal { 
+  border-color: #000000; 
+}
+.ai-sort-bucket-green { 
+  border-color: #000000; 
+}
+.ai-sort-bucket-orange { 
+  border-color: #000000; 
+}
+
+.ai-sort-folder-label {
+  position: absolute;
+  bottom: -15px;
+  right: -10px;
+  padding: 4px 8px;
+  border: 2px solid #000000;
+  font-size: 12px;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+
+.ai-sort-label-teal { 
+  background: #08bdbd; 
+  color: white; 
+}
+.ai-sort-label-green { 
+  background: #29bf12; 
+  color: black; 
+}
+.ai-sort-label-orange { 
+  background: #ff9914; 
+  color: black; 
+}
+
+/* 狀態文字 */
+.ai-sort-status-text {
+  position: absolute;
+  top: -40px;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: bold;
+  background: #000000;
+  color: #abff4f;
+  padding: 4px 12px;
+  border: 2px solid #abff4f;
+  box-shadow: 4px 4px 0px rgba(0,0,0,0.2);
+}
+
+.ai-sort-status-text::after {
+  content: '_';
+  animation: ai-sort-blink 1s infinite;
+}
+
+/* ==================== Animations ==================== */
+
+/* 眼睛外圈：上下跳動像球 */
+@keyframes ai-sort-eyePulse {
+  0%, 100% { 
+    transform: translateY(0) scale(1, 1);
+    box-shadow: 0 0 0 0 rgba(41, 191, 18, 0);
+  }
+  25% { 
+    transform: translateY(-15px) scale(1, 1.1); /* 增大跳動幅度 */
+    box-shadow: 0 0 15px 3px rgba(41, 191, 18, 0.2);
+  }
+  50% { 
+    transform: translateY(0) scale(1.1, 0.9); /* 壓扁更明顯 */
+    box-shadow: 0 0 20px 5px rgba(41, 191, 18, 0.4);
+  }
+  75% { 
+    transform: translateY(-8px) scale(1, 1.05); /* 小跳 */
+    box-shadow: 0 0 10px 2px rgba(41, 191, 18, 0.2);
+  }
+}
+
+/* 瞳孔扎眼效果 - 快速放大縮小並閃爍 */
+@keyframes ai-sort-pupilZap {
+  0%, 100% { 
+    transform: scale(1);
+    box-shadow: 0 0 10px #29bf12;
+    background: #29bf12;
+  }
+  10% { 
+    transform: scale(2);
+    box-shadow: 0 0 30px #29bf12, 0 0 50px #29bf12;
+    background: #abff4f;
+  }
+  20% { 
+    transform: scale(0.5);
+    box-shadow: 0 0 5px #29bf12;
+    background: #29bf12;
+  }
+  35% { 
+    transform: scale(1.5);
+    box-shadow: 0 0 25px #29bf12, 0 0 40px #29bf12;
+    background: #29bf12;
+  }
+  50% { 
+    transform: scale(0.8);
+    box-shadow: 0 0 8px #29bf12;
+    background: #29bf12;
+  }
+  65% { 
+    transform: scale(1.3);
+    box-shadow: 0 0 20px #29bf12;
+    background: #29bf12;
+  }
+  80% { 
+    transform: scale(1);
+    box-shadow: 0 0 10px #29bf12;
+    background: #29bf12;
+  }
+}
+
+@keyframes ai-sort-blink {
+  50% { opacity: 0; }
+}
+
+/* 路徑 A: 飛往上方資料夾 (FINANCE - Teal) */
+@keyframes ai-sort-pathTypeA {
+  0% { 
+    left: -60px; 
+    top: 50%;
+    margin-top: -35px;
+    transform: rotate(0deg);
+    background: white;
+    opacity: 1;
+  }
+  25% { 
+    left: 200px; 
+    top: 50%;
+    margin-top: -35px;
+    transform: rotate(0deg);
+    background: white;
+    opacity: 1;
+  }
+  40% { 
+    left: 350px; 
+    top: 50%;
+    margin-top: -35px;
+    transform: rotate(0deg);
+    background: #abff4f; /* 掃描時變綠黃色 */
+    opacity: 1;
+  }
+  55% { 
+    left: 480px; 
+    top: 50%;
+    margin-top: -35px;
+    transform: rotate(0deg);
+    background: #08bdbd; /* 變成目標色 Teal */
+    opacity: 1; /* 保持清晰 */
+  }
+  75% { 
+    left: 620px; 
+    top: 24%;  /* 調整向上飛的位置 */
+    margin-top: -35px;
+    transform: rotate(-10deg); /* 輕微向左旋轉 */
+    background: #08bdbd;
+    opacity: 1; /* 保持清晰 */
+  }
+  90% { 
+    left: 700px; 
+    top: 20%; /* 不要太靠上 */
+    margin-top: -35px;
+    transform: rotate(-10deg);
+    background: #08bdbd;
+    opacity: 0.5; /* 接近資料夾時開始變淡 */
+  }
+  100% { 
+    left: 750px; 
+    top: 20%;
+    margin-top: -35px;
+    transform: rotate(-10deg);
+    opacity: 0; /* 完全消失，進入資料夾 */
+  }
+}
+
+/* 路徑 B: 飛往下方資料夾 (REVIEW - Orange) */
+@keyframes ai-sort-pathTypeB {
+  0% { 
+    left: -60px; 
+    top: 50%;
+    margin-top: -35px;
+    transform: rotate(0deg);
+    background: white;
+    opacity: 1;
+  }
+  25% { 
+    left: 200px; 
+    top: 50%;
+    margin-top: -35px;
+    transform: rotate(0deg);
+    background: white;
+    opacity: 1;
+  }
+  40% { 
+    left: 350px; 
+    top: 50%;
+    margin-top: -35px;
+    transform: rotate(0deg);
+    background: #abff4f;
+    opacity: 1;
+  }
+  55% { 
+    left: 480px; 
+    top: 50%;
+    margin-top: -35px;
+    transform: rotate(0deg);
+    background: #ff9914; /* 變成 Orange */
+    opacity: 1; /* 保持清晰 */
+  }
+  75% { 
+    left: 620px; 
+    top: 76%;  /* 調整向下飛的位置 */
+    margin-top: -35px;
+    transform: rotate(10deg); /* 輕微向右旋轉 */
+    background: #ff9914;
+    opacity: 1; /* 保持清晰 */
+  }
+  90% { 
+    left: 700px; 
+    top: 78%; /* 不要太靠下 */
+    margin-top: -35px;
+    transform: rotate(10deg);
+    background: #ff9914;
+    opacity: 0.5; /* 接近資料夾時開始變淡 */
+  }
+  100% { 
+    left: 750px; 
+    top: 78%;
+    margin-top: -35px;
+    transform: rotate(10deg);
+    opacity: 0; /* 完全消失，進入資料夾 */
+  }
+}
+
+/* 路徑 C: 飛往中間資料夾 (DOCS - Green) */
+@keyframes ai-sort-pathTypeC {
+  0% { 
+    left: -60px; 
+    top: 50%;
+    margin-top: -35px;
+    transform: rotate(0deg);
+    background: white;
+    opacity: 1;
+  }
+  25% { 
+    left: 200px; 
+    top: 50%;
+    margin-top: -35px;
+    transform: rotate(0deg);
+    background: white;
+    opacity: 1;
+  }
+  40% { 
+    left: 350px; 
+    top: 50%;
+    margin-top: -35px;
+    transform: rotate(0deg);
+    background: #abff4f;
+    opacity: 1;
+  }
+  55% { 
+    left: 480px; 
+    top: 50%;
+    margin-top: -35px;
+    transform: rotate(0deg);
+    background: #29bf12; /* 變成 Green */
+    opacity: 1; /* 保持清晰 */
+  }
+  75% { 
+    left: 620px; 
+    top: 50%;  /* 直行 */
+    margin-top: -35px;
+    transform: rotate(0deg); /* 不旋轉，直行 */
+    background: #29bf12;
+    opacity: 1; /* 保持清晰 */
+  }
+  90% { 
+    left: 700px; 
+    top: 50%;
+    margin-top: -35px;
+    transform: rotate(0deg);
+    background: #29bf12;
+    opacity: 0.5; /* 接近資料夾時開始變淡 */
+  }
+  100% { 
+    left: 750px; 
+    top: 50%;
+    margin-top: -35px;
+    transform: rotate(0deg);
+    opacity: 0; /* 完全消失，進入資料夾 */
+  }
+}
+
+/* 響應式調整 */
+@media (max-width: 768px) {
+  .ai-sort-factory-container {
+    height: 300px;
+  }
+  
+  .ai-sort-scanner-box {
+    width: 100px;
+    height: 100px;
+  }
+  
+  .ai-sort-bucket-container {
+    right: 30px;
+  }
+  
+  .ai-sort-folder-bucket {
+    width: 80px;
+    height: 60px;
+  }
+  
+  .ai-sort-file-item {
+    width: 40px;
+    height: 50px;
+  }
+}

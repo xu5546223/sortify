@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Tabs, Typography, Spin, Empty, Tag, Button, Descriptions, Alert, Space, Divider, Card } from 'antd';
+import { Tabs, Typography, Spin, Empty, Tag, Button, Descriptions, Alert, Space, Divider, Card } from 'antd';
 import { InfoCircleOutlined, ThunderboltOutlined, FileTextOutlined, BulbOutlined } from '@ant-design/icons';
 import type { Document, SemanticSearchResult } from '../types/apiTypes';
 
@@ -180,155 +180,170 @@ const SearchResultDetailModal: React.FC<SearchResultDetailModalProps> = ({
     );
   };
 
+  if (!open) {
+    return null;
+  }
+
   return (
-    <Modal
-      title={
-        <div className="flex items-center space-x-2">
-          <FileTextOutlined />
-          <span>文檔詳情: {document?.filename || document?.id || '加載中...'}</span>
-          {getDocumentSearchResults().length > 0 && (
-            <Tag color="blue">
-              {getDocumentSearchResults().length} 個搜索匹配
-            </Tag>
+    <div
+      className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-50"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e: React.MouseEvent) => e.stopPropagation()}
+        className="w-full max-w-7xl max-h-[95vh] bg-white border-3 border-neo-black shadow-[8px_8px_0px_0px_black] flex flex-col"
+      >
+        {/* Header */}
+        <div className="bg-neo-primary text-neo-white px-6 py-4 border-b-3 border-neo-black flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <FileTextOutlined className="text-xl" />
+            <h2 className="font-display font-bold text-lg">
+              文檔詳情: {document?.filename || document?.id || '加載中...'}
+            </h2>
+            {getDocumentSearchResults().length > 0 && (
+              <span className="px-3 py-1 text-xs font-black border-2 border-neo-black bg-neo-lime text-neo-black">
+                {getDocumentSearchResults().length} 個搜索匹配
+              </span>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            className="flex-shrink-0 w-10 h-10 flex items-center justify-center bg-red-600 text-white border-2 border-neo-black shadow-neo-sm hover:bg-red-700 transition-colors font-bold text-xl"
+            aria-label="關閉"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-6 bg-neo-bg">
+          {isLoading && !document ? (
+            <div className="text-center p-8"><Spin size="large" tip="正在加載詳細信息..." /></div>
+          ) : document ? (
+            <Tabs defaultActiveKey="summaryDetails">
+              {/* 搜索匹配上下文標籤頁 - 如果有搜索結果就顯示 */}
+              {getDocumentSearchResults().length > 0 && (
+                <TabPane 
+                  tab={
+                    <Space>
+                      <BulbOutlined />
+                      搜索匹配上下文
+                      <Tag color="blue">{getDocumentSearchResults().length}</Tag>
+                    </Space>
+                  } 
+                  key="searchContext"
+                >
+                  {renderSearchContextTab()}
+                </TabPane>
+              )}
+              
+              <TabPane tab="向量化內容" key="summaryDetails">
+                <Title level={5}>用於向量化的摘要文本</Title>
+                <div className="bg-yellow-50 p-2 mb-3 rounded text-xs">
+                  <InfoCircleOutlined className="mr-1" /> 文檔ID: {document.id}
+                </div>
+                <Paragraph copyable className="bg-gray-100 p-3 rounded">
+                  {getSummaryText()}
+                </Paragraph>
+                {document.analysis?.ai_analysis_output && (
+                  <div className="mt-4">
+                    <Title level={5}>向量化詳細內容</Title>
+                    <div className="bg-gray-50 p-3 rounded border border-gray-200">
+                      <Tabs type="card" size="small">
+                        <TabPane tab="文本摘要" key="textSummary">
+                          {document.analysis.ai_analysis_output.initial_summary ||
+                           document.analysis.ai_analysis_output.key_information?.content_summary ? (
+                            <Paragraph copyable className="whitespace-pre-wrap">
+                              {document.analysis.ai_analysis_output.initial_summary ||
+                               document.analysis.ai_analysis_output.key_information?.content_summary}
+                            </Paragraph>
+                          ) : (
+                            <Empty description="無文本摘要信息" />
+                          )}
+                        </TabPane>
+                        <TabPane tab="關鍵信息" key="fullData">
+                          <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                            {renderKeyInformation()}
+                          </div>
+                        </TabPane>
+                      </Tabs>
+                    </div>
+                  </div>
+                )}
+                {document.analysis?.ai_analysis_output?.key_information?.semantic_tags && (
+                  <>
+                    <Title level={5} style={{ marginTop: 16 }}>相關關鍵詞</Title>
+                    <div>
+                      {Array.isArray(document.analysis.ai_analysis_output.key_information.semantic_tags)
+                        ? document.analysis.ai_analysis_output.key_information.semantic_tags.map((term: string, index: number) => (
+                            <Tag key={index} color="cyan">{term}</Tag>
+                          ))
+                        : <Tag color="cyan">{document.analysis.ai_analysis_output.key_information.semantic_tags.toString()}</Tag>}
+                    </div>
+                  </>
+                )}
+              </TabPane>
+              
+              <TabPane tab="原始提取文本" key="extractedText">
+                <Title level={5}>原始提取文本</Title>
+                {document.extracted_text ? (
+                  <Paragraph
+                    className="bg-gray-100 p-3 rounded whitespace-pre-wrap max-h-96 overflow-y-auto"
+                    copyable
+                  >
+                    {document.extracted_text}
+                  </Paragraph>
+                ) : (
+                  document.file_type?.startsWith('image/') ? (
+                    <Empty
+                      description={(
+                        <div>
+                          <p>此為圖片文件，通常不直接包含長篇提取文本。</p>
+                          {document.analysis?.ai_analysis_output?.extracted_text ? (
+                            <p>AI分析結果中提取的文本如下：</p>
+                          ) : (
+                            <p>如需查看可能的OCR文本，請檢查 "AI 完整分析 (JSON)" 標籤頁中的 `extracted_text` (如果存在)。</p>
+                          )}
+                        </div>
+                      )}
+                    />
+                  ) : (
+                    <Empty description="沒有可用的原始提取文本" />
+                  )
+                )}
+                {!document.extracted_text && document.analysis?.ai_analysis_output?.extracted_text && (
+                  <div className='mt-4'>
+                    <Title level={5}>AI分析提取的文本 (OCR)</Title>
+                    <Paragraph
+                      className="bg-gray-100 p-3 rounded whitespace-pre-wrap max-h-96 overflow-y-auto"
+                      copyable
+                    >
+                      {document.analysis.ai_analysis_output.extracted_text}
+                    </Paragraph>
+                  </div>
+                )}
+              </TabPane>
+              
+              <TabPane tab="AI 完整分析 (JSON)" key="aiAnalysis">
+                <Title level={5}>AI 完整分析結果</Title>
+                {document.analysis?.ai_analysis_output ? (
+                  <div className="bg-gray-100 p-3 rounded max-h-[50vh] overflow-y-auto">
+                    <pre className="whitespace-pre-wrap break-all">
+                      {JSON.stringify(document.analysis.ai_analysis_output, null, 2)}
+                    </pre>
+                  </div>
+                ) : (
+                  <Empty description="沒有可用的 AI 分析結果" />
+                )}
+              </TabPane>
+            </Tabs>
+          ) : (
+            <Empty description="無法加載文檔詳細信息。" />
           )}
         </div>
-      }
-      open={open}
-      onCancel={onClose}
-      footer={[
-        <Button key="close" onClick={onClose}>
-          關閉
-        </Button>
-      ]}
-      width={1200}
-      className="document-detail-modal"
-      styles={{ body: { maxHeight: '75vh', overflowY: 'auto' } }}
-    >
-      {isLoading && !document ? (
-        <div className="text-center p-8"><Spin size="large" tip="正在加載詳細信息..." /></div>
-      ) : document ? (
-        <Tabs defaultActiveKey="summaryDetails">
-          {/* 搜索匹配上下文標籤頁 - 如果有搜索結果就顯示 */}
-          {getDocumentSearchResults().length > 0 && (
-            <TabPane 
-              tab={
-                <Space>
-                  <BulbOutlined />
-                  搜索匹配上下文
-                  <Tag color="blue">{getDocumentSearchResults().length}</Tag>
-                </Space>
-              } 
-              key="searchContext"
-            >
-              {renderSearchContextTab()}
-            </TabPane>
-          )}
-          
-          <TabPane tab="向量化內容" key="summaryDetails">
-            <Title level={5}>用於向量化的摘要文本</Title>
-            <div className="bg-yellow-50 p-2 mb-3 rounded text-xs">
-              <InfoCircleOutlined className="mr-1" /> 文檔ID: {document.id}
-            </div>
-            <Paragraph copyable className="bg-gray-100 p-3 rounded">
-              {getSummaryText()}
-            </Paragraph>
-            {document.analysis?.ai_analysis_output && (
-              <div className="mt-4">
-                <Title level={5}>向量化詳細內容</Title>
-                <div className="bg-gray-50 p-3 rounded border border-gray-200">
-                  <Tabs type="card" size="small">
-                    <TabPane tab="文本摘要" key="textSummary">
-                      {document.analysis.ai_analysis_output.initial_summary ||
-                       document.analysis.ai_analysis_output.key_information?.content_summary ? (
-                        <Paragraph copyable className="whitespace-pre-wrap">
-                          {document.analysis.ai_analysis_output.initial_summary ||
-                           document.analysis.ai_analysis_output.key_information?.content_summary}
-                        </Paragraph>
-                      ) : (
-                        <Empty description="無文本摘要信息" />
-                      )}
-                    </TabPane>
-                    <TabPane tab="關鍵信息" key="fullData">
-                      <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                        {renderKeyInformation()}
-                      </div>
-                    </TabPane>
-                  </Tabs>
-                </div>
-              </div>
-            )}
-            {document.analysis?.ai_analysis_output?.key_information?.semantic_tags && (
-              <>
-                <Title level={5} style={{ marginTop: 16 }}>相關關鍵詞</Title>
-                <div>
-                  {Array.isArray(document.analysis.ai_analysis_output.key_information.semantic_tags)
-                    ? document.analysis.ai_analysis_output.key_information.semantic_tags.map((term: string, index: number) => (
-                        <Tag key={index} color="cyan">{term}</Tag>
-                      ))
-                    : <Tag color="cyan">{document.analysis.ai_analysis_output.key_information.semantic_tags.toString()}</Tag>}
-                </div>
-              </>
-            )}
-          </TabPane>
-          
-          <TabPane tab="原始提取文本" key="extractedText">
-            <Title level={5}>原始提取文本</Title>
-            {document.extracted_text ? (
-              <Paragraph
-                className="bg-gray-100 p-3 rounded whitespace-pre-wrap max-h-96 overflow-y-auto"
-                copyable
-              >
-                {document.extracted_text}
-              </Paragraph>
-            ) : (
-              document.file_type?.startsWith('image/') ? (
-                <Empty
-                  description={(
-                    <div>
-                      <p>此為圖片文件，通常不直接包含長篇提取文本。</p>
-                      {document.analysis?.ai_analysis_output?.extracted_text ? (
-                        <p>AI分析結果中提取的文本如下：</p>
-                      ) : (
-                        <p>如需查看可能的OCR文本，請檢查 "AI 完整分析 (JSON)" 標籤頁中的 `extracted_text` (如果存在)。</p>
-                      )}
-                    </div>
-                  )}
-                />
-              ) : (
-                <Empty description="沒有可用的原始提取文本" />
-              )
-            )}
-            {!document.extracted_text && document.analysis?.ai_analysis_output?.extracted_text && (
-              <div className='mt-4'>
-                <Title level={5}>AI分析提取的文本 (OCR)</Title>
-                <Paragraph
-                  className="bg-gray-100 p-3 rounded whitespace-pre-wrap max-h-96 overflow-y-auto"
-                  copyable
-                >
-                  {document.analysis.ai_analysis_output.extracted_text}
-                </Paragraph>
-              </div>
-            )}
-          </TabPane>
-          
-          <TabPane tab="AI 完整分析 (JSON)" key="aiAnalysis">
-            <Title level={5}>AI 完整分析結果</Title>
-            {document.analysis?.ai_analysis_output ? (
-              <div className="bg-gray-100 p-3 rounded max-h-[50vh] overflow-y-auto">
-                <pre className="whitespace-pre-wrap break-all">
-                  {JSON.stringify(document.analysis.ai_analysis_output, null, 2)}
-                </pre>
-              </div>
-            ) : (
-              <Empty description="沒有可用的 AI 分析結果" />
-            )}
-          </TabPane>
-        </Tabs>
-      ) : (
-        <Empty description="無法加載文檔詳細信息。" />
-      )}
-    </Modal>
+      </div>
+    </div>
   );
 };
 
-export default SearchResultDetailModal; 
+export default SearchResultDetailModal;

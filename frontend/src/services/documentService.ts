@@ -10,6 +10,35 @@ import type {
 } from '../types/apiTypes';
 import axios from 'axios'; // For isAxiosError check in deleteDocument
 
+/**
+ * 通过 ID 获取单个文档
+ */
+export const getDocumentById = async (documentId: string): Promise<Document | null> => {
+  try {
+    const response = await apiClient.get<Document>(`/documents/${documentId}`);
+    return response.data;
+  } catch (error) {
+    console.error(`获取文档 ${documentId} 失败:`, error);
+    return null;
+  }
+};
+
+/**
+ * 批量获取多个文档（通过 ID 列表）
+ */
+export const getDocumentsByIds = async (documentIds: string[]): Promise<Document[]> => {
+  try {
+    // 并行获取所有文档
+    const promises = documentIds.map(id => getDocumentById(id));
+    const results = await Promise.all(promises);
+    // 过滤掉 null 值
+    return results.filter((doc): doc is Document => doc !== null);
+  } catch (error) {
+    console.error('批量获取文档失败:', error);
+    return [];
+  }
+};
+
 export const getDocuments = async (
     searchTerm?: string,
     status?: DocumentStatus | 'all',
@@ -41,8 +70,14 @@ export const getDocuments = async (
                 params.sort_order = sortOrder; 
             }
         }
-        if (clusterId) {
-            params.cluster_id = clusterId;
+        // 處理 cluster_id 過濾：
+        // - undefined: 不過濾，返回所有文件
+        // - null: 過濾未分類文件（cluster_id 為 null）
+        // - string: 過濾指定 cluster_id 的文件
+        if (clusterId !== undefined) {
+            // 當 clusterId 為 null 時，使用字符串 'null' 來明確告訴後端查詢未分類文件
+            // axios 會忽略 null 值，所以必須轉換為字符串
+            params.cluster_id = clusterId === null ? 'null' : clusterId;
         }
 
         const response = await apiClient.get<{ items?: Document[], total?: number }>('/documents/', { params });
@@ -135,41 +170,6 @@ export const triggerDocumentProcessing = async (documentId: string, options?: Tr
     return response.data;
   } catch (error) {
     console.error(`API: Failed to trigger content processing for document ${documentId}:`, error);
-    throw error;
+    throw error; // Throw the error instead of returning a custom object
   }
 };
-
-export const getDocumentById = async (documentId: string): Promise<Document> => {
-  console.log(`API: Fetching single document: ${documentId}`);
-  try {
-    const response = await apiClient.get<Document>(`/documents/${documentId}`);
-    console.log('API: Single document fetched:', response.data);
-    return response.data;
-  } catch (error) {
-    console.error(`API: Failed to fetch document ${documentId}:`, error);
-    throw error;
-  }
-};
-
-export const getDocumentsByIds = async (documentIds: string[]): Promise<Document[]> => {
-  console.log(`API: Fetching documents by IDs:`, documentIds);
-  try {
-    const promises = documentIds.map(id => getDocumentById(id));
-    const results = await Promise.allSettled(promises);
-    
-    const documents: Document[] = [];
-    results.forEach((result, index) => {
-      if (result.status === 'fulfilled') {
-        documents.push(result.value);
-      } else {
-        console.warn(`Failed to fetch document ${documentIds[index]}:`, result.reason);
-      }
-    });
-    
-    console.log(`API: Successfully fetched ${documents.length}/${documentIds.length} documents`);
-    return documents;
-  } catch (error) {
-    console.error('API: Failed to batch fetch documents:', error);
-    throw error;
-  }
-}; 

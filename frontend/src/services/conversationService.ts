@@ -178,6 +178,36 @@ export const conversationService = {
       console.error('API: 更新QA配置失敗:', error);
       throw error;
     }
+  },
+
+  /**
+   * 置頂對話
+   */
+  pinConversation: async (conversationId: string): Promise<Conversation> => {
+    console.log('API: 置頂對話...', { conversationId });
+    try {
+      const response = await apiClient.post<Conversation>(`/conversations/${conversationId}/pin`);
+      console.log('API: 對話置頂成功');
+      return response.data;
+    } catch (error) {
+      console.error('API: 置頂對話失敗:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * 取消置頂對話
+   */
+  unpinConversation: async (conversationId: string): Promise<Conversation> => {
+    console.log('API: 取消置頂對話...', { conversationId });
+    try {
+      const response = await apiClient.post<Conversation>(`/conversations/${conversationId}/unpin`);
+      console.log('API: 對話取消置頂成功');
+      return response.data;
+    } catch (error) {
+      console.error('API: 取消置頂對話失敗:', error);
+      throw error;
+    }
   }
 };
 

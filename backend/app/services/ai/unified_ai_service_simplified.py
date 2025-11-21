@@ -655,12 +655,40 @@ class UnifiedAIServiceSimplified:
         session_id: Optional[str] = None,
         db: Optional[AsyncIOMotorDatabase] = None,
         ai_max_output_tokens: Optional[int] = None,
-        ai_ensure_chinese_output: Optional[bool] = None
+        ai_ensure_chinese_output: Optional[bool] = None,
+        document_context: Optional[Dict[str, Any]] = None
     ) -> AIResponse:
+        # 准备 prompt 参数
+        prompt_params = {'original_query': original_query}
+        
+        # 如果有文档上下文，添加到 prompt 参数中
+        if document_context:
+            prompt_params['has_selected_documents'] = True
+            prompt_params['selected_document_count'] = document_context.get('document_count', 0)
+            prompt_params['document_ids'] = document_context.get('document_ids', [])
+            
+            # 构建文档摘要上下文（用于指代词解析）
+            document_summaries = document_context.get('document_summaries', [])
+            if document_summaries:
+                summaries_text = "文檔池摘要信息：\n"
+                for i, doc in enumerate(document_summaries, 1):
+                    summaries_text += f"\n文檔 {i}:\n"
+                    summaries_text += f"  - 文件名: {doc.get('filename', 'N/A')}\n"
+                    summaries_text += f"  - 摘要: {doc.get('summary', 'N/A')}\n"
+                    if doc.get('key_concepts'):
+                        summaries_text += f"  - 關鍵概念: {', '.join(doc.get('key_concepts', []))}\n"
+                prompt_params['document_summaries_context'] = summaries_text
+            else:
+                prompt_params['document_summaries_context'] = "（無文檔摘要信息）"
+        else:
+            prompt_params['has_selected_documents'] = False
+            prompt_params['selected_document_count'] = 0
+            prompt_params['document_summaries_context'] = ""
+        
         request = AIRequest(
             task_type=TaskType.QUERY_REWRITE,
-            content=original_query, # Added missing content argument
-            prompt_params={'original_query': original_query},
+            content=original_query,
+            prompt_params=prompt_params,
             model_preference=model_preference,
             user_id=user_id,
             session_id=session_id,

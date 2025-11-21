@@ -40,8 +40,6 @@ class SettingsDataResponse(BaseModel):
     """系統設定 - 用於 API GET 回應 (不含敏感資訊如 API Key)"""
     ai_service: AIServiceSettingsStored = Field(default_factory=AIServiceSettingsStored, alias="aiService")
     database: DatabaseSettings = Field(default_factory=DatabaseSettings, alias="database")
-    auto_connect: Optional[bool] = Field(None, alias="autoConnect", title="自動連線到後端服務")
-    auto_sync: Optional[bool] = Field(None, alias="autoSync", title="自動同步檔案")
     is_database_connected: bool = Field(True, alias="isDatabaseConnected", title="資料庫是否已連接")
 
     class Config:
@@ -53,8 +51,6 @@ class UpdatableSettingsData(BaseModel):
     # For updates, client sends AIServiceSettingsInput which might include the apiKey
     ai_service: Optional[AIServiceSettingsInput] = Field(None, alias="aiService") 
     database: Optional[DatabaseSettings] = Field(None, alias="database")
-    auto_connect: Optional[bool] = Field(None, alias="autoConnect")
-    auto_sync: Optional[bool] = Field(None, alias="autoSync")
 
     class Config:
         populate_by_name = True
@@ -80,8 +76,6 @@ class DBSettingsSchema(BaseModel): # This is what's actually stored in the 'sett
     # id: str = Field("global_settings", alias="_id") 
     ai_service: StoredAISettings = Field(default_factory=StoredAISettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings) # Storing DB connection URI in DB is unusual, usually from .env
-    auto_connect: Optional[bool] = None
-    auto_sync: Optional[bool] = None
 
     class Config:
         populate_by_name = True

@@ -8,7 +8,7 @@ export interface StreamQARequest {
   question: string;
   conversation_id?: string;
   session_id?: string;
-  model_preference?: string;
+  document_ids?: string[];  // @ 提及的文档 IDs
   context_limit?: number;
   use_semantic_search?: boolean;
   use_structured_filter?: boolean;
@@ -31,7 +31,7 @@ export interface StreamChunk {
 
 export interface StreamCallbacks {
   onChunk?: (text: string) => void;
-  onComplete?: (fullText: string) => void;
+  onComplete?: (fullText: string, completeData?: any) => void;
   onApprovalNeeded?: (workflowState: any) => void;
   onMetadata?: (metadata: { tokens_used?: number; source_documents?: string[]; processing_time?: number }) => void;
   onProgress?: (stage: string, message: string, detail?: any) => void;
@@ -121,7 +121,8 @@ export async function streamQA(
                   callbacks.onChunk?.(chunk.answer);
                 }
                 // 無論是否有 answer，都調用 onComplete 以確保清理狀態
-                callbacks.onComplete?.(fullText || chunk.answer || '');
+                // 傳遞完整的 chunk 數據（可能包含 workflow_state, classification 等）
+                callbacks.onComplete?.(fullText || chunk.answer || '', chunk);
                 break;
 
               case 'approval_needed':
@@ -132,11 +133,16 @@ export async function streamQA(
                 break;
 
               case 'metadata':
-                callbacks.onMetadata?.({
-                  tokens_used: chunk.tokens_used,
-                  source_documents: chunk.source_documents,
-                  processing_time: chunk.processing_time,
+                console.log('📋 [SSE] 收到 metadata 事件:', {
+                  has_chunk: !!chunk,
+                  has_document_pool: !!(chunk as any)?.document_pool,
+                  document_pool_type: typeof (chunk as any)?.document_pool,
+                  document_pool_count: (chunk as any)?.document_pool ? Object.keys((chunk as any).document_pool).length : 0,
+                  chunk_keys: Object.keys(chunk),
+                  full_chunk: chunk
                 });
+                // 傳遞整個 metadata 對象，包含 document_pool 等所有欄位
+                callbacks.onMetadata?.(chunk as any);
                 break;
 
               case 'progress':

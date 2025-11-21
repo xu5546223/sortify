@@ -141,10 +141,25 @@ class QAAnswerService:
             query_for_answer = query_rewrite_result.rewritten_queries[0] \
                 if query_rewrite_result.rewritten_queries else original_query
             
-            # 添加對話歷史
+            # 構建清晰的上下文結構：明確分離對話歷史和當前文檔
+            final_context_parts = []
+            
+            # 如果有對話歷史，添加到開頭並明確標註
             if conversation_history:
-                context_parts.insert(0, conversation_history)
-                logger.info("已添加對話歷史到上下文")
+                final_context_parts.append(
+                    f"=== 對話歷史（僅供理解問題背景，不要直接引用） ===\n{conversation_history}\n"
+                    f"=== 對話歷史結束 ==="
+                )
+                logger.info("已添加對話歷史到上下文（明確標註）")
+            
+            # 添加當前檢索到的文檔
+            if context_parts:
+                final_context_parts.append(
+                    f"\n=== 當前檢索到的文檔（請基於這些文檔回答） ===\n" +
+                    "\n\n".join(context_parts) +
+                    "\n=== 文檔結束 ==="
+                )
+                logger.info(f"已添加 {len(context_parts)} 個當前檢索文檔（明確標註）")
             
             # 調用統一 AI 服務生成答案
             logger.info(f"調用AI生成答案,使用模型偏好: {model_preference}")
@@ -152,7 +167,7 @@ class QAAnswerService:
             ai_response: UnifiedAIResponse = await unified_ai_service_simplified.generate_answer(
                 user_question=query_for_answer,
                 intent_analysis=query_rewrite_result.intent_analysis or "",
-                document_context=context_parts,
+                document_context=final_context_parts,  # 使用重新組織的上下文
                 db=db,
                 model_preference=model_preference,  # 傳遞用戶模型偏好
                 ai_ensure_chinese_output=ensure_chinese_output,

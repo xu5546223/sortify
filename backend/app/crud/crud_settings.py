@@ -43,10 +43,8 @@ async def get_system_settings(db: AsyncIOMotorDatabase) -> SettingsDataResponse:
         db_name=app_env_settings.DB_NAME
     )
 
-    # AI 服務設定 和 autoConnect/autoSync 嘗試從資料庫讀取
+    # AI 服務設定嘗試從資料庫讀取
     stored_ai_settings_from_db = StoredAISettings() # 預設
-    auto_connect_from_db = None
-    auto_sync_from_db = None
 
     if db_connected:
         try:
@@ -55,7 +53,7 @@ async def get_system_settings(db: AsyncIOMotorDatabase) -> SettingsDataResponse:
                 config_collection = actual_db_instance.system_config
                 db_doc = await config_collection.find_one({"_id": CONFIG_DOCUMENT_ID})
                 if db_doc:
-                    logger.debug(f"從資料庫載入設定 (AI服務、自動連接/同步): {db_doc}")
+                    logger.debug(f"從資料庫載入設定 (AI服務): {db_doc}")
                     if "ai_service" in db_doc and isinstance(db_doc["ai_service"], dict):
                         logger.debug(f"DB ai_service content before parsing: {db_doc['ai_service']}")
                         # 假設 StoredAISettings 模型本身已不包含 force_stable_model
@@ -63,8 +61,6 @@ async def get_system_settings(db: AsyncIOMotorDatabase) -> SettingsDataResponse:
                         logger.debug(f"Parsed stored_ai_settings_from_db: model={stored_ai_settings_from_db.model}, "
                                      f"ensure_chinese={stored_ai_settings_from_db.ensure_chinese_output}, "
                                      f"max_tokens={stored_ai_settings_from_db.max_output_tokens}")
-                    auto_connect_from_db = db_doc.get("auto_connect")
-                    auto_sync_from_db = db_doc.get("auto_sync")
                 else:
                     logger.info("資料庫中未找到系統設定文件，AI 及其他 DB 設定將使用預設值。")
             else:
@@ -75,10 +71,10 @@ async def get_system_settings(db: AsyncIOMotorDatabase) -> SettingsDataResponse:
         except Exception as e: 
             logger.error(f"讀取資料庫設定時發生錯誤: {e}", exc_info=True)
             db_connected = False # 任何從資料庫讀取設定的錯誤都應將 db_connected 視為 False
-            # stored_ai_settings_from_db, auto_connect_from_db, auto_sync_from_db 保持預設值
+            # stored_ai_settings_from_db 保持預設值
     
     if not db_connected:
-         logger.warning("資料庫未連接。AI服務設定 (model, temp) 和 autoConnect/autoSync 將使用預設值或為 None。")
+         logger.warning("資料庫未連接。AI服務設定 (model, temp) 將使用預設值或為 None。")
 
     is_api_key_configured_in_env = bool(app_env_settings.GOOGLE_API_KEY)
     
@@ -111,8 +107,6 @@ async def get_system_settings(db: AsyncIOMotorDatabase) -> SettingsDataResponse:
     final_settings_response = SettingsDataResponse(
         aiService=ai_service_response,
         database=db_settings_from_env,
-        autoConnect=auto_connect_from_db,
-        autoSync=auto_sync_from_db,
         isDatabaseConnected=db_connected # 使用我們確定的連接狀態
     )
 
@@ -127,8 +121,6 @@ async def get_system_settings(db: AsyncIOMotorDatabase) -> SettingsDataResponse:
             "env_db_uri_present": bool(app_env_settings.MONGODB_URL),
             "env_db_name_present": bool(app_env_settings.DB_NAME),
             "env_google_api_key_present": bool(app_env_settings.GOOGLE_API_KEY),
-            "retrieved_auto_connect_from_db": auto_connect_from_db is not None,
-            "retrieved_auto_sync_from_db": auto_sync_from_db is not None,
             "retrieved_ai_settings_from_db": stored_ai_settings_from_db.model != StoredAISettings().model # Check if model differs from default
         }
     )
@@ -137,7 +129,7 @@ async def get_system_settings(db: AsyncIOMotorDatabase) -> SettingsDataResponse:
 async def update_system_settings(db: AsyncIOMotorDatabase, settings_to_update: UpdatableSettingsData) -> Optional[SettingsDataResponse]:
     """
     更新系統設定。API Key, MongoDB URI 和 DB Name 將存儲到 .env。
-    其他設定（如 AI model, temperature, autoConnect, autoSync）嘗試存儲到資料庫，如果資料庫不可用則跳過。
+    其他設定（如 AI model, temperature）嘗試存儲到資料庫，如果資料庫不可用則跳過。
     """
     config_collection = None # 推遲初始化，直到確認資料庫可用
     update_payload_for_db: Dict[str, Any] = {}
@@ -174,10 +166,6 @@ async def update_system_settings(db: AsyncIOMotorDatabase, settings_to_update: U
         # 如果 DatabaseSettings 模型中有其他不由 .env 管理的欄位，則需要保留它們到 DB
         # update_payload_for_db["database"] = db_settings_input.model_dump(exclude_unset=True, by_alias=False)
     
-    if settings_to_update.auto_connect is not None:
-        update_payload_for_db["auto_connect"] = settings_to_update.auto_connect
-    if settings_to_update.auto_sync is not None:
-        update_payload_for_db["auto_sync"] = settings_to_update.auto_sync
 
     # --- .env 更新邏輯 (獨立於資料庫連線) ---
     env_path = find_dotenv(usecwd=True, raise_error_if_not_found=False)

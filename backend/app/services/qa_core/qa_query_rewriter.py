@@ -5,7 +5,7 @@ QA查詢重寫服務
 使用統一 AI 接口
 """
 import logging
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.logging_utils import AppLogger
@@ -25,7 +25,8 @@ class QAQueryRewriter:
         original_query: str,
         user_id: Optional[str] = None,
         request_id: Optional[str] = None,
-        query_rewrite_count: int = 3
+        query_rewrite_count: int = 3,
+        document_context: Optional[Dict[str, Any]] = None
     ) -> Tuple[QueryRewriteResult, int]:
         """
         重寫查詢以提升搜索效果
@@ -36,16 +37,21 @@ class QAQueryRewriter:
             user_id: 用戶ID
             request_id: 請求ID
             query_rewrite_count: 重寫查詢數量
+            document_context: 文檔上下文（如用戶 @ 的文件）
             
         Returns:
             Tuple[QueryRewriteResult, tokens_used]
         """
-        logger.info(f"查詢重寫: '{original_query[:50]}...'")
+        if document_context:
+            logger.info(f"查詢重寫 (含 {document_context.get('document_count', 0)} 個 @ 文件): '{original_query[:50]}...'")
+        else:
+            logger.info(f"查詢重寫: '{original_query[:50]}...'")
         
         # 調用統一 AI 服務
         ai_response = await unified_ai_service_simplified.rewrite_query(
             original_query=original_query,
-            db=db
+            db=db,
+            document_context=document_context  # ✅ 传递文档上下文
         )
         
         tokens = ai_response.token_usage.total_tokens if ai_response.token_usage else 0

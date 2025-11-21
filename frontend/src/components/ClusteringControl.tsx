@@ -6,15 +6,15 @@
 import React, { useState, useEffect } from 'react';
 import { Modal } from 'antd';
 import { ClusteringJobStatus } from '../types/apiTypes';
-import { 
-  triggerClustering, 
+import {
+  triggerClustering,
   getClusteringStatus,
   deleteAllClusters
 } from '../services/clusteringService';
-import { 
-  ThunderboltOutlined, 
-  ClockCircleOutlined, 
-  CheckCircleOutlined, 
+import {
+  ThunderboltOutlined,
+  ClockCircleOutlined,
+  CheckCircleOutlined,
   ExclamationCircleOutlined,
   ReloadOutlined,
   DeleteOutlined
@@ -24,8 +24,8 @@ interface ClusteringControlProps {
   onClusteringComplete?: () => void;
 }
 
-const ClusteringControl: React.FC<ClusteringControlProps> = ({ 
-  onClusteringComplete 
+const ClusteringControl: React.FC<ClusteringControlProps> = ({
+  onClusteringComplete
 }) => {
   const [jobStatus, setJobStatus] = useState<ClusteringJobStatus | null>(null);
   const [isTriggering, setIsTriggering] = useState(false);
@@ -38,7 +38,7 @@ const ClusteringControl: React.FC<ClusteringControlProps> = ({
     try {
       const status = await getClusteringStatus();
       setJobStatus(status);
-      
+
       // 如果任務完成,通知父組件
       if (status && status.status === 'completed' && onClusteringComplete) {
         onClusteringComplete();
@@ -60,7 +60,7 @@ const ClusteringControl: React.FC<ClusteringControlProps> = ({
       // 直接使用返回的結果設置狀態
       setJobStatus(result);
       setShowStatus(true);
-      
+
       // 開始輪詢狀態
       startPolling();
     } catch (err: any) {
@@ -77,7 +77,7 @@ const ClusteringControl: React.FC<ClusteringControlProps> = ({
       try {
         const status = await getClusteringStatus();
         setJobStatus(status);
-        
+
         if (status && (status.status === 'completed' || status.status === 'failed')) {
           clearInterval(pollInterval);
           if (status.status === 'completed' && onClusteringComplete) {
@@ -123,12 +123,12 @@ const ClusteringControl: React.FC<ClusteringControlProps> = ({
           const result = await deleteAllClusters();
           setJobStatus(null);
           setShowStatus(false);
-          
+
           // 通知父組件刷新
           if (onClusteringComplete) {
             onClusteringComplete();
           }
-          
+
           // 顯示成功消息
           Modal.success({
             title: '✅ 刪除成功',
@@ -137,7 +137,7 @@ const ClusteringControl: React.FC<ClusteringControlProps> = ({
         } catch (err: any) {
           console.error('刪除所有聚類失敗:', err);
           setError(err.response?.data?.detail || '刪除所有聚類失敗');
-          
+
           Modal.error({
             title: '❌ 刪除失敗',
             content: err.response?.data?.detail || '刪除所有聚類失敗'

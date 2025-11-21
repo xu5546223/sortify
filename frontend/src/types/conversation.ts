@@ -9,6 +9,18 @@ export interface ConversationMessage {
   tokens_used?: number;
 }
 
+export interface DocumentPoolItem {
+  document_id: string;
+  filename: string;
+  summary?: string;
+  relevance_score?: number;
+  access_count?: number;
+  key_concepts?: string[];
+  semantic_tags?: string[];
+  first_mentioned_round?: number;
+  last_accessed_round?: number;
+}
+
 export interface Conversation {
   id: string;
   title: string;
@@ -18,6 +30,8 @@ export interface Conversation {
   message_count: number;
   total_tokens: number;
   cached_documents: string[];  // 緩存的文檔ID列表
+  cached_document_data?: Record<string, DocumentPoolItem>;  // 文檔池（含摘要和元數據）
+  is_pinned?: boolean;  // 是否置頂
 }
 
 export interface ConversationWithMessages extends Conversation {

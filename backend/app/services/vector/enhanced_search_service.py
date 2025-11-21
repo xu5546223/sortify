@@ -42,7 +42,9 @@ class EnhancedSearchService:
         filter_conditions: Optional[Dict[str, Any]] = None,
         # 新增：RRF 動態權重配置
         rrf_weights: Optional[Dict[str, float]] = None,
-        rrf_k_constant: Optional[int] = None
+        rrf_k_constant: Optional[int] = None,
+        # ✅ 新增：文檔ID限制
+        document_ids: Optional[List[str]] = None
     ) -> List[SemanticSearchResult]:
         """
         執行兩階段混合檢索搜索
@@ -93,21 +95,21 @@ class EnhancedSearchService:
             # 根據搜索類型選擇策略
             if search_type == "summary_only":
                 return await self._search_summary_vectors_only(
-                    db, query_vector, user_id, stage2_k, sim_threshold, log_details
+                    db, query_vector, user_id, stage2_k, sim_threshold, log_details, document_ids
                 )
             elif search_type == "chunks_only":
                 return await self._search_chunk_vectors_only(
-                    db, query_vector, user_id, stage2_k, sim_threshold, log_details
+                    db, query_vector, user_id, stage2_k, sim_threshold, log_details, document_ids
                 )
             elif search_type == "rrf_fusion":
                 # 🚀 新增：RRF 融合檢索策略
                 return await self._execute_rrf_fusion_search(
                     db, query_vector, user_id, stage2_k, sim_threshold, log_details,
-                    rrf_weights, rrf_k_constant
+                    rrf_weights, rrf_k_constant, document_ids
                 )
             else:  # "hybrid" 預設
                 return await self._execute_two_stage_search(
-                    db, query_vector, user_id, stage1_k, stage2_k, sim_threshold, log_details
+                    db, query_vector, user_id, stage1_k, stage2_k, sim_threshold, log_details, document_ids
                 )
                 
         except ValueError as ve:
@@ -131,7 +133,8 @@ class EnhancedSearchService:
         stage1_k: int,
         stage2_k: int,
         sim_threshold: float,
-        log_details: Dict[str, Any]
+        log_details: Dict[str, Any],
+        document_ids: Optional[List[str]] = None
     ) -> List[SemanticSearchResult]:
         """執行完整的兩階段混合檢索"""
         
@@ -209,18 +212,26 @@ class EnhancedSearchService:
         user_id: str,
         top_k: int,
         sim_threshold: float,
-        log_details: Dict[str, Any]
+        log_details: Dict[str, Any],
+        document_ids: Optional[List[str]] = None
     ) -> List[SemanticSearchResult]:
         """僅在摘要向量中搜索（快速文檔級別搜索）"""
         
-        logger.info("執行摘要向量專用搜索")
+        logger.info(f"執行摘要向量專用搜索 (document_ids: {len(document_ids) if document_ids else 0})")
+        
+        # 構建 metadata_filter
+        metadata_filter = {"type": "summary"}
+        
+        # 如果有 document_ids，添加到 metadata_filter
+        if document_ids:
+            metadata_filter["document_id"] = {"$in": document_ids}
         
         results = vector_db_service.search_similar_vectors(
             query_vector=query_vector,
             top_k=top_k,
             owner_id_filter=user_id,
             similarity_threshold=sim_threshold,
-            metadata_filter={"type": "summary"}
+            metadata_filter=metadata_filter
         )
         
         await log_event(db, LogLevel.INFO, f"摘要向量搜索完成：{len(results)} 個結果", 
@@ -236,18 +247,26 @@ class EnhancedSearchService:
         user_id: str,
         top_k: int,
         sim_threshold: float,
-        log_details: Dict[str, Any]
+        log_details: Dict[str, Any],
+        document_ids: Optional[List[str]] = None
     ) -> List[SemanticSearchResult]:
         """僅在內容塊向量中搜索（精確內容級別搜索）"""
         
-        logger.info("執行內容塊向量專用搜索")
+        logger.info(f"執行內容塊向量專用搜索 (document_ids: {len(document_ids) if document_ids else 0})")
+        
+        # 構建 metadata_filter
+        metadata_filter = {"type": "chunk"}
+        
+        # 如果有 document_ids，添加到 metadata_filter
+        if document_ids:
+            metadata_filter["document_id"] = {"$in": document_ids}
         
         results = vector_db_service.search_similar_vectors(
             query_vector=query_vector,
             top_k=top_k,
             owner_id_filter=user_id,
             similarity_threshold=sim_threshold,
-            metadata_filter={"type": "chunk"}
+            metadata_filter=metadata_filter
         )
         
         await log_event(db, LogLevel.INFO, f"內容塊搜索完成：{len(results)} 個結果", 
@@ -265,7 +284,8 @@ class EnhancedSearchService:
         sim_threshold: float,
         log_details: Dict[str, Any],
         rrf_weights: Optional[Dict[str, float]] = None,
-        rrf_k_constant: Optional[int] = None
+        rrf_k_constant: Optional[int] = None,
+        document_ids: Optional[List[str]] = None
     ) -> List[SemanticSearchResult]:
         """
         🚀 執行 RRF (Reciprocal Rank Fusion) 融合檢索

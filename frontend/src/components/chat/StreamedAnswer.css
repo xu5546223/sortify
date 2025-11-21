@@ -1,0 +1,198 @@
+/**
+ * StreamedAnswer Styles
+ * Neo-Brutalism 風格
+ */
+
+.streamed-answer-container {
+  margin-top: 16px;
+}
+
+.streamed-answer-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  transition: color 0.3s;
+}
+
+.streamed-answer-label:has(+ .streamed-answer-content .typing-cursor) {
+  color: #29bf12;
+}
+
+.streamed-answer-content {
+  background: white;
+  border: 2px solid #000;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 4px 4px 0px black;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1f2937;
+}
+
+/* Streamdown Markdown 樣式 */
+.streamed-answer-content p {
+  margin-bottom: 16px;
+}
+
+.streamed-answer-content p:last-child {
+  margin-bottom: 0;
+}
+
+.streamed-answer-content h1,
+.streamed-answer-content h2,
+.streamed-answer-content h3 {
+  font-weight: 700;
+  margin-top: 24px;
+  margin-bottom: 12px;
+  color: #000;
+}
+
+.streamed-answer-content h3 {
+  font-size: 16px;
+  margin-top: 20px;
+}
+
+.streamed-answer-content strong {
+  font-weight: 600;
+  color: #000;
+}
+
+.streamed-answer-content code {
+  background: #f3f4f6;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: #dc2626;
+  border: 1px solid #e5e7eb;
+}
+
+.streamed-answer-content pre {
+  background: #1e1e1e;
+  padding: 16px;
+  border-radius: 8px;
+  border: 2px solid #000;
+  overflow-x: auto;
+  margin: 16px 0;
+}
+
+.streamed-answer-content pre code {
+  background: transparent;
+  color: #d4d4d4;
+  border: none;
+  padding: 0;
+}
+
+.streamed-answer-content hr {
+  border: none;
+  border-top: 2px solid #e5e7eb;
+  margin: 24px 0;
+}
+
+.streamed-answer-content ul,
+.streamed-answer-content ol {
+  margin: 16px 0;
+  padding-left: 24px;
+}
+
+.streamed-answer-content ul {
+  list-style: none;
+}
+
+.streamed-answer-content ul li {
+  position: relative;
+  padding-left: 8px;
+  margin-bottom: 8px;
+}
+
+.streamed-answer-content ul li::before {
+  content: '•';
+  position: absolute;
+  left: -16px;
+  color: #29bf12;
+  font-weight: bold;
+  font-size: 18px;
+}
+
+.streamed-answer-content ol {
+  list-style: decimal;
+}
+
+.streamed-answer-content ol li {
+  margin-bottom: 8px;
+}
+
+/* 引用標籤 - Neo-Brutalism 風格 */
+.citation-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: white;
+  border: 2px solid #000;
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  margin: 0 4px;
+  transition: all 0.15s;
+  box-shadow: 2px 2px 0px #000;
+  color: #000;
+  vertical-align: middle;
+}
+
+.citation-tag:hover {
+  background: #29bf12;
+  color: white;
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0px #000;
+}
+
+.citation-tag:active {
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0px #000;
+}
+
+.citation-tag i {
+  font-size: 16px;
+  color: #29bf12;
+  transition: color 0.15s;
+}
+
+.citation-tag:hover i {
+  color: white;
+}
+
+/* 流式游標 */
+.typing-cursor {
+  display: inline-block;
+  color: #29bf12;
+  font-weight: bold;
+  animation: blink 1s infinite;
+  margin-left: 2px;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* 響應式 */
+@media (max-width: 768px) {
+  .streamed-answer-content {
+    padding: 16px;
+    font-size: 13px;
+  }
+  
+  .streamed-answer-content code {
+    font-size: 12px;
+  }
+}

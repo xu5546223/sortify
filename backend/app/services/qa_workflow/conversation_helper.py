@@ -27,7 +27,7 @@ class ConversationHelper:
         source_documents: Optional[list] = None
     ) -> bool:
         """
-        保存問答對到對話中
+        保存問答對到對話中（自動使用統一上下文管理器）
         
         Args:
             db: 數據庫連接
@@ -45,12 +45,45 @@ class ConversationHelper:
             logger.debug("沒有對話ID或用戶ID,跳過對話保存")
             return False
         
+        # 診斷 db 參數類型錯誤
+        if not hasattr(db, "conversations"):
+            logger.error(f"❌ save_qa_to_conversation 收到錯誤的 db 對象: type={type(db)}, value={db}")
+            return False
+        
+        # 嘗試使用統一上下文管理器（推薦方式）
+        try:
+            from app.services.context.conversation_context_manager import ConversationContextManager
+            
+            context_manager = ConversationContextManager(
+                db=db,
+                conversation_id=conversation_id,
+                user_id=str(user_id)
+            )
+            
+            # 使用統一管理器保存（會自動更新文檔池）
+            success = await context_manager.add_qa_pair(
+                question=question,
+                answer=answer,
+                source_documents=source_documents,
+                tokens_used=tokens_used
+            )
+            
+            if success:
+                logger.info(f"✅ 統一管理器保存成功: conversation_id={conversation_id}")
+                return True
+            else:
+                logger.warning("⚠️ 統一管理器保存失敗，回退到舊方式")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ 統一管理器失敗，回退到舊方式: {e}")
+        
+        # 回退到舊方式（向後兼容）
         try:
             from uuid import UUID
             from app.crud import crud_conversations
-            from app.services.cache.conversation_cache_service import conversation_cache_service
-            
-            logger.info(f"開始保存對話: conversation_id={conversation_id}, user_id={user_id}")
+            from app.services.cache import unified_cache, CacheNamespace
+
+            logger.info(f"開始保存對話（舊方式）: conversation_id={conversation_id}, user_id={user_id}")
             
             conversation_uuid = UUID(conversation_id)
             # 處理 user_id 可能是 UUID 或字符串
@@ -104,10 +137,15 @@ class ConversationHelper:
                 logger.debug("沒有參考文檔,跳過文檔緩存更新")
             
             # 使緩存失效，下次會從 MongoDB 重新載入
-            await conversation_cache_service.invalidate_conversation(
-                user_id=user_uuid,
-                conversation_id=conversation_uuid
-            )
+            try:
+                cache_key = f"{user_uuid}:{conversation_uuid}"
+                await unified_cache.delete(
+                    key=cache_key,
+                    namespace=CacheNamespace.CONVERSATION
+                )
+                logger.debug(f"已清除對話緩存: {cache_key}")
+            except Exception as cache_e:
+                logger.warning(f"清除對話緩存失敗 (不影響主流程): {cache_e}")
             
             logger.info(f"✅ 成功保存問答對到對話 {conversation_id}")
             return True

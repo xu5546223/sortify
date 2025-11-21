@@ -117,19 +117,29 @@ class QuestionClassifierService:
             else:
                 conversation_history_text = "無對話歷史"
             
-            # 格式化緩存文檔信息
+            # 格式化文檔池信息（按相關性排序）
             cached_documents_text = ""
             if cached_documents_info and len(cached_documents_info) > 0:
-                cached_documents_text = "=== 已緩存的文檔列表 ===\n"
-                for idx, doc_info in enumerate(cached_documents_info, 1):
+                cached_documents_text = "=== 文檔池（會話文檔，按相關性排序）===\n"
+                for doc_info in cached_documents_info:
                     doc_id = doc_info.get("document_id", "unknown")
                     filename = doc_info.get("filename", "未知文件")
                     summary = doc_info.get("summary", "")
+                    relevance_score = doc_info.get("relevance_score", 0.0)
+                    access_count = doc_info.get("access_count", 0)
+                    key_concepts = doc_info.get("key_concepts", [])
+                    semantic_tags = doc_info.get("semantic_tags", [])
+                    ref_num = doc_info.get("reference_number", 0)
                     
-                    cached_documents_text += f"文檔{idx} (ID: {doc_id}):\n"
+                    cached_documents_text += f"文檔{ref_num} (ID: {doc_id}):\n"
                     cached_documents_text += f"  文件名: {filename}\n"
+                    cached_documents_text += f"  相關性: {relevance_score:.2f} (訪問 {access_count} 次)\n"
                     if summary:
                         cached_documents_text += f"  摘要: {summary[:200]}{'...' if len(summary) > 200 else ''}\n"
+                    if key_concepts:
+                        cached_documents_text += f"  關鍵概念: {', '.join(key_concepts)}\n"
+                    if semantic_tags:
+                        cached_documents_text += f"  語義標籤: {', '.join(semantic_tags)}\n"
                     cached_documents_text += "\n"
             else:
                 cached_documents_text = "無緩存文檔"

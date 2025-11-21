@@ -1,88 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { updateCurrentUser } from '../services/authApi'; // 直接使用 authApi
+import { updateCurrentUser } from '../services/authApi';
 import { UserUpdateRequest } from '../services/authApi';
 import { Link, useNavigate } from 'react-router-dom';
-
-const styles: { [key: string]: React.CSSProperties } = {
-  pageContainer: {
-    padding: '30px',
-    maxWidth: '600px',
-    margin: '0 auto',
-    fontFamily: 'Arial, sans-serif',
-  },
-  title: {
-    fontSize: '24px',
-    color: '#333',
-    marginBottom: '20px',
-    textAlign: 'center',
-  },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '15px',
-  },
-  inputGroup: {
-    display: 'flex',
-    flexDirection: 'column',
-  },
-  label: {
-    marginBottom: '5px',
-    color: '#555',
-    fontSize: '14px',
-  },
-  input: {
-    padding: '10px',
-    border: '1px solid #ccc',
-    borderRadius: '4px',
-    fontSize: '16px',
-  },
-  button: {
-    padding: '12px 20px',
-    fontSize: '16px',
-    color: 'white',
-    backgroundColor: '#007bff',
-    border: 'none',
-    borderRadius: '5px',
-    cursor: 'pointer',
-    transition: 'background-color 0.3s',
-    marginTop: '10px',
-  },
-  linkButton: {
-    padding: '10px 15px',
-    fontSize: '15px',
-    color: 'white',
-    backgroundColor: '#6c757d',
-    border: 'none',
-    borderRadius: '5px',
-    cursor: 'pointer',
-    textDecoration: 'none',
-    textAlign: 'center',
-    display: 'inline-block',
-    marginTop: '20px',
-    transition: 'background-color 0.3s',
-  },
-  message: {
-    padding: '10px',
-    borderRadius: '4px',
-    marginBottom: '15px',
-    textAlign: 'center',
-  },
-  successMessage: {
-    backgroundColor: '#d4edda',
-    color: '#155724',
-  },
-  errorMessage: {
-    backgroundColor: '#f8d7da',
-    color: '#721c24',
-  },
-  backLink: {
-    display: 'inline-block',
-    marginBottom: '20px',
-    color: '#007bff',
-    textDecoration: 'none',
-  }
-};
 
 const UserProfilePage: React.FC = () => {
   const { currentUser, fetchCurrentUser } = useAuth();
@@ -146,76 +66,123 @@ const UserProfilePage: React.FC = () => {
   };
 
   if (!currentUser) {
-    return <p>載入使用者資訊...</p>;
+    return (
+      <div className="p-10 text-lg font-bold">
+        載入使用者資訊...
+      </div>
+    );
   }
 
   return (
-    <div style={styles.pageContainer}>
-      <Link to="/dashboard" style={styles.backLink}>&larr; 返回儀表板</Link>
-      <h1 style={styles.title}>管理個人資料</h1>
+    <div className="p-10 bg-bg min-h-screen">
+      {/* Header */}
+      <div className="flex justify-between items-center mb-10 flex-wrap gap-5">
+        <h1 className="page-title">PROFILE // SETTINGS</h1>
+        <Link to="/dashboard" className="neo-btn-secondary">
+          ← 返回儀表板
+        </Link>
+      </div>
 
+      {/* Success/Error Messages */}
       {successMessage && (
-        <div style={{...styles.message, ...styles.successMessage}}>
-          {successMessage}
+        <div className="neo-message neo-message-success">
+          ✓ {successMessage}
         </div>
       )}
       {errorMessage && (
-        <div style={{...styles.message, ...styles.errorMessage}}>
-          {errorMessage}
+        <div className="neo-message neo-message-error">
+          ✗ {errorMessage}
         </div>
       )}
 
-      <form onSubmit={handleSubmit} style={styles.form}>
-        <div style={styles.inputGroup}>
-          <label htmlFor="username" style={styles.label}>使用者名稱 (無法更改)</label>
-          <input 
-            type="text" 
-            id="username" 
-            value={currentUser.username} 
-            readOnly 
-            style={{...styles.input, backgroundColor: '#e9ecef'}}
-          />
+      <div className="grid grid-cols-1 gap-8 max-w-4xl">
+        {/* Account Info Card - Read Only */}
+        <div className="neo-card">
+          <div className="card-header">📋 帳戶資訊 (唯讀)</div>
+          <div className="space-y-4">
+            <div className="info-row">
+              <span className="info-label">使用者名稱:</span>
+              <span className="info-value">{currentUser.username}</span>
+            </div>
+            <div className="info-row">
+              <span className="info-label">帳號狀態:</span>
+              <span className="info-value">
+                <span className={`neo-badge ${!currentUser.is_active && 'neo-badge-danger'}`}>
+                  {currentUser.is_active ? '✓ 已啟用' : '✗ 未啟用'}
+                </span>
+              </span>
+            </div>
+            <div className="info-row">
+              <span className="info-label">註冊時間:</span>
+              <span className="info-value">
+                {new Date(currentUser.created_at).toLocaleDateString('zh-TW')}
+              </span>
+            </div>
+            <div className="info-row border-b-0">
+              <span className="info-label">最後更新:</span>
+              <span className="info-value">
+                {new Date(currentUser.updated_at).toLocaleDateString('zh-TW')}
+              </span>
+            </div>
+          </div>
         </div>
-        <div style={styles.inputGroup}>
-          <label htmlFor="email" style={styles.label}>Email</label>
-          <input 
-            type="email" 
-            id="email" 
-            value={email} 
-            onChange={(e) => setEmail(e.target.value)} 
-            style={styles.input}
-          />
+
+        {/* Edit Profile Card */}
+        <div className="neo-card">
+          <div className="card-header card-header-success">
+            ✏️ 編輯個人資料
+          </div>
+          <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+            <div className="flex flex-col gap-2">
+              <label htmlFor="email" className="text-xs font-black uppercase tracking-wider">📧 Email</label>
+              <input 
+                type="email" 
+                id="email" 
+                value={email} 
+                onChange={(e) => setEmail(e.target.value)} 
+                className="neo-input px-4 py-3"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <label htmlFor="fullName" className="text-xs font-black uppercase tracking-wider">👤 全名</label>
+              <input 
+                type="text" 
+                id="fullName" 
+                value={fullName} 
+                onChange={(e) => setFullName(e.target.value)} 
+                className="neo-input px-4 py-3"
+              />
+            </div>
+            <button 
+              type="submit" 
+              disabled={isLoading} 
+              className="neo-btn-primary mt-2 py-4 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isLoading ? '⏳ 更新中...' : '💾 儲存變更'}
+            </button>
+          </form>
         </div>
-        <div style={styles.inputGroup}>
-          <label htmlFor="fullName" style={styles.label}>全名</label>
-          <input 
-            type="text" 
-            id="fullName" 
-            value={fullName} 
-            onChange={(e) => setFullName(e.target.value)} 
-            style={styles.input}
-          />
+
+        {/* Security Card */}
+        <div className="neo-card">
+          <div className="card-header card-header-warning">
+            🔒 安全設定
+          </div>
+          <div className="pt-2">
+            <p className="text-sm font-semibold mb-5">
+              定期更改密碼以保護您的帳戶安全
+            </p>
+            <Link 
+              to="/profile/change-password" 
+              className="neo-btn-danger"
+            >
+              🔑 更改密碼
+            </Link>
+          </div>
         </div>
-        <button 
-          type="submit" 
-          disabled={isLoading} 
-          style={styles.button}
-          onMouseOver={(e) => !isLoading && (e.currentTarget.style.backgroundColor = '#0056b3')}
-          onMouseOut={(e) => !isLoading && (e.currentTarget.style.backgroundColor = '#007bff')}
-        >
-          {isLoading ? '更新中...' : '儲存變更'}
-        </button>
-      </form>
-      <Link 
-        to="/profile/change-password" 
-        style={styles.linkButton}
-        onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#5a6268')}
-        onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#6c757d')}
-      >
-        更改密碼
-      </Link>
+      </div>
     </div>
   );
 };
 
-export default UserProfilePage; 
+export default UserProfilePage;

@@ -60,13 +60,16 @@ async def lifespan(app: FastAPI):
             await create_database_indexes(db_manager.db) # 創建索引
 
         
-        # 連接到 Redis
+        # 初始化統一緩存管理器
         try:
-            from .services.cache.conversation_cache_service import conversation_cache_service
-            await conversation_cache_service.connect()
-            std_logger.info("Redis 連接已建立")
+            from .services.cache import unified_cache
+            await unified_cache.initialize()
+            std_logger.info("統一緩存管理器初始化完成")
         except Exception as e:
-            std_logger.warning(f"Redis 連接失敗（將繼續使用純 MongoDB 模式）: {e}")
+            std_logger.warning(f"統一緩存管理器初始化失敗: {e}")
+        
+        # Redis 連接已整合到統一緩存管理器中
+        # 由 unified_cache.initialize() 自動管理
         
         # 使用新的智能預熱機制
         try:
@@ -127,13 +130,16 @@ async def lifespan(app: FastAPI):
         # 應用程式關閉時 - 確保清理工作執行
         std_logger.info("開始應用程式關閉清理...")
         
-        # 關閉 Redis 連接
+        # 關閉統一緩存管理器
         try:
-            from .services.cache.conversation_cache_service import conversation_cache_service
-            await conversation_cache_service.disconnect()
-            std_logger.info("Redis 連接已關閉")
+            from .services.cache import unified_cache
+            await unified_cache.shutdown()
+            std_logger.info("統一緩存管理器已關閉")
         except Exception as e:
-            std_logger.error(f"關閉 Redis 連接失敗: {e}")
+            std_logger.error(f"關閉統一緩存管理器失敗: {e}")
+        
+        # Redis 連接管理已整合到統一緩存中
+        # 不需要額外關閉
         
         # 關閉向量資料庫連接
         try:

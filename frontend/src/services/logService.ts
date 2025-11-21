@@ -10,6 +10,9 @@ export const getLogs = async (
     try {
         const params: Record<string, string> = {}; // Make params explicitly Record<string, string>
         
+        // 獲取更多日誌以確保包含所有等級
+        params.limit = '100';
+        
         if (filterLevel && filterLevel !== 'all') {
             params.level = filterLevel;
         }
@@ -31,13 +34,24 @@ export const getLogs = async (
         const backendLogs: BackendLogEntry[] = response.data as any; // Cast if apiClient.get doesn't match direct array
                                                                    // Or ensure apiClient.get is <BackendLogEntry[]>
 
-        return backendLogs.map((log: BackendLogEntry) => ({
+        const mappedLogs = backendLogs.map((log: BackendLogEntry) => ({
             id: log.id,
             timestamp: log.timestamp, // Consider formatting here if needed globally for LogEntry
-            level: log.level,
+            level: log.level.toUpperCase() as LogLevel, // 確保轉換為大寫
             message: log.message,
             source: log.source || undefined, // Ensure undefined if null/empty for consistency
         }));
+        
+        // 調試：顯示各等級的日誌數量
+        console.log('📊 日誌統計:', {
+            total: mappedLogs.length,
+            ERROR: mappedLogs.filter(l => l.level === 'ERROR').length,
+            WARNING: mappedLogs.filter(l => l.level === 'WARNING').length,
+            INFO: mappedLogs.filter(l => l.level === 'INFO').length,
+            DEBUG: mappedLogs.filter(l => l.level === 'DEBUG').length,
+        });
+        
+        return mappedLogs;
     } catch (error) {
         console.error('獲取日誌失敗:', error);
         throw error;

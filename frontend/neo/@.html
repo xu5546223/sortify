@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dropdown Content Redesign</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --c-green: #29bf12;
+            --c-lime: #abff4f;
+            --c-black: #000000;
+            --c-bg: #f3f4f6;
+        }
+        body { background: var(--c-bg); padding: 50px; font-family: 'Inter', sans-serif; display: flex; justify-content: center; }
+
+        .dropdown-container {
+            width: 500px;
+            background: white;
+            border: 3px solid var(--c-black);
+            box-shadow: 6px 6px 0px var(--c-black);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .header {
+            background: var(--c-green);
+            padding: 8px 12px;
+            border-bottom: 2px solid var(--c-black);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 700;
+        }
+
+        .list-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            border-bottom: 1px solid #e5e7eb;
+            cursor: pointer;
+            transition: background 0.1s;
+        }
+        .list-item:last-child { border-bottom: none; }
+        
+        /* Active State */
+        .list-item.active {
+            background: #f0fdf4; /* Light Green */
+            border-left: 4px solid var(--c-green);
+            padding-left: 8px;
+        }
+        
+        /* Highlight Text */
+        .highlight {
+            background: var(--c-lime);
+            padding: 0 2px;
+            font-weight: bold;
+            border-radius: 2px;
+        }
+        
+        .meta-tag {
+            font-size: 10px;
+            padding: 1px 4px;
+            border: 1px solid #e5e7eb;
+            border-radius: 4px;
+            color: #6b7280;
+            background: #f9fafb;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="dropdown-container">
+        <div class="header">
+            <span>@ 選擇文件</span>
+            <span class="text-xs bg-black text-white px-2 py-0.5 rounded font-mono">Semantic Search</span>
+        </div>
+
+        <!-- Option 1: Best Match -->
+        <div class="list-item active">
+            <!-- 1. 圖標代替文字類型 -->
+            <div class="w-10 h-10 bg-white border-2 border-black flex items-center justify-center flex-shrink-0 shadow-[2px_2px_0px_black]">
+                <i class="ph-fill ph-receipt text-xl text-orange-500"></i>
+            </div>
+            
+            <div class="flex-1 min-w-0">
+                <div class="flex justify-between items-center">
+                    <!-- 2. 文件名 -->
+                    <span class="font-bold text-sm truncate text-gray-900">photo_17635...a5b50d.jpg</span>
+                    <!-- 3. 輔助元數據 (日期) -->
+                    <span class="text-[10px] text-gray-400 font-mono">2025/09/19</span>
+                </div>
+                
+                <!-- 4. 關鍵片段 (取代長摘要) -->
+                <div class="text-xs text-gray-600 mt-1 truncate">
+                    ...梁社漢排骨飯，消費金額 <span class="highlight">188元</span>，發票號碼 TK-444...
+                </div>
+                
+                <div class="flex gap-2 mt-1.5">
+                     <!-- 5. 精簡標籤 -->
+                    <span class="meta-tag">電子發票</span>
+                    <span class="meta-tag">餐飲</span>
+                </div>
+            </div>
+
+            <!-- 6. 匹配分數 -->
+            <div class="flex flex-col items-end gap-1 pl-2">
+                <span class="text-[10px] font-bold text-green-600 bg-green-100 px-1 rounded">98%</span>
+                <i class="ph-bold ph-arrow-return-left text-xs text-gray-300"></i>
+            </div>
+        </div>
+
+        <!-- Option 2 -->
+        <div class="list-item">
+            <div class="w-10 h-10 bg-white border-2 border-black flex items-center justify-center flex-shrink-0 shadow-[2px_2px_0px_black]">
+                <i class="ph-fill ph-receipt text-xl text-orange-500"></i>
+            </div>
+            <div class="flex-1 min-w-0">
+                <div class="flex justify-between items-center">
+                    <span class="font-bold text-sm truncate">photo_17625...beef2.jpg</span>
+                    <span class="text-[10px] text-gray-400 font-mono">2025/09/10</span>
+                </div>
+                <div class="text-xs text-gray-600 mt-1 truncate">
+                    ...早餐交易，包含<span class="highlight">鮮嫩熱狗蛋餅</span>、非基改豆漿...
+                </div>
+                <div class="flex gap-2 mt-1.5">
+                    <span class="meta-tag">餐飲收據</span>
+                </div>
+            </div>
+             <div class="flex flex-col items-end gap-1 pl-2">
+                <span class="text-[10px] font-bold text-gray-400">85%</span>
+            </div>
+        </div>
+        
+        <!-- Option 3 -->
+         <div class="list-item">
+            <div class="w-10 h-10 bg-white border-2 border-black flex items-center justify-center flex-shrink-0 shadow-[2px_2px_0px_black]">
+                <i class="ph-fill ph-file-pdf text-xl text-red-500"></i>
+            </div>
+            <div class="flex-1 min-w-0">
+                <div class="flex justify-between items-center">
+                    <span class="font-bold text-sm truncate">Credit_Card_Bill_Sep.pdf</span>
+                    <span class="text-[10px] text-gray-400 font-mono">2025/09/01</span>
+                </div>
+                <div class="text-xs text-gray-600 mt-1 truncate">
+                    ...信用卡帳單明細，包含<span class="highlight">梁社漢</span>的刷卡紀錄...
+                </div>
+                 <div class="flex gap-2 mt-1.5">
+                    <span class="meta-tag">財務</span>
+                </div>
+            </div>
+             <div class="flex flex-col items-end gap-1 pl-2">
+                <span class="text-[10px] font-bold text-gray-400">72%</span>
+            </div>
+        </div>
+
+    </div>
+
+</body>
+</html>

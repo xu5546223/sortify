@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced AI Animation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --c-green: #29bf12;
+            --c-teal: #08bdbd;
+            --c-lime: #abff4f;
+            --c-red: #f21b3f;
+            --c-orange: #ff9914;
+            --c-black: #000000;
+            --c-white: #ffffff;
+            --c-bg: #f3f4f6;
+            
+            --border: 3px solid var(--c-black);
+            --shadow: 6px 6px 0px 0px var(--c-black);
+        }
+
+        body {
+            background-color: var(--c-bg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            font-family: 'Space Grotesk', sans-serif;
+            overflow: hidden;
+        }
+
+        .scene-container {
+            position: relative;
+            width: 900px;
+            height: 500px;
+            /* border: 1px dashed #ccc; Debug */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* --- 1. 背景線路 (Tracks) --- */
+        .track-svg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0; /* 放在最底層 */
+            pointer-events: none;
+        }
+        .track-path {
+            fill: none;
+            stroke: var(--c-black);
+            stroke-width: 4;
+            stroke-linecap: round;
+        }
+        /* 讓線條有流動感 (選用) */
+        .track-flow {
+            fill: none;
+            stroke: #e5e7eb;
+            stroke-width: 2;
+            stroke-dasharray: 10 10;
+        }
+
+        /* --- 2. AI 核心機器 (The Hub) --- */
+        .ai-hub {
+            position: relative;
+            width: 180px;
+            height: 180px;
+            background: var(--c-white);
+            border: var(--border);
+            box-shadow: var(--shadow);
+            z-index: 20;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .hub-header {
+            background: var(--c-black);
+            color: var(--c-lime);
+            padding: 4px 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        /* 核心鏡頭區 */
+        .hub-body {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden; /* 限制雷射不出界 */
+        }
+
+        /* 鏡頭組件 */
+        .lens-outer {
+            width: 80px;
+            height: 80px;
+            border: 3px solid var(--c-black);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f9fafb;
+        }
+        .lens-inner {
+            width: 40px;
+            height: 40px;
+            background: var(--c-black);
+            border-radius: 50%;
+            position: relative;
+        }
+        .lens-glow {
+            width: 100%; height: 100%;
+            border-radius: 50%;
+            background: var(--c-green);
+            animation: breathe 2s infinite;
+            box-shadow: 0 0 15px var(--c-green);
+        }
+
+        /* 掃描雷射 (垂直線) */
+        .laser-beam {
+            position: absolute;
+            width: 100%;
+            height: 2px;
+            background: var(--c-red);
+            box-shadow: 0 0 8px var(--c-red);
+            top: 10%;
+            opacity: 0;
+            /* animation: scan 1.5s infinite linear; 在 JS 控制或 CSS 開啟 */
+        }
+
+        /* 機器底部標籤 */
+        .hub-footer {
+            border-top: 3px solid var(--c-black);
+            padding: 8px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 14px;
+            background: #f3f4f6;
+        }
+
+        /* --- 3. 文件 (The File) --- */
+        .doc-card {
+            position: absolute;
+            width: 60px;
+            height: 70px;
+            background: var(--c-white);
+            border: 2px solid var(--c-black);
+            border-radius: 6px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            box-shadow: 2px 2px 0 rgba(0,0,0,0.1);
+        }
+        .doc-line { width: 60%; height: 2px; background: #ccc; margin: 2px 0; }
+
+        /* 動畫路徑定義 */
+        .doc-anim-1 { animation: flowToTop 4s infinite linear; }
+        .doc-anim-2 { animation: flowToBottom 4s infinite linear 1.3s; }
+        .doc-anim-3 { animation: flowToMiddle 4s infinite linear 2.6s; }
+
+        @keyframes flowToTop {
+            0% { left: -80px; top: 50%; transform: translateY(-50%) rotate(0deg); opacity: 1; }
+            30% { left: 360px; top: 50%; transform: translateY(-50%); background: white; } /* 進機器 */
+            40% { left: 450px; top: 50%; transform: translateY(-50%) scale(0.8); background: var(--c-teal); border-color: black; } /* 變色 */
+            50% { left: 500px; top: 50%; }
+            90% { left: 780px; top: 15%; transform: translateY(0) rotate(-5deg); opacity: 1; } /* 進資料夾 */
+            100% { left: 820px; top: 15%; opacity: 0; }
+        }
+        
+        @keyframes flowToBottom {
+            0% { left: -80px; top: 50%; transform: translateY(-50%); opacity: 1; }
+            30% { left: 360px; top: 50%; transform: translateY(-50%); background: white; }
+            40% { left: 450px; top: 50%; transform: translateY(-50%) scale(0.8); background: var(--c-orange); }
+            50% { left: 500px; top: 50%; }
+            90% { left: 780px; top: 85%; transform: translateY(0) rotate(5deg); opacity: 1; }
+            100% { left: 820px; top: 85%; opacity: 0; }
+        }
+
+        @keyframes flowToMiddle {
+            0% { left: -80px; top: 50%; transform: translateY(-50%); opacity: 1; }
+            30% { left: 360px; top: 50%; transform: translateY(-50%); background: white; }
+            40% { left: 450px; top: 50%; transform: translateY(-50%) scale(0.8); background: var(--c-green); }
+            90% { left: 780px; top: 50%; transform: translateY(-50%); opacity: 1; }
+            100% { left: 820px; top: 50%; opacity: 0; }
+        }
+
+        /* --- 4. 目標資料夾 (Buckets) --- */
+        .bucket-group {
+            position: absolute;
+            right: 50px;
+            height: 400px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            z-index: 15;
+            width: 140px;
+        }
+
+        .bucket {
+            background: var(--c-white);
+            border: var(--border);
+            padding: 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 4px 4px 0px rgba(0,0,0,0.1);
+            transition: transform 0.1s;
+        }
+        .bucket i { font-size: 28px; }
+        
+        .b-teal { border-left: 8px solid var(--c-teal); }
+        .b-teal i { color: var(--c-teal); }
+        
+        .b-green { border-left: 8px solid var(--c-green); }
+        .b-green i { color: var(--c-green); }
+        
+        .b-orange { border-left: 8px solid var(--c-orange); }
+        .b-orange i { color: var(--c-orange); }
+
+        /* 呼吸燈動畫 */
+        @keyframes breathe { 0%, 100% { opacity: 0.5; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.1); } }
+        
+        /* 模擬雷射掃描 */
+        .ai-hub:hover .laser-beam {
+            animation: scan 1s infinite linear;
+            opacity: 1;
+        }
+        @keyframes scan { 0% { top: 0%; } 100% { top: 100%; } }
+
+    </style>
+</head>
+<body>
+
+    <div class="scene-container">
+        
+        <!-- 1. 背景線路 (SVG Paths) -->
+        <!-- 這解決了「中間需要線嗎」的問題：線在背景，作為路徑指引，不干擾前景 -->
+        <svg class="track-svg">
+            <!-- Input Line -->
+            <path d="M0,250 L360,250" class="track-path" />
+            
+            <!-- Output Lines (Branching) -->
+            <!-- Top Branch -->
+            <path d="M540,250 L600,250 L650,75 L800,75" class="track-path" />
+            <!-- Middle Branch -->
+            <path d="M540,250 L800,250" class="track-path" />
+            <!-- Bottom Branch -->
+            <path d="M540,250 L600,250 L650,425 L800,425" class="track-path" />
+        </svg>
+
+        <!-- 2. AI 核心 (The Hub) -->
+        <div class="ai-hub">
+            <div class="hub-header">
+                <span>SYS.AUTO</span>
+                <span class="text-[var(--c-green)]">● ON</span>
+            </div>
+            <div class="hub-body">
+                <div class="laser-beam"></div>
+                <div class="lens-outer">
+                    <div class="lens-inner">
+                        <div class="lens-glow"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="hub-footer">
+                AI CLASSIFIER
+            </div>
+        </div>
+
+        <!-- 3. 移動的文件 -->
+        <div class="doc-card doc-anim-1">
+            <i class="ph-bold ph-file-text text-xl"></i>
+            <div class="doc-line"></div><div class="doc-line"></div>
+        </div>
+
+        <div class="doc-card doc-anim-2">
+            <i class="ph-bold ph-file-image text-xl"></i>
+            <div class="doc-line"></div><div class="doc-line"></div>
+        </div>
+
+        <div class="doc-card doc-anim-3">
+            <i class="ph-bold ph-file-pdf text-xl"></i>
+            <div class="doc-line"></div><div class="doc-line"></div>
+        </div>
+
+        <!-- 4. 目標資料夾 (Buckets) -->
+        <div class="bucket-group">
+            
+            <!-- Top: Finance -->
+            <div class="bucket b-teal">
+                <i class="ph-fill ph-receipt"></i>
+                <div>
+                    <div class="text-xs font-bold text-gray-500">CATEGORY</div>
+                    <div class="font-bold">FINANCE</div>
+                </div>
+            </div>
+
+            <!-- Mid: Docs -->
+            <div class="bucket b-green">
+                <i class="ph-fill ph-file-doc"></i>
+                 <div>
+                    <div class="text-xs font-bold text-gray-500">CATEGORY</div>
+                    <div class="font-bold">DOCS</div>
+                </div>
+            </div>
+
+            <!-- Bot: Review -->
+            <div class="bucket b-orange">
+                <i class="ph-fill ph-warning-octagon"></i>
+                 <div>
+                    <div class="text-xs font-bold text-gray-500">STATUS</div>
+                    <div class="font-bold">REVIEW</div>
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+
+</body>
+</html>

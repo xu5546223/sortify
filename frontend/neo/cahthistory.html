@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>History Sidebar UI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --c-green: #29bf12;
+            --c-teal: #08bdbd;
+            --c-lime: #abff4f;
+            --c-red: #f21b3f;
+            --c-black: #000000;
+            --c-white: #ffffff;
+            --c-bg: #f3f4f6;
+            --border: 2px solid var(--c-black);
+        }
+
+        body { font-family: 'Inter', sans-serif; background: var(--c-bg); }
+        .font-display { font-family: 'Space Grotesk', sans-serif; }
+
+        /* 滾動條隱藏但可滾動 */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* 列表項目基礎樣式 */
+        .history-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            margin-bottom: 4px;
+            border-radius: 8px;
+            border: 2px solid transparent; /* 預留邊框位置避免抖動 */
+            cursor: pointer;
+            transition: all 0.1s ease;
+            position: relative;
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: #374151;
+        }
+
+        /* Hover 效果 */
+        .history-item:hover {
+            background-color: #e5e7eb;
+        }
+
+        /* 選中狀態 (Active) */
+        .history-item.active {
+            background-color: var(--c-teal);
+            color: white;
+            border: 2px solid var(--c-black);
+            box-shadow: 3px 3px 0px 0px var(--c-black);
+            font-weight: 700;
+        }
+        .history-item.active .icon-main { color: white; }
+        .history-item.active .meta-info { color: rgba(255,255,255,0.8); }
+
+        /* 操作按鈕 (預設隱藏，Hover 顯示) */
+        .item-actions {
+            display: none;
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: inherit; /* 跟隨父層背景 */
+            padding-left: 8px;
+            /* 漸變遮罩，讓文字被蓋住時比較自然 */
+            background: linear-gradient(to right, transparent, inherit 20%); 
+        }
+        
+        .history-item:hover .item-actions { display: flex; gap: 4px; background: #e5e7eb; }
+        .history-item.active:hover .item-actions { background: var(--c-teal); }
+
+        .action-btn {
+            padding: 4px;
+            border-radius: 4px;
+            color: #6b7280;
+        }
+        .action-btn:hover { background: rgba(0,0,0,0.1); color: black; }
+        .history-item.active .action-btn { color: white; }
+        .history-item.active .action-btn:hover { background: rgba(0,0,0,0.2); }
+
+        /* 新增對話按鈕 */
+        .new-chat-btn {
+            background: var(--c-black);
+            color: var(--c-lime);
+            border: 2px solid var(--c-black);
+            box-shadow: 3px 3px 0px 0px rgba(0,0,0,0.2);
+            transition: transform 0.1s;
+        }
+        .new-chat-btn:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0px 0px rgba(0,0,0,0.2); }
+        .new-chat-btn:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0px 0px rgba(0,0,0,0.2); }
+
+    </style>
+</head>
+<body class="flex h-screen p-10">
+
+    <!-- SIDEBAR CONTAINER -->
+    <aside class="w-72 bg-white border-2 border-black flex flex-col h-full shadow-[6px_6px_0px_0px_rgba(0,0,0,0.1)]">
+        
+        <!-- 1. 頭部：新增與搜索 -->
+        <div class="p-4 border-b-2 border-black space-y-3 bg-white z-10">
+            <!-- 新增對話 -->
+            <button class="new-chat-btn w-full py-3 flex items-center justify-center gap-2 font-bold uppercase tracking-wide rounded-lg">
+                <i class="ph-bold ph-plus text-lg"></i> New Chat
+            </button>
+
+            <!-- 搜尋框 -->
+            <div class="relative group">
+                <i class="ph-bold ph-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-black"></i>
+                <input type="text" placeholder="Search history..." 
+                       class="w-full bg-gray-50 border-2 border-gray-200 rounded-lg py-2 pl-9 pr-3 text-sm font-bold outline-none focus:border-black transition-colors">
+            </div>
+        </div>
+
+        <!-- 2. 列表區域 (Scrollable) -->
+        <div class="flex-1 overflow-y-auto p-3 no-scrollbar space-y-6">
+            
+            <!-- PINNED (置頂區) -->
+            <div class="space-y-1">
+                <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2 flex justify-between items-center">
+                    <span>Pinned</span>
+                    <i class="ph-fill ph-push-pin text-xs"></i>
+                </div>
+                
+                <!-- Item: 財務數據 (Active) -->
+                <div class="history-item active">
+                    <i class="ph-fill ph-chart-bar text-lg icon-main"></i>
+                    <div class="flex-1 min-w-0">
+                        <div class="truncate">財務數據分析 Q3</div>
+                        <div class="text-[10px] meta-info truncate">Mongo: sortify_finance</div>
+                    </div>
+                    <!-- Hover Actions -->
+                    <div class="item-actions">
+                        <button class="action-btn" title="Unpin"><i class="ph-bold ph-push-pin-slash"></i></button>
+                        <button class="action-btn" title="Edit"><i class="ph-bold ph-pencil-simple"></i></button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TODAY (今天) -->
+            <div class="space-y-1">
+                <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">Today</div>
+
+                <!-- Item -->
+                <div class="history-item group">
+                    <i class="ph-bold ph-chat-text text-lg text-gray-400 group-hover:text-black"></i>
+                    <div class="flex-1 min-w-0">
+                        <div class="truncate">顯示所有中華電信帳單</div>
+                        <div class="text-[10px] text-gray-400 group-hover:text-gray-600 truncate">10:42 AM</div>
+                    </div>
+                    <div class="item-actions">
+                        <button class="action-btn" title="Pin"><i class="ph-bold ph-push-pin"></i></button>
+                        <button class="action-btn" title="Edit"><i class="ph-bold ph-pencil-simple"></i></button>
+                        <button class="action-btn hover:text-[var(--c-red)]" title="Delete"><i class="ph-bold ph-trash"></i></button>
+                    </div>
+                </div>
+
+                 <!-- Item -->
+                 <div class="history-item group">
+                    <i class="ph-bold ph-chat-text text-lg text-gray-400 group-hover:text-black"></i>
+                    <div class="flex-1 min-w-0">
+                        <div class="truncate">幫我找罰單</div>
+                        <div class="text-[10px] text-gray-400 group-hover:text-gray-600 truncate">09:15 AM</div>
+                    </div>
+                    <div class="item-actions">
+                        <button class="action-btn"><i class="ph-bold ph-push-pin"></i></button>
+                        <button class="action-btn"><i class="ph-bold ph-pencil-simple"></i></button>
+                        <button class="action-btn hover:text-[var(--c-red)]"><i class="ph-bold ph-trash"></i></button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- YESTERDAY (昨天) -->
+            <div class="space-y-1">
+                <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">Yesterday</div>
+
+                <div class="history-item group">
+                    <i class="ph-bold ph-chat-text text-lg text-gray-400 group-hover:text-black"></i>
+                    <div class="flex-1 min-w-0">
+                        <div class="truncate">車號 KF5960 的資料...</div>
+                        <div class="text-[10px] text-gray-400 group-hover:text-gray-600 truncate">4 messages</div>
+                    </div>
+                    <div class="item-actions">
+                        <button class="action-btn"><i class="ph-bold ph-push-pin"></i></button>
+                        <button class="action-btn"><i class="ph-bold ph-pencil-simple"></i></button>
+                        <button class="action-btn hover:text-[var(--c-red)]"><i class="ph-bold ph-trash"></i></button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- PREVIOUS 7 DAYS -->
+             <div class="space-y-1">
+                <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">Previous 7 Days</div>
+                 <div class="history-item group">
+                    <i class="ph-bold ph-chat-text text-lg text-gray-400 group-hover:text-black"></i>
+                    <div class="flex-1 min-w-0">
+                        <div class="truncate">比較國泰人壽旅平險</div>
+                        <div class="text-[10px] text-gray-400 group-hover:text-gray-600 truncate">Nov 17</div>
+                    </div>
+                     <div class="item-actions">
+                        <button class="action-btn"><i class="ph-bold ph-push-pin"></i></button>
+                        <button class="action-btn"><i class="ph-bold ph-pencil-simple"></i></button>
+                        <button class="action-btn hover:text-[var(--c-red)]"><i class="ph-bold ph-trash"></i></button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- 3. 底部：用戶與設置 -->
+        <div class="p-3 border-t-2 border-black bg-gray-50">
+            <button class="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-white hover:shadow-[2px_2px_0px_black] border border-transparent hover:border-black transition-all">
+                <div class="w-8 h-8 bg-[var(--c-lime)] border-2 border-black rounded-full flex items-center justify-center font-bold text-xs">
+                    AD
+                </div>
+                <div class="flex-1 text-left">
+                    <div class="text-xs font-bold">Admin User</div>
+                    <div class="text-[10px] text-gray-500">Pro Plan</div>
+                </div>
+                <i class="ph-bold ph-gear text-gray-400"></i>
+            </button>
+        </div>
+    </aside>
+
+</body>
+</html>

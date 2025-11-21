@@ -394,6 +394,7 @@ async def remove_cached_document(
         {"_id": conversation_id, "user_id": user_id},
         {
             "$pull": {"cached_documents": document_id},
+            "$unset": {f"cached_document_data.{document_id}": ""},  # 同時移除文檔數據
             "$set": {"updated_at": datetime.now(UTC)}
         }
     )
@@ -404,4 +405,62 @@ async def remove_cached_document(
     else:
         logger.warning(f"Failed to remove document {document_id} from conversation {conversation_id}")
         return False
+
+
+async def pin_conversation(
+    db: AsyncIOMotorDatabase,
+    conversation_id: UUID,
+    user_id: UUID
+) -> Optional[ConversationInDB]:
+    """
+    置頂對話
+    
+    Args:
+        db: 數據庫連接
+        conversation_id: 對話ID
+        user_id: 用戶ID
+        
+    Returns:
+        更新後的對話對象，如果失敗則返回 None
+    """
+    result = await db.conversations.update_one(
+        {"_id": conversation_id, "user_id": user_id},
+        {"$set": {"is_pinned": True, "updated_at": datetime.now(UTC)}}
+    )
+    
+    if result.modified_count > 0:
+        logger.info(f"✅ Pinned conversation {conversation_id} for user {user_id}")
+        return await get_conversation(db, conversation_id, user_id)
+    else:
+        logger.warning(f"Failed to pin conversation {conversation_id} for user {user_id}")
+        return None
+
+
+async def unpin_conversation(
+    db: AsyncIOMotorDatabase,
+    conversation_id: UUID,
+    user_id: UUID
+) -> Optional[ConversationInDB]:
+    """
+    取消置頂對話
+    
+    Args:
+        db: 數據庫連接
+        conversation_id: 對話ID
+        user_id: 用戶ID
+        
+    Returns:
+        更新後的對話對象，如果失敗則返回 None
+    """
+    result = await db.conversations.update_one(
+        {"_id": conversation_id, "user_id": user_id},
+        {"$set": {"is_pinned": False, "updated_at": datetime.now(UTC)}}
+    )
+    
+    if result.modified_count > 0:
+        logger.info(f"✅ Unpinned conversation {conversation_id} for user {user_id}")
+        return await get_conversation(db, conversation_id, user_id)
+    else:
+        logger.warning(f"Failed to unpin conversation {conversation_id} for user {user_id}")
+        return None
 

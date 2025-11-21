@@ -168,12 +168,12 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ isOpen, onClose, doc }) => 
 
   return (
     <div
-      className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50"
+      className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-50"
       onClick={handleOverlayClick}
     >
       <div 
         onClick={(e: React.MouseEvent) => e.stopPropagation()} 
-        className="relative w-full h-full max-w-7xl max-h-[95vh] bg-surface-50 rounded-lg shadow-xl flex flex-col overflow-hidden"
+        className="relative w-full h-full max-w-7xl max-h-[95vh] bg-white rounded-lg shadow-2xl flex flex-col overflow-hidden"
       >
         <div className="flex items-center justify-between p-4 border-b border-surface-200 bg-surface-50 rounded-t-lg flex-shrink-0">
           <h2 className="text-xl font-semibold text-surface-900 truncate">

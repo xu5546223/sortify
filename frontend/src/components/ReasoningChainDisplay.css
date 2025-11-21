@@ -1,0 +1,443 @@
+/**
+ * Reasoning Chain Display Styles
+ * Neo-Brutalism 風格樣式
+ */
+
+/* CSS 變數定義 */
+:root {
+  --c-green: #29bf12;
+  --c-teal: #08bdbd;
+  --c-lime: #abff4f;
+  --c-orange: #ff9914;
+  --c-black: #000000;
+  --c-white: #ffffff;
+  --c-bg: #f3f4f6;
+}
+
+/* 主容器 */
+.reasoning-chain-container {
+  background: white;
+  border: 2px solid var(--c-black);
+  border-radius: 16px;
+  box-shadow: 4px 4px 0px 0px var(--c-black);
+  overflow: hidden;
+  margin-bottom: 24px;
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* 頂部狀態條 */
+.reasoning-chain-header {
+  background: #f9fafb;
+  border-bottom: 2px solid var(--c-black);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 12px;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.reasoning-chain-title {
+  flex: 1;
+}
+
+.reasoning-chain-time {
+  font-family: 'JetBrains Mono', monospace;
+  background: var(--c-black);
+  color: var(--c-lime);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+}
+
+.reasoning-chain-streaming {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--c-green);
+  font-size: 11px;
+  animation: pulse 2s infinite;
+}
+
+.streaming-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--c-green);
+  border-radius: 50%;
+  animation: blink 1s infinite;
+}
+
+.text-neo-teal {
+  color: var(--c-teal) !important;
+}
+
+/* 步驟列表容器 */
+.reasoning-chain-steps {
+  padding: 24px;
+  padding-bottom: 30px; /* 增加底部 padding 避免最後一個圖標被裁剪 */
+  position: relative; /* 確保絕對定位的圖標相對於此容器 */
+}
+
+/* 單個步驟 */
+.reasoning-step {
+  position: relative;
+  padding-left: 40px;
+  padding-bottom: 20px;
+  min-height: 40px; /* 確保有足夠空間顯示圖標 */
+}
+
+.reasoning-step.last {
+  padding-bottom: 10px; /* 保留一點底部空間，避免裁剪 */
+}
+
+/* 連接線 */
+.reasoning-step-line {
+  position: absolute;
+  left: 14px;
+  top: 30px;
+  bottom: 0;
+  width: 2px;
+  background: #e5e7eb;
+  z-index: 0;
+}
+
+/* 步驟圖標 */
+.reasoning-step-icon {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 30px;
+  height: 30px;
+  background: white;
+  border: 2px solid #e5e7eb;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+  font-size: 14px;
+  transition: all 0.3s;
+}
+
+/* 步驟狀態樣式 */
+.reasoning-step-icon.active {
+  border-color: var(--c-black);
+  background: var(--c-lime);
+  animation: iconPulse 2s infinite;
+}
+
+.reasoning-step-icon.done {
+  background: var(--c-green);
+  border-color: var(--c-black);
+  color: var(--c-black);
+}
+
+.reasoning-step-icon.pending {
+  border-style: dashed;
+  border-color: #d1d5db;
+  color: #9ca3af;
+}
+
+/* 步驟內容 */
+.reasoning-step-content {
+  min-height: 30px;
+}
+
+/* 步驟類型標籤 */
+.reasoning-step-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: #9ca3af;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* 步驟訊息 */
+.reasoning-step-message {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-black);
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+/* 可折疊詳情 */
+.reasoning-step-details {
+  margin-top: 12px;
+}
+
+.reasoning-details-summary {
+  list-style: none;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.reasoning-details-summary::-webkit-details-marker {
+  display: none;
+}
+
+.reasoning-details-summary:hover {
+  background: #f3f4f6;
+  border-color: var(--c-teal);
+  color: var(--c-teal);
+}
+
+.reasoning-step-details[open] .reasoning-details-summary {
+  margin-bottom: 12px;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.reasoning-details-summary i {
+  margin-left: auto;
+  transition: transform 0.2s;
+}
+
+.reasoning-step-details[open] .reasoning-details-summary i {
+  transform: rotate(180deg);
+}
+
+/* 詳情內容 */
+.reasoning-details-content {
+  padding: 12px;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-top: none;
+  border-bottom-left-radius: 6px;
+  border-bottom-right-radius: 6px;
+}
+
+.reasoning-code-block {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 12px;
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  overflow-x: auto;
+  border: 2px solid var(--c-black);
+  margin: 0;
+}
+
+.reasoning-detail-text {
+  font-size: 13px;
+  color: #6b7280;
+  line-height: 1.6;
+}
+
+/* 批准卡片樣式 */
+.reasoning-approval-card {
+  background: #fff7ed;
+  border: 2px solid #ff9914;
+  border-radius: 12px;
+  padding: 0;
+  margin-top: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(255, 153, 20, 0.1);
+}
+
+.approval-card-header {
+  background: linear-gradient(135deg, #ff9914 0%, #ffb84d 100%);
+  color: white;
+  padding: 12px 16px;
+  font-weight: 700;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 2px solid #ff9914;
+}
+
+.approval-card-header i {
+  font-size: 18px;
+}
+
+.approval-card-content {
+  padding: 16px;
+}
+
+.approval-description {
+  font-size: 13px;
+  color: #78350f;
+  margin-bottom: 12px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+
+.approval-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px 0;
+  font-size: 13px;
+  color: #92400e;
+}
+
+.approval-list li {
+  padding: 4px 0;
+  padding-left: 4px;
+}
+
+.approval-documents {
+  margin-bottom: 16px;
+}
+
+.documents-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #78350f;
+  margin-bottom: 8px;
+}
+
+.documents-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 13px;
+  color: #92400e;
+}
+
+.documents-list li {
+  padding: 4px 0;
+  padding-left: 4px;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.approval-button {
+  flex: 1;
+  padding: 10px 16px;
+  border: 2px solid var(--c-black);
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.approval-button.approve {
+  background: var(--c-green);
+  color: white;
+}
+
+.approval-button.approve:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(41, 191, 18, 0.3);
+}
+
+.approval-button.skip {
+  background: #f3f4f6;
+  color: #6b7280;
+  border-color: #9ca3af;
+}
+
+.approval-button.skip:hover:not(:disabled) {
+  background: #e5e7eb;
+}
+
+.approval-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.approval-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* 流式游標 */
+.reasoning-cursor {
+  display: inline-block;
+  color: var(--c-green);
+  font-weight: bold;
+  animation: blink 1s infinite;
+  margin-left: 2px;
+}
+
+/* 動畫 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes iconPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(171, 255, 79, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(171, 255, 79, 0);
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* 響應式設計 */
+@media (max-width: 768px) {
+  .reasoning-chain-steps {
+    padding: 16px;
+  }
+  
+  .reasoning-step {
+    padding-left: 32px;
+  }
+  
+  .reasoning-step-icon {
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+  }
+  
+  .reasoning-step-line {
+    left: 11px;
+    top: 24px;
+  }
+  
+  .reasoning-step-message {
+    font-size: 13px;
+  }
+  
+  .reasoning-code-block {
+    font-size: 11px;
+    padding: 10px;
+  }
+}

@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sortify - Cache Monitor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --c-green: #29bf12;
+            --c-teal: #08bdbd;
+            --c-lime: #abff4f;
+            --c-red: #f21b3f;
+            --c-orange: #ff9914;
+            --c-black: #000000;
+            --c-white: #ffffff;
+            --c-bg: #f3f4f6;
+
+            --border-black: 3px solid var(--c-black);
+            --shadow-hard: 5px 5px 0px 0px var(--c-black);
+            --shadow-hover: 3px 3px 0px 0px var(--c-black);
+            --shadow-active: 0px 0px 0px 0px var(--c-black);
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--c-bg);
+            color: var(--c-black);
+        }
+
+        .font-display { font-family: 'Space Grotesk', sans-serif; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* Neo-Box */
+        .neo-box {
+            background: var(--c-white);
+            border: var(--border-black);
+            box-shadow: var(--shadow-hard);
+        }
+
+        /* 按鈕 */
+        .neo-btn {
+            border: var(--border-black);
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 700;
+            text-transform: uppercase;
+            transition: all 0.1s ease;
+            cursor: pointer;
+            box-shadow: var(--shadow-hard);
+            display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+            background: white;
+        }
+        .neo-btn:hover { transform: translate(-2px, -2px); box-shadow: var(--shadow-hover); background-color: var(--c-lime); }
+        .neo-btn:active { transform: translate(2px, 2px); box-shadow: var(--shadow-active); }
+        .btn-danger { background-color: var(--c-red); color: white; }
+        .btn-danger:hover { background-color: #d91b38; }
+
+        /* Redis 狀態燈 */
+        .status-indicator {
+            width: 12px; height: 12px; border-radius: 50%; border: 2px solid black;
+            background-color: #ccc;
+        }
+        .status-indicator.online { background-color: var(--c-green); box-shadow: 0 0 8px var(--c-green); animation: pulse 2s infinite; }
+        
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+
+        /* CSS Chart (Simulated) */
+        .bar-chart { display: flex; align-items: flex-end; gap: 4px; height: 60px; }
+        .bar { width: 8px; background: black; border-top: 2px solid black; border-left: 2px solid black; border-right: 2px solid black; transition: height 0.5s; }
+        .bar.hit { background: var(--c-teal); }
+        .bar.miss { background: var(--c-red); }
+
+        /* Progress Bar */
+        .neo-progress {
+            width: 100%; height: 16px; border: 2px solid black; background: #eee; position: relative;
+        }
+        .neo-progress-bar {
+            height: 100%; background: var(--c-teal); border-right: 2px solid black;
+        }
+
+        /* Terminal */
+        .terminal-window {
+            background: #1e1e1e; border: var(--border-black); color: #33ff00;
+            font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;
+            padding: 16px; height: 150px; overflow-y: auto;
+        }
+    </style>
+</head>
+<body class="p-6 md:p-10 min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
+        <div>
+            <h1 class="font-display text-4xl font-bold uppercase">Cache Control</h1>
+            <p class="text-gray-500 font-bold mt-1">Redis Performance Monitoring & Management</p>
+        </div>
+        <div class="flex gap-3">
+            <button class="neo-btn px-4 py-2 text-sm">
+                <i class="ph-bold ph-arrows-clockwise"></i> Refresh
+            </button>
+            <button class="neo-btn px-4 py-2 text-sm">
+                <i class="ph-bold ph-broom"></i> Prune Expired
+            </button>
+            <button class="neo-btn btn-danger px-4 py-2 text-sm">
+                <i class="ph-bold ph-trash"></i> Flush ALL
+            </button>
+        </div>
+    </header>
+
+    <!-- 1. Redis Status Dashboard (頂部狀態欄) -->
+    <section class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        
+        <!-- Connection Status -->
+        <div class="neo-box p-4 flex flex-col justify-between relative overflow-hidden">
+            <div class="flex justify-between items-start">
+                <span class="font-bold text-gray-500 text-xs uppercase">Redis Connection</span>
+                <div class="status-indicator online"></div>
+            </div>
+            <div class="mt-2">
+                <div class="text-2xl font-display font-bold">CONNECTED</div>
+                <div class="font-mono text-xs mt-1 text-[var(--c-green)]">Latency: 2ms</div>
+            </div>
+            <div class="mt-3 pt-3 border-t-2 border-gray-100 flex justify-between text-xs font-bold">
+                <span>Uptime</span>
+                <span class="font-mono">14d 2h 12m</span>
+            </div>
+            <!-- Decor -->
+            <div class="absolute -right-4 -bottom-4 opacity-10 text-8xl"><i class="ph-fill ph-plugs-connected"></i></div>
+        </div>
+
+        <!-- Hit Rate (Visual Chart) -->
+        <div class="neo-box p-4">
+            <div class="flex justify-between items-center mb-2">
+                <span class="font-bold text-gray-500 text-xs uppercase">Hit Rate (24h)</span>
+                <span class="font-mono font-bold text-[var(--c-teal)]">94.2%</span>
+            </div>
+            <!-- CSS Bar Chart Simulation -->
+            <div class="bar-chart border-b-2 border-black pb-1">
+                <div class="bar hit" style="height: 60%"></div>
+                <div class="bar hit" style="height: 80%"></div>
+                <div class="bar hit" style="height: 40%"></div>
+                <div class="bar miss" style="height: 20%"></div>
+                <div class="bar hit" style="height: 90%"></div>
+                <div class="bar hit" style="height: 75%"></div>
+                <div class="bar hit" style="height: 85%"></div>
+                <div class="bar hit" style="height: 65%"></div>
+                <div class="bar miss" style="height: 30%"></div>
+                <div class="bar hit" style="height: 95%"></div>
+                <div class="bar hit" style="height: 80%"></div>
+                <div class="bar hit" style="height: 88%"></div>
+            </div>
+            <div class="text-[10px] font-bold text-gray-400 mt-1 text-right">Last 60 min trend</div>
+        </div>
+
+        <!-- Memory Usage -->
+        <div class="neo-box p-4">
+            <div class="flex justify-between items-start mb-2">
+                <span class="font-bold text-gray-500 text-xs uppercase">Memory Used</span>
+                <i class="ph-bold ph-memory text-xl"></i>
+            </div>
+            <div class="text-3xl font-display font-bold">128.4 <span class="text-sm text-gray-500">MB</span></div>
+            
+            <div class="mt-3">
+                <div class="flex justify-between text-[10px] font-bold mb-1">
+                    <span>Used</span>
+                    <span>Max: 512MB</span>
+                </div>
+                <div class="neo-progress">
+                    <div class="neo-progress-bar" style="width: 25%; background: var(--c-lime);"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cost Savings -->
+        <div class="neo-box p-4 bg-[var(--c-black)] text-white relative">
+            <div class="font-bold text-[var(--c-lime)] text-xs uppercase mb-1">Estimated Savings</div>
+            <div class="text-3xl font-display font-bold">$ 42.80</div>
+            <p class="text-xs text-gray-400 mt-2 border-l-2 border-[var(--c-lime)] pl-2">
+                Saved approx. <span class="text-white font-mono">1.2M</span> API tokens by caching.
+            </p>
+            <button class="absolute top-4 right-4 text-white hover:text-[var(--c-lime)]"><i class="ph-bold ph-info"></i></button>
+        </div>
+    </section>
+
+    <!-- 2. Cache Details Grid (分類監控) -->
+    <section class="mb-8">
+        <h2 class="font-display text-xl font-bold uppercase mb-4 flex items-center gap-2">
+            <i class="ph-fill ph-squares-four"></i> Namespace Breakdown
+        </h2>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            
+            <!-- Card 1: Conversation (Text Chat) -->
+            <div class="neo-box p-5 relative group hover:shadow-[8px_8px_0px_0px_var(--c-black)] transition-all">
+                <div class="flex justify-between items-start mb-4">
+                    <div class="flex items-center gap-2">
+                        <span class="bg-black text-white px-2 py-1 font-mono text-xs font-bold">CONV</span>
+                        <span class="font-bold">Conversation History</span>
+                    </div>
+                    <button class="text-gray-400 hover:text-red-500 transition-colors" title="Clear"><i class="ph-bold ph-trash"></i></button>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <div class="text-xs text-gray-500 font-bold">Entries</div>
+                        <div class="font-mono font-bold text-lg">842</div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-500 font-bold">Hit Rate</div>
+                        <div class="font-mono font-bold text-lg text-[var(--c-green)]">88%</div>
+                    </div>
+                </div>
+
+                <div class="text-xs font-bold mb-1 flex justify-between">
+                    <span>Memory Impact</span>
+                    <span>45 MB</span>
+                </div>
+                <div class="neo-progress h-2">
+                    <div class="neo-progress-bar" style="width: 60%;"></div>
+                </div>
+            </div>
+
+            <!-- Card 2: Embeddings (Vectors) -->
+            <div class="neo-box p-5 relative group hover:shadow-[8px_8px_0px_0px_var(--c-black)] transition-all">
+                <div class="flex justify-between items-start mb-4">
+                    <div class="flex items-center gap-2">
+                        <span class="bg-[var(--c-teal)] text-white px-2 py-1 font-mono text-xs font-bold border border-black">EMBED</span>
+                        <span class="font-bold">Vector Cache</span>
+                    </div>
+                    <button class="text-gray-400 hover:text-red-500 transition-colors" title="Clear"><i class="ph-bold ph-trash"></i></button>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <div class="text-xs text-gray-500 font-bold">Entries</div>
+                        <div class="font-mono font-bold text-lg">12.4k</div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-500 font-bold">Hit Rate</div>
+                        <div class="font-mono font-bold text-lg text-[var(--c-teal)]">99%</div>
+                    </div>
+                </div>
+
+                <div class="text-xs font-bold mb-1 flex justify-between">
+                    <span>Memory Impact</span>
+                    <span>210 MB</span>
+                </div>
+                <div class="neo-progress h-2">
+                    <div class="neo-progress-bar" style="width: 85%; background: var(--c-teal);"></div>
+                </div>
+            </div>
+
+            <!-- Card 3: AI Responses (Cached Answers) -->
+            <div class="neo-box p-5 relative group hover:shadow-[8px_8px_0px_0px_var(--c-black)] transition-all">
+                <div class="flex justify-between items-start mb-4">
+                    <div class="flex items-center gap-2">
+                        <span class="bg-[var(--c-lime)] text-black px-2 py-1 font-mono text-xs font-bold border border-black">AI_RESP</span>
+                        <span class="font-bold">LLM Responses</span>
+                    </div>
+                    <button class="text-gray-400 hover:text-red-500 transition-colors" title="Clear"><i class="ph-bold ph-trash"></i></button>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <div class="text-xs text-gray-500 font-bold">Entries</div>
+                        <div class="font-mono font-bold text-lg">315</div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-500 font-bold">Hit Rate</div>
+                        <div class="font-mono font-bold text-lg text-[var(--c-orange)]">42%</div>
+                    </div>
+                </div>
+
+                <div class="text-xs font-bold mb-1 flex justify-between">
+                    <span>Memory Impact</span>
+                    <span>12 MB</span>
+                </div>
+                <div class="neo-progress h-2">
+                    <div class="neo-progress-bar" style="width: 15%; background: var(--c-orange);"></div>
+                </div>
+            </div>
+
+            <!-- Card 4: System/Schema -->
+            <div class="neo-box p-5 relative group hover:shadow-[8px_8px_0px_0px_var(--c-black)] transition-all opacity-60">
+                <div class="flex justify-between items-start mb-4">
+                    <div class="flex items-center gap-2">
+                        <span class="bg-gray-200 text-black px-2 py-1 font-mono text-xs font-bold border border-black">SYS</span>
+                        <span class="font-bold">System Config</span>
+                    </div>
+                    <button class="text-gray-400 hover:text-red-500 transition-colors" title="Clear"><i class="ph-bold ph-trash"></i></button>
+                </div>
+                <div class="text-sm font-bold text-gray-500 text-center py-6">
+                    No significant usage.
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- 3. Live Log Terminal (駭客風格監控) -->
+    <section>
+        <h2 class="font-display text-xl font-bold uppercase mb-2 flex items-center gap-2">
+            <i class="ph-fill ph-terminal-window"></i> Real-time Events
+        </h2>
+        <div class="terminal-window shadow-[5px_5px_0px_0px_var(--c-black)]">
+            <div class="mb-1"><span class="text-gray-500">[10:42:01]</span> [INFO] Connected to Redis v7.2.0</div>
+            <div class="mb-1"><span class="text-gray-500">[10:42:05]</span> [SET] key="conv:session:8821" size=1.2kb ttl=3600s</div>
+            <div class="mb-1"><span class="text-gray-500">[10:42:12]</span> <span class="text-[var(--c-lime)]">[HIT]</span> key="embed:doc:0459f823" <span class="text-white">-> served from cache (2ms)</span></div>
+            <div class="mb-1"><span class="text-gray-500">[10:42:15]</span> <span class="text-[var(--c-red)]">[MISS]</span> key="prompt:template:finance_v2" <span class="text-white">-> fetching from DB...</span></div>
+            <div class="mb-1"><span class="text-gray-500">[10:42:18]</span> [EVICT] key="temp:upload:xyz" (volatile-lru)</div>
+            <div class="animate-pulse">_</div>
+        </div>
+    </section>
+
+</body>
+</html>

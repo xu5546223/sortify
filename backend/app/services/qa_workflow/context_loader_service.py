@@ -73,11 +73,21 @@ class ContextLoaderService:
                     user_uuid
                 )
             
+            # 轉換 cached_document_data 從 dict 到 list（如果需要）
+            cached_doc_list = None
+            if cached_doc_data:
+                if isinstance(cached_doc_data, dict):
+                    # 從 dict 轉換為 list（dict 的 key 是 document_id）
+                    cached_doc_list = list(cached_doc_data.values())
+                elif isinstance(cached_doc_data, list):
+                    # 已經是 list 格式
+                    cached_doc_list = cached_doc_data
+            
             context = ConversationContext(
                 conversation_id=conversation_id,
                 recent_messages=recent_messages or [],
                 cached_document_ids=cached_doc_ids or [],
-                cached_document_data=cached_doc_data,
+                cached_document_data=cached_doc_list,
                 message_count=len(recent_messages) if recent_messages else 0
             )
             
@@ -106,7 +116,7 @@ class ContextLoaderService:
     ) -> Tuple[Optional[List[Dict]], List[str], Optional[List[Dict]]]:
         """從 Redis 緩存載入"""
         try:
-            from app.services.cache.conversation_cache_service import conversation_cache_service
+            from app.services.cache import unified_cache, CacheNamespace
             
             # 獲取最近消息
             recent_messages = await conversation_cache_service.get_recent_messages(

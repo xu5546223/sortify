@@ -12,10 +12,11 @@ import {
   DocumentDetailsModal,
   DocumentStatusTag,
   DocumentTableActions,
-  UploadAndFilterControls,
   DocumentsWithClustering
 } from '../components';
 import { DocumentTypeIcon } from '../components/document';
+import FileDropZone from '../components/document/FileDropZone';
+import FolderDetailView from '../components/document/FolderDetailView';
 import GmailImporter from '../components/GmailImporter';
 import { HeaderConfig } from '../components/table/Table';
 import type {
@@ -31,6 +32,7 @@ import {
   getDocumentsByIds,
   deleteDocument
 } from '../services/documentService';
+import { apiClient } from '../services/apiClient';
 import { formatBytes, formatDate, formatCompactDate, mapMimeTypeToSimpleType } from '../utils/documentFormatters';
 import { canPreview } from '../utils/documentUtils';
 import PreviewModal from '../components/document/PreviewModal';
@@ -70,6 +72,119 @@ function useDebounce<T>(value: T, delay: number): T {
 
   return debouncedValue;
 }
+
+// 全局圖片緩存（與 FolderDetailView 共享）- LRU 策略
+class ImageCache {
+  private cache = new Map<string, string>();
+  private maxSize: number;
+
+  constructor(maxSize: number = 50) {
+    this.maxSize = maxSize;
+  }
+
+  get(key: string): string | undefined {
+    const value = this.cache.get(key);
+    if (value) {
+      // LRU: 重新插入到末尾
+      this.cache.delete(key);
+      this.cache.set(key, value);
+    }
+    return value;
+  }
+
+  set(key: string, value: string): void {
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    }
+    
+    if (this.cache.size >= this.maxSize) {
+      const firstKey = this.cache.keys().next().value;
+      if (firstKey) {
+        const oldUrl = this.cache.get(firstKey);
+        if (oldUrl) {
+          URL.revokeObjectURL(oldUrl);
+        }
+        this.cache.delete(firstKey);
+      }
+    }
+    
+    this.cache.set(key, value);
+  }
+}
+
+const imageCache = new ImageCache(50);
+
+const ImageThumbnail: React.FC<{ doc: Document }> = ({ doc }) => {
+  const [imageSrc, setImageSrc] = useState<string | null>(null);
+  const [error, setError] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    
+    if (!doc.file_type?.startsWith('image/')) {
+      setLoading(false);
+      return;
+    }
+
+    // 檢查緩存
+    const cached = imageCache.get(doc.id);
+    if (cached) {
+      setImageSrc(cached);
+      setLoading(false);
+      return;
+    }
+
+    // 從後端載入
+    setLoading(true);
+    apiClient.get(`/documents/${doc.id}/file`, { responseType: 'blob' })
+      .then(response => {
+        if (isMounted) {
+          const objectUrl = URL.createObjectURL(response.data);
+          imageCache.set(doc.id, objectUrl);
+          setImageSrc(objectUrl);
+          setLoading(false);
+        }
+      })
+      .catch(err => {
+        if (isMounted) {
+          console.error(`[ImageThumbnail] Error loading thumbnail for ${doc.filename}:`, err);
+          setError(true);
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [doc.id, doc.file_type]);
+
+  if (error || !doc.file_type?.startsWith('image/')) {
+    return (
+      <DocumentTypeIcon
+        fileType={doc.file_type || null}
+        fileName={doc.filename}
+        className="w-10 h-10"
+      />
+    );
+  }
+
+  if (loading || !imageSrc) {
+    return (
+      <div className="w-10 h-10 flex items-center justify-center bg-gray-100 border border-gray-300">
+        <div className="animate-spin rounded-full h-4 w-4 border-2 border-neo-black border-t-transparent"></div>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={imageSrc}
+      alt={doc.filename}
+      className="w-10 h-10 object-cover border border-gray-300"
+    />
+  );
+};
 
 interface DocumentsPageProps {
   showPCMessage: (message: string, type?: 'success' | 'error' | 'info') => void;
@@ -112,25 +227,25 @@ const PaginationControls: React.FC<PaginationControlsProps> = ({
   return (
     <div className="mt-6 flex items-center justify-between">
       <div>
-        <p className="text-sm text-gray-700">
-          顯示第 <span className="font-medium">{(currentPage - 1) * itemsPerPage + 1}</span> 到 <span className="font-medium">{Math.min(currentPage * itemsPerPage, totalItems)}</span> 筆，共 <span className="font-medium">{totalItems}</span> 筆結果
+        <p className="text-sm font-bold text-neo-black">
+          顯示第 <span className="font-black">{(currentPage - 1) * itemsPerPage + 1}</span> 到 <span className="font-black">{Math.min(currentPage * itemsPerPage, totalItems)}</span> 筆，共 <span className="font-black">{totalItems}</span> 筆結果
         </p>
       </div>
-      <div className="space-x-2">
-        <Button 
-          onClick={handlePrevious} 
+      <div className="flex gap-2">
+        <button
+          onClick={handlePrevious}
           disabled={currentPage === 1 || isLoading}
-          variant="outline"
+          className="bg-neo-white text-neo-black border-3 border-neo-black px-4 py-2 font-display font-bold uppercase shadow-neo-md hover:shadow-neo-hover hover:-translate-x-0.5 hover:-translate-y-0.5 active:shadow-none active:translate-x-1 active:translate-y-1 transition-all duration-100 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-x-0 disabled:hover:translate-y-0 disabled:hover:shadow-neo-md"
         >
           上一頁
-        </Button>
-        <Button 
-          onClick={handleNext} 
+        </button>
+        <button
+          onClick={handleNext}
           disabled={currentPage === totalPages || isLoading}
-          variant="outline"
+          className="bg-neo-white text-neo-black border-3 border-neo-black px-4 py-2 font-display font-bold uppercase shadow-neo-md hover:shadow-neo-hover hover:-translate-x-0.5 hover:-translate-y-0.5 active:shadow-none active:translate-x-1 active:translate-y-1 transition-all duration-100 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-x-0 disabled:hover:translate-y-0 disabled:hover:shadow-neo-md"
         >
           下一頁
-        </Button>
+        </button>
       </div>
     </div>
   );
@@ -163,7 +278,14 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
   const [isGmailImporterVisible, setIsGmailImporterVisible] = useState<boolean>(false);
 
   // 聚類功能狀態
-  const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
+  // undefined: 不過濾任何資料夾（顯示所有文件）
+  // null: 過濾未分類文件
+  // string: 過濾指定 cluster_id 的文件
+  const [selectedClusterId, setSelectedClusterId] = useState<string | null | undefined>(undefined);
+  const [selectedFolderName, setSelectedFolderName] = useState<string | null>(null);
+  const [showFolderDetail, setShowFolderDetail] = useState<boolean>(false);
+  const [folderDocuments, setFolderDocuments] = useState<Document[]>([]); // 資料夾視圖的所有文檔
+  const [isLoadingFolderDocs, setIsLoadingFolderDocs] = useState<boolean>(false);
 
   const isMounted = useRef(true);
   const hasLoadedInitialData = useRef(false);
@@ -260,10 +382,38 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
   };
 
   // 處理聚類過濾變更
-  const handleClusterFilterChange = useCallback((clusterId: string | null) => {
+  const handleClusterFilterChange = useCallback(async (clusterId: string | null, folderName?: string) => {
     setSelectedClusterId(clusterId);
+    setSelectedFolderName(folderName || null);
+    setShowFolderDetail(!!folderName); // 當有 folderName 時顯示詳細視圖（包括未分類資料夾）
     setCurrentPage(1); // 重置到第一頁
-  }, []);
+    
+    // 如果進入資料夾視圖，獲取該資料夾的所有文檔
+    if (folderName && clusterId !== undefined) {
+      try {
+        setIsLoadingFolderDocs(true);
+        // 獲取該資料夾的所有文檔（使用很大的 limit 以獲取所有文件）
+        const data = await getDocuments(
+          '', // 不搜索
+          'all', // 所有狀態
+          undefined,
+          'created_at',
+          'desc',
+          0,
+          10000, // 獲取最多10000個文檔（實際上獲取所有）
+          clusterId
+        );
+        setFolderDocuments(data.documents);
+        console.log(`Loaded ${data.documents.length} documents for folder: ${folderName}`);
+      } catch (error) {
+        console.error('Failed to fetch folder documents:', error);
+        showPCMessage('載入資料夾文件失敗', 'error');
+        setFolderDocuments([]);
+      } finally {
+        setIsLoadingFolderDocs(false);
+      }
+    }
+  }, [showPCMessage]);
 
   const handleSort = useCallback((key: string) => {
     const sortableKeys = ['filename', 'file_type', 'size', 'created_at', 'updated_at', 'status'] as const;
@@ -319,21 +469,44 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
         { 
           key: 'filename', 
           cellClassName: 'max-w-0', 
-          render: (doc) => (
-            <div className="flex items-center space-x-3 min-w-0 max-w-full">
-              <DocumentTypeIcon 
-                fileType={doc.file_type} 
-                fileName={doc.filename}
-                className="w-10 h-10 flex-shrink-0"
-              />
-              <span 
-                title={doc.filename} 
-                className="truncate block min-w-0 flex-1"
-              >
-                {doc.filename}
-              </span>
-            </div>
-          ) 
+          render: (doc) => {
+            // 獲取文件類型標籤（與 FolderDetailView 一致）
+            let typeTag;
+            const fileType = doc.file_type || '';
+            if (fileType.includes('pdf')) {
+              typeTag = { label: 'PDF', bg: 'bg-red-100', text: 'text-red-600', border: 'border-red-600' };
+            } else if (fileType.includes('image')) {
+              typeTag = { label: 'IMG', bg: 'bg-purple-100', text: 'text-purple-600', border: 'border-purple-600' };
+            } else if (fileType.includes('word') || fileType.includes('document')) {
+              typeTag = { label: 'DOC', bg: 'bg-blue-100', text: 'text-blue-600', border: 'border-blue-600' };
+            } else if (fileType.includes('excel') || fileType.includes('spreadsheet')) {
+              typeTag = { label: 'XLS', bg: 'bg-green-100', text: 'text-green-600', border: 'border-green-600' };
+            } else {
+              typeTag = { label: 'FILE', bg: 'bg-gray-100', text: 'text-gray-600', border: 'border-gray-600' };
+            }
+
+            return (
+              <div className="flex items-center gap-3 min-w-0">
+                {/* 類型標籤 */}
+                <span className={`flex-shrink-0 px-2 py-1 text-[10px] font-black border-2 ${typeTag.border} ${typeTag.bg} ${typeTag.text}`}>
+                  {typeTag.label}
+                </span>
+                
+                {/* 縮略圖或圖標 */}
+                <div className="flex-shrink-0 w-10 h-10 border-2 border-neo-black flex items-center justify-center overflow-hidden bg-gray-50">
+                  <ImageThumbnail doc={doc} />
+                </div>
+                
+                {/* 檔名 */}
+                <span 
+                  title={doc.filename} 
+                  className="truncate block min-w-0 flex-1 font-bold text-sm"
+                >
+                  {doc.filename}
+                </span>
+              </div>
+            );
+          } 
         },
         { 
           key: 'file_type', 
@@ -342,7 +515,7 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
               <span className="text-sm font-medium" title={doc.file_type ?? undefined}>
                 {mapMimeTypeToSimpleType(doc.file_type)}
               </span>
-              <span className="text-xs text-gray-500 dark:text-gray-400">
+              <span className="text-xs text-gray-500">
                 {formatBytes(doc.size ?? undefined)}
               </span>
             </div>
@@ -358,12 +531,38 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
         },
         {
             key: 'status',
-            render: (doc) => (
-                <DocumentStatusTag 
-                    status={doc.status} 
-                    errorDetails={doc.error_details}
-                />
-            )
+            render: (doc) => {
+                // 獲取狀態標籤（與 FolderDetailView 一致）
+                let statusConfig;
+                switch (doc.status) {
+                    case 'completed':
+                    case 'analysis_completed':
+                        statusConfig = { label: '✓ 已完成', color: 'bg-neo-primary text-neo-white' };
+                        break;
+                    case 'uploaded':
+                    case 'pending_extraction':
+                    case 'text_extracted':
+                    case 'pending_analysis':
+                        statusConfig = { label: '⏳ 待處理', color: 'bg-gray-300 text-gray-700' };
+                        break;
+                    case 'analyzing':
+                        statusConfig = { label: '🔄 分析中', color: 'bg-neo-warn text-neo-black' };
+                        break;
+                    case 'processing_error':
+                    case 'analysis_failed':
+                    case 'extraction_failed':
+                        statusConfig = { label: '✕ 失敗', color: 'bg-neo-error text-neo-white' };
+                        break;
+                    default:
+                        statusConfig = { label: '⚠ 檢查', color: 'bg-neo-warn text-neo-black' };
+                }
+                
+                return (
+                    <span className={`inline-block px-2 py-1 text-[10px] font-black border-2 border-neo-black ${statusConfig.color}`}>
+                        {statusConfig.label}
+                    </span>
+                );
+            }
         },
     ];
     return definitions.reduce((acc, item) => {
@@ -719,153 +918,228 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
   }
   
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
-      <div className="flex flex-1 overflow-hidden">
-        {/* 主內容區 */}
-        <div className="flex-1 overflow-auto flex flex-col">
-          <div className="container mx-auto p-4">
-            <UploadAndFilterControls 
-            searchTerm={searchTerm}
-            onSearchChange={(value) => { setSearchTerm(value); setCurrentPage(1); }}
-            filterStatus={filterStatus}
-            onFilterStatusChange={(value) => { setFilterStatus(value); setCurrentPage(1); }}
-            activeQuickFilter={activeQuickFilter}
-            onQuickFilterChange={handleQuickFilterChange}
-            selectedDocumentsCount={selectedDocuments.size}
-            isUploading={isUploading}
-            isDeleting={isDeleting}
-            onUploadClick={triggerFileInput}
+    <div className="h-screen flex overflow-hidden bg-neo-bg">
+      {/* 左側：統計與資料夾面板 */}
+      <DocumentsWithClustering
+        onClusterFilterChange={handleClusterFilterChange}
+        currentClusterId={selectedClusterId}
+        onRefreshDocuments={fetchDocumentsData}
+      />
+      
+      {/* 主內容區 */}
+      <div className="flex-1 flex flex-col overflow-hidden relative">
+        {/* 條件渲染：資料夾詳細視圖或列表視圖 */}
+        {showFolderDetail && selectedFolderName ? (
+          <FolderDetailView
+            folderName={selectedFolderName}
+            clusterId={selectedClusterId || ''}
+            documents={folderDocuments}
+            onBack={() => {
+              setShowFolderDetail(false);
+              setSelectedClusterId(undefined);
+              setSelectedFolderName(null);
+              setFolderDocuments([]);
+            }}
+            onSelectDocuments={setSelectedDocuments}
             onDeleteSelected={handleDeleteSelected}
-            onGmailImport={() => setIsGmailImporterVisible(true)}
+            selectedDocuments={selectedDocuments}
+            isDeleting={isDeleting || isLoadingFolderDocs}
+          />
+        ) : (
+          <>
+        {/* Header */}
+        <header className="h-16 bg-neo-white border-b-3 border-neo-black flex items-center justify-between px-6 shrink-0">
+          {/* 顯示當前路徑/篩選 */}
+          <div className="flex items-center gap-2 font-bold text-sm">
+            <span className="text-gray-400">🏠</span>
+            <span className="text-gray-400">/</span>
+            <span>{activeQuickFilter === 'all' ? 'Inbox' : quickFilterOptions.find(f => f.id === activeQuickFilter)?.label || 'All'}</span>
+            {selectedClusterId && (
+              <React.Fragment>
+                <span className="text-gray-400">/</span>
+                <span className="bg-neo-black text-neo-white px-2 py-0.5">Filtered</span>
+              </React.Fragment>
+            )}
+          </div>
+          
+          {/* 操作按鈕 */}
+          <div className="flex gap-3">
+            <button
+              onClick={() => setIsGmailImporterVisible(true)}
+              className="bg-neo-white text-neo-black border-3 border-neo-black px-3 py-1 text-xs font-display font-bold uppercase shadow-neo-md hover:shadow-neo-hover hover:-translate-x-0.5 hover:-translate-y-0.5 active:shadow-none active:translate-x-1 active:translate-y-1 transition-all duration-100 flex items-center gap-2"
+            >
+              <span>📧</span> Import Gmail
+            </button>
+            <button
+              onClick={triggerFileInput}
+              disabled={isUploading}
+              className="bg-neo-primary text-neo-black border-3 border-neo-black px-3 py-1 text-xs font-display font-bold uppercase shadow-neo-md hover:bg-neo-hover hover:shadow-neo-hover hover:-translate-x-0.5 hover:-translate-y-0.5 active:shadow-none active:translate-x-1 active:translate-y-1 transition-all duration-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              <span>⬆️</span> {isUploading ? 'Uploading...' : 'Upload New'}
+            </button>
+          </div>
+        </header>
+
+        {/* 內容捲動區 */}
+        <div className="flex-1 overflow-y-auto">
+          {/* 文件上傳拖放區域 */}
+          <FileDropZone
+            onFilesSelected={(files) => {
+              const event = { target: { files } } as unknown as React.ChangeEvent<HTMLInputElement>;
+              handleFileUpload(event);
+            }}
+            isUploading={isUploading}
+            pendingCount={documents.filter(d => ['uploaded', 'pending_extraction', 'pending_analysis', 'analyzing'].includes(d.status)).length}
+            onClusteringComplete={fetchDocumentsData}
           />
 
-      {/* Gmail 導入對話框 */}
-      <GmailImporter
-        visible={isGmailImporterVisible}
-        onClose={() => setIsGmailImporterVisible(false)}
-        onSuccess={() => {
-          // 導入成功後刷新文檔列表
-          setCurrentPage(1);
-          fetchDocumentsData(); // Changed from handleLoadDocuments to fetchDocumentsData
-        }}
-      />
+          {/* 文件列表區域 */}
+          <section className="px-6">
+            <div className="flex items-center justify-between mb-4 pt-6">
+              <h2 className="font-display font-bold text-xl flex items-center gap-2 text-neo-black uppercase">
+                <span>🕐</span> Recent Activity
+              </h2>
+              {/* 列表專屬操作 */}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Filter list..."
+                  value={searchTerm}
+                  onChange={(e) => {
+                    setSearchTerm(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="border-2 border-neo-black px-3 py-1 text-sm font-bold outline-none focus:bg-neo-hover focus:bg-opacity-20 transition-colors"
+                />
+                <button
+                  onClick={handleDeleteSelected}
+                  disabled={selectedDocuments.size === 0 || isDeleting}
+                  className="bg-neo-error text-neo-white border-3 border-neo-black px-3 py-1 text-xs font-display font-bold uppercase shadow-neo-md hover:shadow-neo-hover hover:-translate-x-0.5 hover:-translate-y-0.5 active:shadow-none active:translate-x-1 active:translate-y-1 transition-all duration-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  <span>🗑️</span> Delete
+                </button>
+              </div>
+            </div>
 
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        onChange={handleFileUpload} 
-        style={{ display: 'none' }} 
-        multiple 
-        accept=".txt,.pdf,.jpg,.jpeg,.png,.gif,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.md"
-      />
+            {/* Loading 狀態 */}
+            {isLoading && documents.length === 0 && !hasLoadedInitialData.current && (
+              <div className="text-center py-10 bg-neo-white border-3 border-neo-black shadow-neo-lg">
+                <div className="animate-spin rounded-full h-12 w-12 border-3 border-neo-black border-t-transparent mx-auto mb-4"></div>
+                <p className="text-lg font-bold text-gray-500">正在努力加載您的文件...</p>
+              </div>
+            )}
 
-      {isLoading && documents.length === 0 && !hasLoadedInitialData.current && (
-        <div className="text-center py-10">
-          <p className="text-xl text-gray-500">正在努力加載您的文件...</p>
-        </div>
-      )}
+            {/* 空狀態 */}
+            {(!isLoading || filteredDocuments.length > 0 || hasLoadedInitialData.current) && filteredDocuments.length === 0 && (debouncedSearchTerm || activeQuickFilter !== 'all') && (
+              <div className="text-center py-10 bg-neo-white border-3 border-neo-black shadow-neo-lg">
+                <p className="text-xl font-bold text-gray-500">
+                  {debouncedSearchTerm ? '找不到符合搜索條件的文件。' : '找不到符合篩選條件的文件。'}
+                </p>
+              </div>
+            )}
 
-      {(!isLoading || filteredDocuments.length > 0 || hasLoadedInitialData.current) && filteredDocuments.length === 0 && (debouncedSearchTerm || activeQuickFilter !== 'all') && (
-        <div className="text-center py-10">
-          <p className="text-xl text-gray-500">
-            {debouncedSearchTerm ? '找不到符合搜索條件的文件。' : '找不到符合篩選條件的文件。'}
-          </p>
-        </div>
-      )}
-
-      {(!isLoading || documents.length > 0 || hasLoadedInitialData.current) && (
-      <Card>
-        <Table 
-          headers={tableHeadersForTableComponent}
-          sortConfig={sortConfig} 
-          isSelectAllChecked={filteredDocuments.length > 0 && selectedDocuments.size === filteredDocuments.filter(doc => doc.id).length}
-          onSelectAllChange={handleSelectAll} 
-          isSelectAllDisabled={filteredDocuments.length === 0 || isDeleting || isLoading} 
-        >
-          {filteredDocuments.map((doc) => (
-            <TableRow key={doc.id} className={selectedDocuments.has(doc.id) ? 'bg-primary-50 hover:bg-primary-100' : 'hover:bg-surface-100'}>
-              {tableHeadersForTableComponent.map(header => {
-                if (header.key === 'selector') {
-                  return (
-                    <TableCell key={`${header.key}-${doc.id}`} className={header.className || tableCellRenderers.selector?.cellClassName}>
-                      <Checkbox
-                        id={`select-doc-${doc.id}`}
-                        checked={selectedDocuments.has(doc.id)}
-                        onChange={() => handleSelectRow(doc.id)}
-                        disabled={isDeleting || isLoading}
-                        aria-label={`Select document ${doc.filename}`}
-                      />
-                    </TableCell>
-                  );
-                }
-                if (header.key === 'actions') {
-                  return (
-                    <TableCell 
-                      key={`${header.key}-${doc.id}`} 
-                      className={`relative overflow-visible ${header.className || tableCellRenderers.actions?.cellClassName || ''}`}
-                    >
-                      <DocumentTableActions 
-                        document={doc}
-                        isProcessing={isProcessing[doc.id] || false}
-                        isDeleting={isDeleting}
-                        isLoading={isLoading}
-                        canPreview={canPreview(doc)}
-                        canRetryAnalysis={canRetryAnalysis(doc)}
-                        onViewDetails={viewDocumentDetails}
-                        onPreview={handleOpenPreview}
-                        onTriggerProcessing={handleTriggerProcessing}
-                        onRetryAnalysis={handleRetryAnalysis}
-                        onDelete={handleSingleDocumentDelete}
-                      />
-                    </TableCell>
-                  );
-                }
-                const cellRendererConfig = tableCellRenderers[header.key as keyof Document];
-                return (
-                  <TableCell key={`${header.key}-${doc.id}`} className={header.className || cellRendererConfig?.cellClassName}>
-                    {cellRendererConfig 
-                      ? cellRendererConfig.render(doc) 
-                      : (doc[header.key as keyof Document] as React.ReactNode || 'N/A')}
-                  </TableCell>
-                );
-              })}
-            </TableRow>
-          ))}
-        </Table>
-      </Card>
-      )}
-      
-      <PaginationControls 
-        currentPage={currentPage}
-        totalItems={activeQuickFilter === 'all' ? totalDocuments : filteredDocuments.length}
-        itemsPerPage={itemsPerPage}
-        onPageChange={handlePageChange}
-        isLoading={isLoading}
-      />
-
-      <DocumentDetailsModal 
-        document={detailedDoc}
-        isOpen={!!detailedDoc}
-        onClose={closeDetailsModal}
-      />
-
-      <PreviewModal 
-        isOpen={isPreviewModalOpen}
-        onClose={handleClosePreview}
-        doc={previewDoc}
-      />
-          </div>
+            {/* 文件表格 */}
+            {(!isLoading || documents.length > 0 || hasLoadedInitialData.current) && (
+              <div className="bg-neo-white border-3 border-neo-black shadow-neo-lg overflow-hidden">
+                <Table 
+                  headers={tableHeadersForTableComponent}
+                  sortConfig={sortConfig} 
+                  isSelectAllChecked={filteredDocuments.length > 0 && selectedDocuments.size === filteredDocuments.filter(doc => doc.id).length}
+                  onSelectAllChange={handleSelectAll} 
+                  isSelectAllDisabled={filteredDocuments.length === 0 || isDeleting || isLoading} 
+                >
+                  {filteredDocuments.map((doc) => (
+                    <TableRow key={doc.id} className={selectedDocuments.has(doc.id) ? 'bg-neo-hover bg-opacity-20 hover:bg-opacity-30' : 'hover:bg-neo-hover hover:bg-opacity-20 transition-colors'}>
+                      {tableHeadersForTableComponent.map(header => {
+                        if (header.key === 'selector') {
+                          return (
+                            <TableCell key={`${header.key}-${doc.id}`} className={header.className || tableCellRenderers.selector?.cellClassName}>
+                              <Checkbox
+                                id={`select-doc-${doc.id}`}
+                                checked={selectedDocuments.has(doc.id)}
+                                onChange={() => handleSelectRow(doc.id)}
+                                disabled={isDeleting || isLoading}
+                                aria-label={`Select document ${doc.filename}`}
+                              />
+                            </TableCell>
+                          );
+                        }
+                        if (header.key === 'actions') {
+                          return (
+                            <TableCell 
+                              key={`${header.key}-${doc.id}`} 
+                              className={`relative overflow-visible ${header.className || tableCellRenderers.actions?.cellClassName || ''}`}
+                            >
+                              <DocumentTableActions 
+                                document={doc}
+                                isProcessing={isProcessing[doc.id] || false}
+                                isDeleting={isDeleting}
+                                isLoading={isLoading}
+                                canPreview={canPreview(doc)}
+                                canRetryAnalysis={canRetryAnalysis(doc)}
+                                onViewDetails={viewDocumentDetails}
+                                onPreview={handleOpenPreview}
+                                onTriggerProcessing={handleTriggerProcessing}
+                                onRetryAnalysis={handleRetryAnalysis}
+                                onDelete={handleSingleDocumentDelete}
+                              />
+                            </TableCell>
+                          );
+                        }
+                        const cellRendererConfig = tableCellRenderers[header.key as keyof Document];
+                        return (
+                          <TableCell key={`${header.key}-${doc.id}`} className={header.className || cellRendererConfig?.cellClassName}>
+                            {cellRendererConfig 
+                              ? cellRendererConfig.render(doc) 
+                              : (doc[header.key as keyof Document] as React.ReactNode || 'N/A')}
+                          </TableCell>
+                        );
+                      })}
+                    </TableRow>
+                  ))}
+                </Table>
+              </div>
+            )}
+          </section>
         </div>
 
-        {/* 聚類功能整合區 - 右側面板 */}
-        <DocumentsWithClustering
-          onClusterFilterChange={handleClusterFilterChange}
-          currentClusterId={selectedClusterId}
-          onRefreshDocuments={fetchDocumentsData}
+        {/* 隱藏的 file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          onChange={handleFileUpload}
+          style={{ display: 'none' }}
+          multiple
+          accept=".txt,.pdf,.jpg,.jpeg,.png,.gif,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.md"
         />
+
+        {/* Gmail 導入對話框 */}
+        <GmailImporter
+          visible={isGmailImporterVisible}
+          onClose={() => setIsGmailImporterVisible(false)}
+          onSuccess={() => {
+            setCurrentPage(1);
+            fetchDocumentsData();
+          }}
+        />
+
+        {/* Modals */}
+        <DocumentDetailsModal 
+          document={detailedDoc}
+          isOpen={!!detailedDoc}
+          onClose={closeDetailsModal}
+        />
+
+        <PreviewModal
+          isOpen={isPreviewModalOpen}
+          onClose={handleClosePreview}
+          doc={previewDoc}
+        />
+        </>
+        )}
       </div>
     </div>
   );
 };
 
-export default DocumentsPage; 
+export default DocumentsPage;

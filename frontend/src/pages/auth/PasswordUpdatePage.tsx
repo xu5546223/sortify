@@ -3,77 +3,6 @@ import { updatePassword } from '../../services/authApi';
 import { PasswordUpdateInRequest } from '../../services/authApi';
 import { Link, useNavigate } from 'react-router-dom';
 
-const styles: { [key: string]: React.CSSProperties } = {
-  pageContainer: {
-    padding: '30px',
-    maxWidth: '500px',
-    margin: '40px auto',
-    fontFamily: 'Arial, sans-serif',
-    border: '1px solid #ddd',
-    borderRadius: '8px',
-    boxShadow: '0 4px 8px rgba(0,0,0,0.1)',
-  },
-  title: {
-    fontSize: '22px',
-    color: '#333',
-    marginBottom: '25px',
-    textAlign: 'center',
-  },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '18px',
-  },
-  inputGroup: {
-    display: 'flex',
-    flexDirection: 'column',
-  },
-  label: {
-    marginBottom: '6px',
-    color: '#555',
-    fontSize: '14px',
-  },
-  input: {
-    padding: '10px',
-    border: '1px solid #ccc',
-    borderRadius: '4px',
-    fontSize: '16px',
-  },
-  button: {
-    padding: '12px 20px',
-    fontSize: '16px',
-    color: 'white',
-    backgroundColor: '#28a745', // Green color for update
-    border: 'none',
-    borderRadius: '5px',
-    cursor: 'pointer',
-    transition: 'background-color 0.3s',
-    marginTop: '10px',
-  },
-  message: {
-    padding: '12px',
-    borderRadius: '4px',
-    marginBottom: '20px',
-    textAlign: 'center',
-    fontSize: '15px',
-  },
-  successMessage: {
-    backgroundColor: '#d4edda',
-    color: '#155724',
-  },
-  errorMessage: {
-    backgroundColor: '#f8d7da',
-    color: '#721c24',
-  },
-  backLink: {
-    display: 'inline-block',
-    marginBottom: '25px',
-    color: '#007bff',
-    textDecoration: 'none',
-    fontSize: '15px',
-  }
-};
-
 const PasswordUpdatePage: React.FC = () => {
   const navigate = useNavigate();
   const [currentPassword, setCurrentPassword] = useState('');
@@ -122,69 +51,97 @@ const PasswordUpdatePage: React.FC = () => {
   };
 
   return (
-    <div style={styles.pageContainer}>
-      <Link to="/profile" style={styles.backLink}>&larr; 返回個人資料</Link>
-      <h1 style={styles.title}>更改密碼</h1>
+    <div className="p-10 bg-bg min-h-screen">
+      {/* Header */}
+      <div className="flex justify-between items-center mb-10 flex-wrap gap-5">
+        <h1 className="page-title text-error">🔒 CHANGE PASSWORD</h1>
+        <Link to="/profile" className="neo-btn-secondary">
+          ← 返回個人資料
+        </Link>
+      </div>
 
+      {/* Success/Error Messages */}
       {successMessage && (
-        <div style={{...styles.message, ...styles.successMessage}}>
-          {successMessage}
+        <div className="neo-message neo-message-success">
+          ✓ {successMessage}
         </div>
       )}
       {errorMessage && (
-        <div style={{...styles.message, ...styles.errorMessage}}>
-          {errorMessage}
+        <div className="neo-message neo-message-error">
+          ✗ {errorMessage}
         </div>
       )}
 
-      <form onSubmit={handleSubmit} style={styles.form}>
-        <div style={styles.inputGroup}>
-          <label htmlFor="currentPassword" style={styles.label}>目前密碼</label>
-          <input 
-            type="password" 
-            id="currentPassword" 
-            value={currentPassword} 
-            onChange={(e) => setCurrentPassword(e.target.value)} 
-            required 
-            style={styles.input}
-          />
+      {/* Main Card */}
+      <div className="neo-card max-w-2xl border-error shadow-xl">
+        <div className="card-header card-header-danger">⚠️ 安全操作區域</div>
+        
+        {/* Warning Banner */}
+        <div className="warning-banner">
+          <strong>⚡ 注意事項：</strong>
+          <ul className="list-none p-0 mt-4 space-y-2">
+            <li className="text-sm font-semibold">• 密碼長度至少 8 個字符</li>
+            <li className="text-sm font-semibold">• 建議使用字母、數字和符號組合</li>
+            <li className="text-sm font-semibold">• 更改後將需要重新登入</li>
+          </ul>
         </div>
-        <div style={styles.inputGroup}>
-          <label htmlFor="newPassword" style={styles.label}>新密碼 (至少8個字符)</label>
-          <input 
-            type="password" 
-            id="newPassword" 
-            value={newPassword} 
-            onChange={(e) => setNewPassword(e.target.value)} 
-            required 
-            minLength={8}
-            style={styles.input}
-          />
-        </div>
-        <div style={styles.inputGroup}>
-          <label htmlFor="confirmNewPassword" style={styles.label}>確認新密碼</label>
-          <input 
-            type="password" 
-            id="confirmNewPassword" 
-            value={confirmNewPassword} 
-            onChange={(e) => setConfirmNewPassword(e.target.value)} 
-            required 
-            minLength={8}
-            style={styles.input}
-          />
-        </div>
-        <button 
-          type="submit" 
-          disabled={isLoading} 
-          style={styles.button}
-          onMouseOver={(e) => !isLoading && (e.currentTarget.style.backgroundColor = '#218838')}
-          onMouseOut={(e) => !isLoading && (e.currentTarget.style.backgroundColor = '#28a745')}
-        >
-          {isLoading ? '更新中...' : '更新密碼'}
-        </button>
-      </form>
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+          <div className="flex flex-col gap-2">
+            <label htmlFor="currentPassword" className="text-xs font-black uppercase tracking-wider">
+              🔐 目前密碼
+            </label>
+            <input 
+              type="password" 
+              id="currentPassword" 
+              value={currentPassword} 
+              onChange={(e) => setCurrentPassword(e.target.value)} 
+              required 
+              className="neo-input neo-input-danger px-4 py-3"
+            />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label htmlFor="newPassword" className="text-xs font-black uppercase tracking-wider">
+              🆕 新密碼 (至少8個字符)
+            </label>
+            <input 
+              type="password" 
+              id="newPassword" 
+              value={newPassword} 
+              onChange={(e) => setNewPassword(e.target.value)} 
+              required 
+              minLength={8}
+              className="neo-input px-4 py-3"
+            />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label htmlFor="confirmNewPassword" className="text-xs font-black uppercase tracking-wider">
+              ✅ 確認新密碼
+            </label>
+            <input 
+              type="password" 
+              id="confirmNewPassword" 
+              value={confirmNewPassword} 
+              onChange={(e) => setConfirmNewPassword(e.target.value)} 
+              required 
+              minLength={8}
+              className="neo-input px-4 py-3"
+            />
+          </div>
+
+          <button 
+            type="submit" 
+            disabled={isLoading} 
+            className="neo-btn-danger mt-2 py-4 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isLoading ? '⏳ 更新中...' : '🔒 更新密碼'}
+          </button>
+        </form>
+      </div>
     </div>
   );
 };
 
-export default PasswordUpdatePage; 
+export default PasswordUpdatePage;

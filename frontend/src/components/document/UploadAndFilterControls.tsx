@@ -59,73 +59,84 @@ const UploadAndFilterControls: React.FC<UploadAndFilterControlsProps> = ({
   onGmailImport,
 }) => {
   return (
-    <Card className="mb-6">
-      <div className="p-4">
-        <h3 className="text-lg font-semibold mb-3">上傳與篩選</h3>
-        
-        {/* 搜索和篩選控制項 */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end mb-4">
-          <div className="md:col-span-1">
-            <Input
-              label="搜索文件"
-              placeholder="按文件名搜索..."
-              value={searchTerm}
-              onChange={(e) => onSearchChange(e.target.value)}
-              className="w-full"
-            />
-          </div>
-          <div className="md:col-span-1">
-            <Select
-              label="篩選狀態"
-              value={filterStatus}
-              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => onFilterStatusChange(e.target.value as DocumentStatus | 'all')}
-              options={documentStatusOptions}
-              className="w-full"
-            />
-          </div>
-          <div className="md:col-span-1 flex justify-end space-x-2">
-            <Button 
-              onClick={onUploadClick} 
-              variant="primary"
-              disabled={isUploading} 
-            >
-              {isUploading ? '上傳中...' : '上傳文件'}
-            </Button>
-            <Button 
-              onClick={onDeleteSelected} 
-              variant="danger" 
-              disabled={selectedDocumentsCount === 0 || isDeleting}
-            >
-              {isDeleting ? '刪除中...' : `刪除選中 (${selectedDocumentsCount})`}
-            </Button>
-            {onGmailImport && (
-              <Button 
-                onClick={onGmailImport} 
-                variant="outline"
-              >
-                📧 讀取 Gmail
-              </Button>
-            )}
-          </div>
+    <header className="bg-neo-white border-3 border-neo-black shadow-neo-lg p-5 mb-6 flex flex-col gap-4">
+      {/* 標題與核心動作區 */}
+      <div className="flex justify-between items-end">
+        <div>
+          <h1 className="font-display text-3xl font-bold uppercase tracking-tight text-neo-black">
+            File Manager
+          </h1>
+          <p className="font-bold text-gray-500 text-sm mt-1">文件管理 / 雲端整理</p>
         </div>
+        
+        {/* 核心動作按鈕組 */}
+        <div className="flex gap-3">
+          {onGmailImport && (
+            <button
+              onClick={onGmailImport}
+              className="bg-neo-white text-neo-black border-3 border-neo-black px-4 py-2 text-sm font-display font-bold uppercase shadow-neo-md hover:shadow-neo-hover hover:-translate-x-0.5 hover:-translate-y-0.5 active:shadow-none active:translate-x-1 active:translate-y-1 transition-all duration-100 flex items-center gap-2"
+            >
+              <span className="text-lg">📧</span> 讀取 Gmail
+            </button>
+          )}
+          <button
+            onClick={onDeleteSelected}
+            disabled={selectedDocumentsCount === 0 || isDeleting}
+            className="bg-neo-error text-neo-white border-3 border-neo-black px-4 py-2 text-sm font-display font-bold uppercase shadow-neo-md hover:shadow-neo-hover hover:-translate-x-0.5 hover:-translate-y-0.5 active:shadow-none active:translate-x-1 active:translate-y-1 transition-all duration-100 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-x-0 disabled:hover:translate-y-0 disabled:hover:shadow-neo-md flex items-center gap-2"
+          >
+            <span className="text-lg">🗑️</span>
+            {isDeleting ? '刪除中...' : `刪除選中 (${selectedDocumentsCount})`}
+          </button>
+          <button
+            onClick={onUploadClick}
+            disabled={isUploading}
+            className="bg-neo-primary text-neo-black border-3 border-neo-black px-6 py-2 text-sm font-display font-bold uppercase shadow-neo-md hover:bg-neo-hover hover:shadow-neo-hover hover:-translate-x-0.5 hover:-translate-y-0.5 active:shadow-none active:translate-x-1 active:translate-y-1 transition-all duration-100 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-neo-primary disabled:hover:translate-x-0 disabled:hover:translate-y-0 disabled:hover:shadow-neo-md flex items-center gap-2"
+          >
+            <span className="text-lg">⬆️</span>
+            {isUploading ? '上傳中...' : '上傳文件'}
+          </button>
+        </div>
+      </div>
 
-        {/* 快速篩選按鈕 */}
-        <div className="mb-4 flex space-x-2 border-b pb-4">
-          <span className="text-sm font-medium text-gray-700 self-center mr-2">快速檢視:</span>
+      {/* 篩選與搜尋列 */}
+      <div className="flex items-center gap-4 border-t-3 border-neo-black pt-4 mt-2">
+        {/* 搜尋框 */}
+        <div className="flex-1 relative">
+          <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-lg">
+            🔍
+          </span>
+          <input
+            type="text"
+            placeholder="搜索文件名稱、標籤..."
+            value={searchTerm}
+            onChange={(e) => onSearchChange(e.target.value)}
+            className="w-full pl-10 pr-4 py-2.5 border-3 border-neo-black font-semibold outline-none transition-all focus:bg-green-50 focus:shadow-[3px_3px_0px_0px_#29bf12]"
+          />
+        </div>
+        
+        {/* 狀態篩選標籤 */}
+        <div className="flex gap-2">
           {quickFilterOptions.map((filter) => (
-            <Button
+            <button
               key={filter.id}
-              variant={activeQuickFilter === filter.id ? 'primary' : 'outline'}
-              size="sm"
               onClick={() => onQuickFilterChange(filter.id)}
+              className={`px-4 py-2 font-bold text-sm transition-all ${
+                activeQuickFilter === filter.id
+                  ? 'bg-neo-active text-neo-white border-3 border-neo-black shadow-[3px_3px_0px_0px_black]'
+                  : 'bg-transparent text-neo-black hover:text-neo-active hover:underline hover:decoration-3'
+              } ${
+                filter.id === 'error' && activeQuickFilter !== filter.id
+                  ? 'text-neo-error hover:text-neo-error'
+                  : ''
+              }`}
             >
               {filter.label}
-            </Button>
+            </button>
           ))}
         </div>
       </div>
-    </Card>
+    </header>
   );
 };
 
-export default UploadAndFilterControls; 
+export default UploadAndFilterControls;

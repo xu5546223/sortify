@@ -88,13 +88,20 @@ class DocumentDetailQueryHandler:
         # 檢查工作流操作
         workflow_action = getattr(request, 'workflow_action', None)
         
-        # 步驟1: 獲取已知的文檔ID（從對話上下文或緩存）
-        cached_doc_ids = []
-        if context and context.get('cached_document_ids'):
-            cached_doc_ids = context['cached_document_ids']
-            logger.info(f"從上下文獲取 {len(cached_doc_ids)} 個已知文檔")
+        # 步驟1: 獲取已知的文檔ID（優先使用優先文檔）
+        # 優先使用統一上下文管理器提供的優先文檔
+        priority_doc_ids = context.get('priority_document_ids', []) if context else []
+        cached_doc_ids = context.get('cached_document_ids', []) if context else []
         
-        if not cached_doc_ids:
+        # 優先文檔優先級更高（基於相關性和訪問頻率）
+        available_doc_ids = priority_doc_ids if priority_doc_ids else cached_doc_ids
+        
+        if priority_doc_ids:
+            logger.info(f"🎯 使用優先文檔: {len(priority_doc_ids)} 個（來自文檔池）")
+        elif cached_doc_ids:
+            logger.info(f"從上下文獲取 {len(cached_doc_ids)} 個已知文檔（舊方式）")
+        
+        if not available_doc_ids:
             # 沒有已知文檔，退化為 document_search
             logger.warning("沒有找到已知文檔，轉為文檔搜索")
             from app.services.intent_handlers.document_search_handler import document_search_handler
@@ -108,12 +115,12 @@ class DocumentDetailQueryHandler:
             # 轉發給 simple_factual_handler 使用摘要
             from app.services.intent_handlers.simple_factual_handler import simple_factual_handler
             return await simple_factual_handler.handle(
-                request, classification, db, user_id, request_id
+                request, classification, None, db, user_id, request_id
             )
         
         # 步驟2: 如果用戶未批准，獲取目標文檔然後請求批准
         if workflow_action != 'approve_detail_query' and not getattr(request, 'skip_classification', False):
-            logger.info(f"獲取目標文檔（共 {len(cached_doc_ids)} 個候選）")
+            logger.info(f"獲取目標文檔（共 {len(available_doc_ids)} 個候選）")
             
             # 優先從分類結果獲取目標文檔 ID（分類器已經識別過了）
             target_doc_ids = []
@@ -123,9 +130,13 @@ class DocumentDetailQueryHandler:
                 if classification.target_document_reasoning:
                     logger.info(f"分類器推理: {classification.target_document_reasoning}")
             else:
-                # 回退：如果分類器沒有識別，使用所有緩存文檔（最多3個）
-                logger.warning("⚠️ 分類器未提供目標文檔，使用前3個緩存文檔作為回退")
-                target_doc_ids = cached_doc_ids[:3]
+                # 回退：如果分類器沒有識別，優先使用優先文檔（最多3個）
+                if priority_doc_ids:
+                    logger.info("✅ 使用優先文檔作為目標（最相關的文檔）")
+                    target_doc_ids = priority_doc_ids[:3]
+                else:
+                    logger.warning("⚠️ 分類器未提供目標文檔，使用前3個緩存文檔作為回退")
+                    target_doc_ids = available_doc_ids[:3]
             
             processing_time = time.time() - start_time
             
@@ -181,10 +192,10 @@ class DocumentDetailQueryHandler:
             target_doc_ids = request.document_ids
             logger.info(f"📥 從請求參數獲取目標文檔: {len(target_doc_ids)} 個")
         
-        # 優先級3: 回退方案 - 使用前3個緩存文檔
+        # 優先級3: 回退方案 - 使用前3個可用文檔（優先文檔或緩存文檔）
         else:
-            logger.warning("⚠️ 未找到目標文檔ID，使用前3個緩存文檔作為回退")
-            target_doc_ids = cached_doc_ids[:3]
+            logger.warning("⚠️ 未找到目標文檔ID，使用前3個可用文檔作為回退")
+            target_doc_ids = available_doc_ids[:3]
         
         # 步驟4: 動態載入文檔 Schema（合併所有目標文檔的結構）
         logger.info(f"📋 動態載入 {len(target_doc_ids)} 個文檔的 Schema...")
@@ -287,9 +298,9 @@ class DocumentDetailQueryHandler:
         all_detailed_data = []
         document_reference_map = {}  # 用於保存文檔ID到參考編號的映射
         
-        # 構建文檔ID到參考編號的映射（從緩存文檔列表）
+        # 構建文檔ID到參考編號的映射（從可用文檔列表，優先使用優先文檔）
         # 確保 key 統一為字符串格式，以便後續查找
-        for idx, doc_id in enumerate(cached_doc_ids, 1):
+        for idx, doc_id in enumerate(available_doc_ids, 1):
             document_reference_map[str(doc_id)] = idx
         
         documents = await get_documents_by_ids(db, target_doc_ids)
@@ -364,6 +375,11 @@ class DocumentDetailQueryHandler:
         
         # 保存對話
         if db is not None:
+            # ✅ 合併目標文檔 + 用戶 @ 的文件
+            all_doc_ids = set(target_doc_ids)
+            if request.document_ids:
+                all_doc_ids.update(request.document_ids)
+            
             await conversation_helper.save_qa_to_conversation(
                 db=db,
                 conversation_id=request.conversation_id,
@@ -371,7 +387,7 @@ class DocumentDetailQueryHandler:
                 question=request.question,
                 answer=answer,
                 tokens_used=api_calls * 150,
-                source_documents=target_doc_ids
+                source_documents=list(all_doc_ids)
             )
         
         logger.info(f"詳細查詢完成，耗時: {processing_time:.2f}秒, API調用: {api_calls}次")
@@ -468,8 +484,8 @@ class DocumentDetailQueryHandler:
             reference_number = data.get('_reference_number', i)  # 如果有原始編號就用，沒有就用循環編號
             
             # 構建清晰的標題，包含參考編號和文件名
-            doc_label = f"文檔{reference_number} ({filename})"
-            context_parts.append(f"=== {doc_label} 的詳細數據 ===\n{data_str}\n")
+            doc_label = f"文檔{reference_number}（引用編號: citation:{reference_number}）"
+            context_parts.append(f"=== {doc_label}: {filename} 的詳細數據 ===\n{data_str}\n")
             
             logger.debug(f"添加文檔上下文: {doc_label}")
         
@@ -530,8 +546,8 @@ class DocumentDetailQueryHandler:
             reference_number = data.get('_reference_number', i)  # 如果有原始編號就用，沒有就用循環編號
             
             # 構建清晰的標題，包含參考編號和文件名
-            doc_label = f"文檔{reference_number} ({filename})"
-            context_parts.append(f"=== {doc_label} 的詳細數據 ===\n{data_str}\n")
+            doc_label = f"文檔{reference_number}（引用編號: citation:{reference_number}）"
+            context_parts.append(f"=== {doc_label}: {filename} 的詳細數據 ===\n{data_str}\n")
             
             logger.debug(f"添加文檔上下文: {doc_label}")
         

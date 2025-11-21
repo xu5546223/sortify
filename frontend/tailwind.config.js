@@ -2,83 +2,49 @@
 module.exports = {
   content: [
     "./src/**/*.{js,jsx,ts,tsx}",
-    "./public/index.html",
   ],
   theme: {
     extend: {
+      // ✅ Neo-Brutalism 色彩系統
       colors: {
-        // 映射主題變量到 Tailwind 類名
-        primary: {
-          50: 'var(--color-primary-50)',
-          100: 'var(--color-primary-100)',
-          200: 'var(--color-primary-200)',
-          300: 'var(--color-primary-300)',
-          400: 'var(--color-primary-400)',
-          500: 'var(--color-primary-500)',
-          600: 'var(--color-primary-600)',
-          700: 'var(--color-primary-700)',
-          800: 'var(--color-primary-800)',
-          900: 'var(--color-primary-900)',
-        },
-        success: {
-          50: 'var(--color-success-50)',
-          100: 'var(--color-success-100)',
-          200: 'var(--color-success-200)',
-          300: 'var(--color-success-300)',
-          400: 'var(--color-success-400)',
-          500: 'var(--color-success-500)',
-          600: 'var(--color-success-600)',
-          700: 'var(--color-success-700)',
-          800: 'var(--color-success-800)',
-          900: 'var(--color-success-900)',
-        },
-        warning: {
-          50: 'var(--color-warning-50)',
-          100: 'var(--color-warning-100)',
-          200: 'var(--color-warning-200)',
-          300: 'var(--color-warning-300)',
-          400: 'var(--color-warning-400)',
-          500: 'var(--color-warning-500)',
-          600: 'var(--color-warning-600)',
-          700: 'var(--color-warning-700)',
-          800: 'var(--color-warning-800)',
-          900: 'var(--color-warning-900)',
-        },
-        error: {
-          50: 'var(--color-error-50)',
-          100: 'var(--color-error-100)',
-          200: 'var(--color-error-200)',
-          300: 'var(--color-error-300)',
-          400: 'var(--color-error-400)',
-          500: 'var(--color-error-500)',
-          600: 'var(--color-error-600)',
-          700: 'var(--color-error-700)',
-          800: 'var(--color-error-800)',
-          900: 'var(--color-error-900)',
-        },
-        surface: {
-          50: 'var(--color-surface-50)',
-          100: 'var(--color-surface-100)',
-          200: 'var(--color-surface-200)',
-          300: 'var(--color-surface-300)',
-          400: 'var(--color-surface-400)',
-          500: 'var(--color-surface-500)',
-          600: 'var(--color-surface-600)',
-          700: 'var(--color-surface-700)',
-          800: 'var(--color-surface-800)',
-          900: 'var(--color-surface-900)',
-        },
+        'neo-primary': '#29bf12',      // Bright Fern
+        'neo-bg': '#f3f4f6',           // Engine Gray
+        'neo-black': '#000000',         // Ink Black
+        'neo-white': '#ffffff',         // Paper White
+        'neo-active': '#08bdbd',        // Tropical Teal
+        'neo-hover': '#abff4f',         // Green Yellow
+        'neo-warning': '#ff9914',       // Deep Saffron
+        'neo-critical': '#f21b3f',      // Lipstick Red
+        'neo-warn': '#ff9914',           // Deep Saffron
+        'neo-black': '#000000',          // Ink Black
+        'neo-white': '#ffffff',          // Paper White
+        'neo-bg': '#f3f4f6',             // Engine Gray
+        
+        // Legacy support (CSS variables)
+        primary: 'var(--color-primary)',
+        active: 'var(--color-active)',
+        hover: 'var(--color-hover)',
+        error: 'var(--color-error)',
+        warn: 'var(--color-warn)',
+        black: 'var(--color-black)',
+        white: 'var(--color-white)',
+        bg: 'var(--color-bg)',
       },
       fontFamily: {
-        brand: 'var(--font-brand)',
         heading: 'var(--font-heading)',
         body: 'var(--font-body)',
         mono: 'var(--font-mono)',
+        display: ['Space Grotesk', 'sans-serif'],
       },
       spacing: {
         section: 'var(--spacing-section)',
         card: 'var(--spacing-card)',
         component: 'var(--spacing-component)',
+      },
+      borderWidth: {
+        '3': '3px',
+        pc: 'var(--border-width-pc)',
+        m: 'var(--border-width-m)',
       },
       borderRadius: {
         card: 'var(--radius-card)',
@@ -87,23 +53,30 @@ module.exports = {
         modal: 'var(--radius-modal)',
       },
       boxShadow: {
-        card: 'var(--shadow-card)',
-        'card-hover': 'var(--shadow-card-hover)',
-        modal: 'var(--shadow-modal)',
-        button: 'var(--shadow-button)',
-      },
-      animation: {
-        'fade-in': 'var(--animate-fade-in)',
-        'slide-up': 'var(--animate-slide-up)',
-        'scale-in': 'var(--animate-scale-in)',
+        'neo-sm': '2px 2px 0px 0px #000000',
+        'neo-md': '4px 4px 0px 0px #000000',
+        'neo-lg': '6px 6px 0px 0px #000000',
+        'neo-xl': '8px 8px 0px 0px #000000',
+        'neo-hover': '7px 7px 0px 0px #000000',
+        sm: 'var(--shadow-sm)',
+        md: 'var(--shadow-md)',
+        lg: 'var(--shadow-lg)',
+        xl: 'var(--shadow-xl)',
       },
       transitionTimingFunction: {
-        ui: 'var(--ease-ui)',
-        smooth: 'var(--ease-smooth)',
-        bounce: 'var(--ease-bounce)',
+        bounce: 'var(--trans-bounce)',
+      },
+      keyframes: {
+        slideIn: {
+          '0%': { transform: 'translateX(100%)', opacity: '0' },
+          '100%': { transform: 'translateX(0)', opacity: '1' },
+        },
+      },
+      animation: {
+        slideIn: 'slideIn 0.3s ease-out',
       },
     },
   },
   plugins: [],
-  darkMode: ['class', '[data-theme="dark"]'], // 支援 data-theme 屬性
-} 
+  darkMode: ['class', '[data-theme="dark"]'],
+}

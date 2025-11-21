@@ -5,7 +5,7 @@ interface TableCellProps extends React.TdHTMLAttributes<HTMLTableCellElement> {
 }
 
 const TableCell: React.FC<TableCellProps> = ({ children, className = '', ...props }) => {
-  const defaultTdClass = 'px-6 py-4 text-sm text-surface-900';
+  const defaultTdClass = 'px-3 py-3';
   
   // 如果 className 包含 'relative' 或 'overflow'，添加特殊樣式確保下拉菜單不被裁剪
   const hasOverflowHandling = className.includes('relative') || className.includes('overflow');
@@ -20,4 +20,4 @@ const TableCell: React.FC<TableCellProps> = ({ children, className = '', ...prop
   );
 };
 
-export default TableCell; 
+export default TableCell;

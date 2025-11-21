@@ -5,7 +5,7 @@
 """
 import time
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.logging_utils import AppLogger, log_event, LogLevel
@@ -131,25 +131,33 @@ class DocumentSearchHandler:
         # Step 2: 智能查詢重寫（直接使用AI推理內容）
         # 策略：讓 AI 查詢重寫功能分析原始問題+分類推理，自動提取最佳查詢
         
-        # 構建給 AI 查詢重寫的輸入（包含原始問題和分類推理）
-        if classification.reasoning and len(classification.reasoning) > 20:
-            # 有推理內容，組合原始問題和AI的理解
-            query_for_rewrite = f"{request.question}。上下文理解: {classification.reasoning[:300]}"
-            logger.info(f"📝 查詢重寫輸入: 原始問題 + AI推理內容（{len(classification.reasoning)}字）")
+        # 檢查是否已經有預先重寫的查詢結果（批准操作時由 orchestrator 提供）
+        query_rewrite_result = None
+        if context and 'pre_rewritten_query_result' in context:
+            query_rewrite_result = context['pre_rewritten_query_result']
+            logger.info(f"✅ 使用預先重寫的查詢結果（來自批准操作），包含 {len(query_rewrite_result.rewritten_queries)} 個查詢")
         else:
-            # 沒有推理內容，使用原始問題
-            query_for_rewrite = request.question
-            logger.info(f"📝 查詢重寫輸入: 原始問題（無推理內容）")
-        
-        # 步驟2.2: 執行智能查詢重寫（AI會自動分析推理內容）
-        logger.info(f"🔄 執行智能查詢重寫")
-        
-        query_rewrite_result = await self._lightweight_query_rewrite(
-            query_for_rewrite,  # 原始問題 + AI推理內容
-            db,
-            user_id
-        )
-        api_calls += 1
+            # 構建給 AI 查詢重寫的輸入（包含原始問題和分類推理）
+            if classification.reasoning and len(classification.reasoning) > 20:
+                # 有推理內容，組合原始問題和AI的理解
+                query_for_rewrite = f"{request.question}。上下文理解: {classification.reasoning[:300]}"
+                logger.info(f"📝 查詢重寫輸入: 原始問題 + AI推理內容（{len(classification.reasoning)}字）")
+            else:
+                # 沒有推理內容，使用原始問題
+                query_for_rewrite = request.question
+                logger.info(f"📝 查詢重寫輸入: 原始問題（無推理內容）")
+            
+            # 步驟2.2: 執行智能查詢重寫（AI會自動分析推理內容）
+            logger.info(f"🔄 執行智能查詢重寫")
+            
+            query_rewrite_result = await self._lightweight_query_rewrite(
+                query_for_rewrite,  # 原始問題 + AI推理內容
+                db,
+                user_id,
+                request.document_ids,  # ✅ 传递 @ 文件
+                context  # ✅ 传递文档池详细信息
+            )
+            api_calls += 1
         
         # 步驟2.3: 構建最終查詢列表
         if query_rewrite_result and query_rewrite_result.rewritten_queries:
@@ -169,14 +177,41 @@ class DocumentSearchHandler:
                 intent_analysis=classification.reasoning
             )
         
-        # Step 2: 執行兩階段混合檢索
-        semantic_results = await self._perform_hybrid_search(
-            db=db,
-            queries=queries_to_search,
-            top_k=request.context_limit or 5,
-            user_id=user_id,
-            document_ids=request.document_ids
-        )
+        # Step 2: 執行兩階段混合檢索（支持優先文檔）
+        # 檢查是否有優先文檔（從統一上下文管理器傳遞）
+        priority_document_ids = context.get('priority_document_ids', []) if context else []
+        should_reuse_cached = context.get('should_reuse_cached', False) if context else False
+        
+        if priority_document_ids and should_reuse_cached:
+            logger.info(f"🎯 優先從文檔池檢索: {len(priority_document_ids)} 個文檔")
+            # 優先檢索文檔池中的文檔
+            semantic_results = await self._perform_hybrid_search(
+                db=db,
+                queries=queries_to_search,
+                top_k=request.context_limit or 5,
+                user_id=user_id,
+                document_ids=priority_document_ids  # 使用優先文檔
+            )
+            
+            # 如果優先文檔結果不夠好，再擴展搜索
+            if not semantic_results or (semantic_results and max(r.similarity_score for r in semantic_results) < 0.6):
+                logger.info("📚 優先文檔相關性不足，擴展到全局搜索")
+                semantic_results = await self._perform_hybrid_search(
+                    db=db,
+                    queries=queries_to_search,
+                    top_k=request.context_limit or 5,
+                    user_id=user_id,
+                    document_ids=request.document_ids  # 全局搜索
+                )
+        else:
+            # 正常檢索流程
+            semantic_results = await self._perform_hybrid_search(
+                db=db,
+                queries=queries_to_search,
+                top_k=request.context_limit or 5,
+                user_id=user_id,
+                document_ids=request.document_ids
+            )
         
         # Step 3: 準備語義搜索上下文
         semantic_contexts = []
@@ -205,6 +240,18 @@ class DocumentSearchHandler:
                 user_id=user_id,
                 request_id=request_id
             )
+        
+        # 創建文檔ID到相關性評分的映射
+        # ⚠️ 注意：RRF 融合搜索會用 RRF 分數覆蓋 similarity_score
+        # 真正的向量相似度保存在 metadata["original_similarity"]
+        doc_similarity_map = {}
+        for result in semantic_results:
+            # 優先使用原始向量相似度，如果沒有則使用 similarity_score
+            original_sim = result.metadata.get("original_similarity") if result.metadata else None
+            similarity = original_sim if original_sim is not None else result.similarity_score
+            doc_similarity_map[result.document_id] = similarity
+            
+        logger.info(f"📊 相似度來源: {'原始向量相似度' if any(r.metadata and 'original_similarity' in r.metadata for r in semantic_results) else 'RRF分數'}")
         
         document_ids = [result.document_id for result in semantic_results]
         documents = await get_documents_by_ids(db, document_ids)
@@ -248,10 +295,32 @@ class DocumentSearchHandler:
                 classification=classification
             )
         
+        # ⭐ 過濾低相關性文檔（避免污染文檔池）
+        # 降低閾值，避免過濾掉有用的文檔（從 0.55 降到 0.45）
+        RELEVANCE_THRESHOLD = 0.45  # 相關性閾值
+        high_relevance_documents = [
+            doc for doc in documents
+            if doc_similarity_map.get(str(doc.id), 0) >= RELEVANCE_THRESHOLD
+        ]
+        
+        # 記錄詳細的相似度信息
+        if documents:
+            similarity_scores = [doc_similarity_map.get(str(doc.id), 0) for doc in documents]
+            logger.info(f"📊 文檔相似度分布: 最高={max(similarity_scores):.3f}, 最低={min(similarity_scores):.3f}, 平均={sum(similarity_scores)/len(similarity_scores):.3f}")
+        
+        if high_relevance_documents:
+            # 使用高相關性文檔
+            logger.info(f"✅ 過濾後保留 {len(high_relevance_documents)}/{len(documents)} 個高相關性文檔（閾值>={RELEVANCE_THRESHOLD}）")
+            documents_for_answer = high_relevance_documents
+        else:
+            # 如果所有文檔相關性都太低，使用最好的2-3個
+            logger.warning(f"⚠️ 所有文檔相關性都低於閾值 {RELEVANCE_THRESHOLD}，使用top-3文檔")
+            documents_for_answer = documents[:3] if len(documents) >= 3 else documents
+        
         # Step 5: 生成答案(使用摘要+部分內容)
         answer = await self._generate_answer_from_documents(
             question=request.question,
-            documents=documents,
+            documents=documents_for_answer,
             semantic_results=semantic_results,
             query_rewrite_result=query_rewrite_result,
             db=db,
@@ -263,8 +332,15 @@ class DocumentSearchHandler:
         
         processing_time = time.time() - start_time
         
-        # 保存對話記錄
+        # 保存對話記錄（使用過濾後的高相關性文檔）
         if db is not None:
+            # ✅ 合併搜索結果 + 用戶 @ 的文件
+            all_doc_ids = set()
+            if documents_for_answer:
+                all_doc_ids.update(str(doc.id) for doc in documents_for_answer)
+            if request.document_ids:
+                all_doc_ids.update(request.document_ids)
+            
             await conversation_helper.save_qa_to_conversation(
                 db=db,
                 conversation_id=request.conversation_id,
@@ -272,7 +348,7 @@ class DocumentSearchHandler:
                 question=request.question,
                 answer=answer,
                 tokens_used=api_calls * 150,
-                source_documents=[str(doc.id) for doc in documents] if documents else []
+                source_documents=list(all_doc_ids)
             )
         
         # 記錄日誌
@@ -294,12 +370,12 @@ class DocumentSearchHandler:
         
         logger.info(
             f"文檔搜索完成,耗時: {processing_time:.2f}秒, "
-            f"找到 {len(documents)} 個文檔, API調用: {api_calls}次"
+            f"找到 {len(documents_for_answer)} 個高相關性文檔, API調用: {api_calls}次"
         )
         
         return AIQAResponse(
             answer=answer,
-            source_documents=[str(doc.id) for doc in documents],
+            source_documents=[str(doc.id) for doc in documents_for_answer],
             confidence_score=0.85,
             tokens_used=api_calls * 150,
             processing_time=processing_time,
@@ -319,14 +395,42 @@ class DocumentSearchHandler:
         self,
         question: str,
         db: Optional[AsyncIOMotorDatabase],
-        user_id: Optional[str]
+        user_id: Optional[str],
+        document_ids: Optional[List[str]] = None,
+        context: Optional[Dict[str, Any]] = None
     ) -> Optional[QueryRewriteResult]:
         """輕量級查詢重寫(生成1-2個變體即可)"""
         try:
+            # ✅ 准备文档上下文（包括文档摘要信息）
+            document_context = None
+            if document_ids:
+                logger.info(f"🎯 查询重写：用户选择了 {len(document_ids)} 个文件")
+                
+                # ✅ 从 context 中获取文档池详细信息（摘要）
+                document_summaries = []
+                if context and 'cached_documents' in context:
+                    for doc in context['cached_documents']:
+                        doc_id = doc.get('document_id')
+                        if doc_id in document_ids:
+                            document_summaries.append({
+                                'document_id': doc_id,
+                                'filename': doc.get('filename', ''),
+                                'summary': doc.get('summary', ''),
+                                'key_concepts': doc.get('key_concepts', [])
+                            })
+                    logger.info(f"📄 获取到 {len(document_summaries)} 个文档摘要用于查询重写")
+                
+                document_context = {
+                    "document_ids": document_ids,
+                    "document_count": len(document_ids),
+                    "document_summaries": document_summaries  # ✅ 传递文档摘要
+                }
+            
             ai_response = await unified_ai_service_simplified.rewrite_query(
                 original_query=question,
                 db=db,
-                user_id=user_id
+                user_id=user_id,
+                document_context=document_context  # ✅ 传递完整文档上下文
             )
             
             if ai_response.success and ai_response.output_data:
@@ -430,7 +534,7 @@ class DocumentSearchHandler:
         
         for i, doc in enumerate(documents[:5], 1):  # 最多5個文檔
             doc_context = []
-            doc_context.append(f"=== 文檔 {i}: {getattr(doc, 'filename', 'Unknown')} ===")
+            doc_context.append(f"=== 文檔{i}（引用編號: citation:{i}）: {getattr(doc, 'filename', 'Unknown')} ===")
             
             # 嘗試獲取AI分析結果
             if hasattr(doc, 'analysis') and doc.analysis:

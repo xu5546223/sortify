@@ -18,7 +18,9 @@ from app.models.device_token_models import (
     RefreshTokenResponse,
     DeviceListResponse,
     DeviceRevokeResponse,
-    DeviceToken
+    DeviceToken,
+    UpdateDeviceNameRequest,
+    UpdateDeviceNameResponse
 )
 from app.core.security import get_current_active_user, get_current_admin_user, create_access_token
 from app.core.device_security import (
@@ -400,6 +402,90 @@ async def list_devices(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="獲取裝置列表失敗"
+        )
+
+
+@router.patch("/devices/{device_id}", response_model=UpdateDeviceNameResponse, summary="更新裝置名稱")
+async def update_device_name(
+    device_id: str,
+    request: UpdateDeviceNameRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db)
+):
+    """
+    更新指定裝置的名稱
+    
+    - 只能更新自己的裝置
+    - 名稱長度限制：1-50 個字符
+    """
+    try:
+        # Pydantic 已經驗證了名稱長度，這裡只需要 trim
+        device_name = request.device_name.strip()
+        
+        # 檢查裝置是否存在且屬於當前用戶
+        device = await crud_device_tokens.get_device_token_by_device_id(
+            db=db,
+            device_id=device_id
+        )
+        
+        if not device:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="裝置不存在"
+            )
+        
+        if str(device.user_id) != str(current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="無權限修改此裝置"
+            )
+        
+        # 更新裝置名稱
+        collection = db["device_tokens"]
+        result = await collection.update_one(
+            {"device_id": device_id},
+            {"$set": {"device_name": device_name}}
+        )
+        
+        if result.modified_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="更新裝置名稱失敗"
+            )
+        
+        await log_event(
+            db=db,
+            level=LogLevel.INFO,
+            message=f"用戶 {current_user.username} 更新了裝置名稱",
+            source="api.device_auth.update_device_name",
+            user_id=str(current_user.id),
+            details={
+                "device_id": device_id,
+                "old_name": device.device_name,
+                "new_name": device_name
+            }
+        )
+        
+        return UpdateDeviceNameResponse(
+            success=True,
+            message="裝置名稱已更新",
+            device_name=device_name
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await log_event(
+            db=db,
+            level=LogLevel.ERROR,
+            message=f"更新裝置名稱失敗: {str(e)}",
+            source="api.device_auth.update_device_name",
+            user_id=str(current_user.id),
+            details={"device_id": device_id}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="更新裝置名稱失敗"
         )
 
 

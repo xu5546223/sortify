@@ -44,11 +44,17 @@ class SimpleFactualHandler:
         """
         處理簡單事實查詢
         
-        策略:
-        1. 跳過查詢重寫(節省1次API調用)
-        2. 執行單次摘要向量搜索
-        3. 使用摘要直接生成答案
-        4. 不執行詳細文檔查詢
+        統一策略（2024優化版）:
+        1. **不執行向量搜索**（simple_factual 不需要查找文檔）
+        2. **總是載入對話歷史**（最近 5 條消息）
+        3. **如果有文檔池，提供文檔池摘要信息**
+        4. 使用 AI 通用知識 + 對話歷史 + 文檔池回答
+        5. 跳過查詢重寫（節省API調用）
+        
+        優勢:
+        - AI 能看到完整上下文（歷史 + 文檔池）
+        - 回答更準確和相關
+        - 無需向量搜索，快速響應
         
         Args:
             request: AI QA 請求
@@ -65,139 +71,75 @@ class SimpleFactualHandler:
         api_calls = 0
         
         logger.info(f"處理簡單事實查詢: {request.question}")
+        logger.info("⭐ Simple Factual 不執行向量搜索，使用對話歷史 + 文檔池（如有）+ AI 知識回答")
         
-        # Step 1: 生成查詢向量
-        query_embedding = embedding_service.encode_text(request.question)
-        if not query_embedding or not any(query_embedding):
-            logger.error("無法生成查詢的嵌入向量")
-            return self._create_error_response(
-                request, "無法處理您的問題,請稍後再試",
-                time.time() - start_time
-            )
+        # 統一策略：總是載入對話歷史和文檔池信息
+        from app.services.qa_workflow.unified_context_helper import unified_context_helper
         
-        # Step 2: 執行摘要向量搜索(只搜索摘要,不搜索文本片段)
-        try:
-            summary_metadata_filter = {"type": "summary"}
-            if request.document_ids:
-                summary_metadata_filter["document_id"] = {"$in": request.document_ids}
-            
-            search_results = vector_db_service.search_similar_vectors(
-                query_vector=query_embedding,
-                top_k=min(5, request.context_limit or 5),  # 限制搜索數量
-                owner_id_filter=str(user_id) if user_id else None,
-                metadata_filter=summary_metadata_filter,
-                similarity_threshold=0.4  # 稍微寬鬆的閾值
-            )
-            
-            logger.info(f"摘要搜索找到 {len(search_results)} 個相關文檔")
-            
-        except Exception as e:
-            logger.error(f"向量搜索失敗: {e}", exc_info=True)
-            search_results = []
+        # 1. 載入對話歷史（最近 5 條）
+        conversation_history_text = await unified_context_helper.load_and_format_conversation_history(
+            db=db,
+            conversation_id=request.conversation_id,
+            user_id=user_id,
+            limit=5,
+            max_content_length=2000
+        )
         
-        # Step 3: 準備語義搜索上下文
-        semantic_contexts = []
-        for result in search_results:
-            semantic_contexts.append(
-                SemanticContextDocument(
-                    document_id=result.document_id,
-                    summary_or_chunk_text=result.summary_text,
-                    similarity_score=result.similarity_score,
-                    metadata=result.metadata
-                )
-            )
+        # 2. 構建文檔池上下文（如果有）
+        doc_pool_context = None
+        cached_doc_data = context.get('cached_documents', []) if context else []  # ✅ 修复：使用 cached_documents
         
-        # Step 4: 如果沒有找到相關文檔,直接用AI回答
-        if not search_results:
-            logger.info("未找到相關文檔,使用AI通用知識回答")
-            answer = await self._generate_answer_without_documents(
-                request.question,
-                classification,
-                db,
-                user_id,
-                request.conversation_id  # 傳遞 conversation_id
-            )
-            api_calls += 1
-            
-            processing_time = time.time() - start_time
-            
-            # 保存對話記錄(無文檔情況)
-            if db is not None:
-                await conversation_helper.save_qa_to_conversation(
-                    db=db,
-                    conversation_id=request.conversation_id,
-                    user_id=str(user_id) if user_id else None,
-                    question=request.question,
-                    answer=answer,
-                    tokens_used=api_calls * 100,
-                    source_documents=[]
-                )
-            
-            return AIQAResponse(
-                answer=answer,
-                source_documents=[],
-                confidence_score=0.6,
-                tokens_used=api_calls * 100,  # 估算
-                processing_time=processing_time,
-                query_rewrite_result=QueryRewriteResult(
-                    original_query=request.question,
-                    rewritten_queries=[request.question],
-                    extracted_parameters={},
-                    intent_analysis=f"簡單事實查詢(無文檔): {classification.reasoning}"
-                ),
-                semantic_search_contexts=semantic_contexts,
-                session_id=request.session_id,
-                classification=classification,
-                workflow_state={
-                    "current_step": "completed",
-                    "strategy_used": "simple_factual_no_docs",
-                    "api_calls": api_calls
-                }
-            )
+        if cached_doc_data:
+            logger.info(f"文檔池包含 {len(cached_doc_data)} 個文檔，添加到上下文")
+            doc_pool_context = "📁 當前文檔池中的文件：\n\n"
+            for idx, doc_info in enumerate(cached_doc_data, 1):
+                filename = doc_info.get('filename', '未知文件')
+                summary = doc_info.get('summary', '無摘要')
+                relevance = doc_info.get('relevance_score', 0)
+                access_count = doc_info.get('access_count', 0)
+                
+                # ✅ 使用 AI 期望的引用格式
+                doc_pool_context += f"=== 文檔{idx}（引用編號: citation:{idx}）: {filename} ===\n"
+                doc_pool_context += f"相關性: {relevance:.0%} | 訪問次數: {access_count}\n"
+                if summary and summary != '無摘要':
+                    doc_pool_context += f"摘要: {summary}\n"
+                doc_pool_context += "\n"
         
-        # Step 5: 獲取文檔詳細信息
-        document_ids = [result.document_id for result in search_results[:3]]  # 只取前3個
-        try:
-            documents = await get_documents_by_ids(db, document_ids)
-            
-            # 過濾用戶有權限的文檔
-            if user_id:
-                from uuid import UUID
-                user_uuid = UUID(str(user_id)) if not isinstance(user_id, UUID) else user_id
-                documents = [
-                    doc for doc in documents 
-                    if hasattr(doc, 'owner_id') and doc.owner_id == user_uuid
-                ]
-            
-        except Exception as e:
-            logger.error(f"獲取文檔失敗: {e}", exc_info=True)
-            documents = []
+        # 3. 構建完整上下文
+        context_parts = []
+        if conversation_history_text:
+            context_parts.append(f"📝 對話歷史：\n{conversation_history_text}")
+        if doc_pool_context:
+            context_parts.append(doc_pool_context)
         
-        # Step 6: 使用摘要生成答案(不做詳細查詢)
-        if documents:
-            answer = await self._generate_answer_with_summaries(
-                request.question,
-                documents,
-                search_results,
-                classification,
-                db,
-                user_id,
-                request.conversation_id  # 傳遞 conversation_id
-            )
-            api_calls += 1
+        # 添加系統提示
+        if not cached_doc_data:
+            context_parts.append("💡 提示：文檔池為空，請基於通用知識和對話歷史回答。")
         else:
-            answer = await self._generate_answer_without_documents(
-                request.question,
-                classification,
-                db,
-                user_id
-            )
-            api_calls += 1
+            context_parts.append("💡 提示：可以參考文檔池中的文件信息來回答問題。\n⚠️ 重要：提及文檔時，必須使用 [文檔名](citation:N) 格式創建可點擊引用。")
+        
+        # 4. 使用 AI 生成答案
+        from app.services.ai.unified_ai_service_simplified import unified_ai_service_simplified
+        
+        ai_response = await unified_ai_service_simplified.generate_answer(
+            user_question=request.question,
+            intent_analysis="",
+            document_context=context_parts,
+            db=db,
+            user_id=user_id
+        )
+        api_calls += 1
+        
+        # 提取答案文本
+        answer = ai_response.output_data.answer_text if ai_response.success and ai_response.output_data else "抱歉，無法生成答案。"
         
         processing_time = time.time() - start_time
         
-        # 保存對話記錄
+        # 保存對話記錄（無文檔情況）
         if db is not None:
+            # ✅ 如果用戶提供了 @ 文件，也要保存
+            source_docs = request.document_ids if request.document_ids else []
+            
             await conversation_helper.save_qa_to_conversation(
                 db=db,
                 conversation_id=request.conversation_id,
@@ -205,51 +147,119 @@ class SimpleFactualHandler:
                 question=request.question,
                 answer=answer,
                 tokens_used=api_calls * 100,
-                source_documents=[str(doc.id) for doc in documents] if documents else []
-            )
-        
-        # 記錄日誌
-        if db is not None:
-            await log_event(
-                db=db,
-                level=LogLevel.INFO,
-                message="簡單事實查詢處理完成",
-                source="handler.simple_factual",
-                user_id=str(user_id) if user_id else None,
-                request_id=request_id,
-                details={
-                    "question": request.question[:100],
-                    "documents_found": len(documents),
-                    "api_calls": api_calls,
-                    "processing_time": processing_time
-                }
+                source_documents=source_docs
             )
         
         logger.info(
-            f"簡單事實查詢完成,耗時: {processing_time:.2f}秒, "
+            f"簡單事實查詢完成，耗時: {processing_time:.2f}秒，"
+            f"使用文檔池: {len(cached_doc_data) > 0}，"
             f"API調用: {api_calls}次"
         )
         
         return AIQAResponse(
             answer=answer,
-            source_documents=[str(doc.id) for doc in documents],
-            confidence_score=0.8,
-            tokens_used=api_calls * 100,  # 估算
+            source_documents=[],
+            confidence_score=0.85 if cached_doc_data else 0.75,  # 有文檔池時置信度更高
+            tokens_used=api_calls * 100,
             processing_time=processing_time,
             query_rewrite_result=QueryRewriteResult(
                 original_query=request.question,
                 rewritten_queries=[request.question],
                 extracted_parameters={},
-                intent_analysis=f"簡單事實查詢: {classification.reasoning}"
+                intent_analysis=f"簡單事實查詢（統一策略）: {classification.reasoning}"
             ),
-            semantic_search_contexts=semantic_contexts,
+            semantic_search_contexts=[],  # 無向量搜索
             session_id=request.session_id,
             classification=classification,
             workflow_state={
                 "current_step": "completed",
-                "strategy_used": "simple_factual_with_summaries",
+                "strategy_used": "simple_factual_unified",
                 "api_calls": api_calls,
-                "documents_used": len(documents)
+                "skipped_vector_search": True,
+                "used_conversation_history": bool(conversation_history_text),
+                "used_document_pool": len(cached_doc_data) > 0,
+                "document_pool_size": len(cached_doc_data)
+            }
+        )
+    
+    async def _generate_answer_from_document_pool(
+        self,
+        request: AIQARequest,
+        context: dict,
+        classification: QuestionClassification,
+        db: Optional[AsyncIOMotorDatabase],
+        user_id: Optional[str],
+        start_time: float,
+        api_calls: int
+    ) -> AIQAResponse:
+        """直接從文檔池信息生成答案（不執行向量搜索）"""
+        
+        # 獲取文檔池數據
+        cached_doc_data = context.get('cached_documents', [])  # ✅ 修复：使用 cached_documents
+        
+        logger.info(f"從文檔池載入了 {len(cached_doc_data)} 個文檔")
+        
+        # 載入對話歷史
+        from app.services.qa_workflow.unified_context_helper import unified_context_helper
+        conversation_history_text = await unified_context_helper.load_and_format_conversation_history(
+            db=db,
+            conversation_id=request.conversation_id,
+            user_id=user_id,
+            limit=5,
+            include_summary=False
+        )
+        
+        # 構建文檔池上下文（格式化為易讀的文本）
+        doc_pool_context = "當前文檔池中的文件：\n\n"
+        for idx, doc_info in enumerate(cached_doc_data, 1):
+            filename = doc_info.get('filename', '未知文件')
+            summary = doc_info.get('summary', '無摘要')
+            relevance = doc_info.get('relevance_score', 0)
+            access_count = doc_info.get('access_count', 0)
+            
+            # ✅ 使用 AI 期望的引用格式
+            doc_pool_context += f"=== 文檔{idx}（引用編號: citation:{idx}）: {filename} ===\n"
+            doc_pool_context += f"相關性: {relevance:.0%} | 訪問次數: {access_count}\n"
+            if summary and summary != '無摘要':
+                doc_pool_context += f"摘要: {summary}\n"
+            doc_pool_context += "\n"
+        
+        # 使用 AI 生成答案
+        from app.services.ai.unified_ai_service_simplified import unified_ai_service_simplified
+        
+        answer = await unified_ai_service_simplified.generate_answer(
+            question=request.question,
+            document_contexts=[doc_pool_context],
+            conversation_history=conversation_history_text,
+            user_id=user_id
+        )
+        
+        api_calls += 1
+        processing_time = time.time() - start_time
+        
+        logger.info(f"文檔池總覽回答完成，耗時: {processing_time:.2f}秒")
+        
+        return AIQAResponse(
+            answer=answer,
+            source_documents=[],  # 不引用特定文檔
+            confidence_score=0.9,  # 高置信度（信息來自文檔池）
+            tokens_used=api_calls * 100,
+            processing_time=processing_time,
+            query_rewrite_result=QueryRewriteResult(
+                original_query=request.question,
+                rewritten_queries=[request.question],
+                extracted_parameters={},
+                intent_analysis=f"文檔池總覽問題: {classification.reasoning}"
+            ),
+            semantic_search_contexts=[],
+            session_id=request.session_id,
+            classification=classification,
+            workflow_state={
+                "current_step": "completed",
+                "strategy_used": "document_pool_overview",
+                "api_calls": api_calls,
+                "documents_in_pool": len(cached_doc_data),
+                "skipped_vector_search": True
             }
         )
     

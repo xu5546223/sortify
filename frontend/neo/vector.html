@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vector DB Console</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --c-green: #29bf12;
+            --c-teal: #08bdbd;
+            --c-lime: #abff4f;
+            --c-red: #f21b3f;
+            --c-orange: #ff9914;
+            --c-black: #000000;
+            --c-white: #ffffff;
+            --c-bg: #f3f4f6;
+
+            --border-thick: 3px solid var(--c-black);
+            --border-thin: 2px solid var(--c-black);
+            --shadow-hard: 4px 4px 0px 0px var(--c-black);
+            --shadow-active: 0px 0px 0px 0px var(--c-black);
+        }
+
+        body { font-family: 'Inter', sans-serif; background-color: var(--c-bg); color: var(--c-black); }
+        .font-display { font-family: 'Space Grotesk', sans-serif; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* 通用組件 */
+        .neo-box {
+            background: var(--c-white);
+            border: var(--border-thick);
+            box-shadow: var(--shadow-hard);
+        }
+
+        .neo-btn {
+            border: var(--border-thin);
+            font-weight: 700;
+            text-transform: uppercase;
+            transition: all 0.1s;
+            display: inline-flex; align-items: center; gap: 6px;
+            background: white;
+            box-shadow: 3px 3px 0px 0px black;
+        }
+        .neo-btn:hover { transform: translate(-2px, -2px); box-shadow: 5px 5px 0px 0px black; }
+        .neo-btn:active { transform: translate(2px, 2px); box-shadow: var(--shadow-active); }
+        
+        .neo-btn.primary { background: var(--c-green); color: black; }
+        .neo-btn.danger { background: var(--c-red); color: white; }
+
+        /* 狀態指示燈 */
+        .status-pill {
+            border: 2px solid black;
+            padding: 2px 8px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            border-radius: 99px;
+            display: flex; align-items: center; gap: 4px;
+        }
+        .status-ok { background: var(--c-lime); }
+        .status-err { background: var(--c-red); color: white; }
+
+        /* Tabs */
+        .tab-btn {
+            padding: 10px 20px;
+            font-weight: bold;
+            border: 2px solid transparent;
+            border-bottom: none;
+            color: #666;
+            cursor: pointer;
+        }
+        .tab-btn.active {
+            background: var(--c-white);
+            border: var(--border-thick);
+            border-bottom: none; /* 與下方容器融合 */
+            color: black;
+            position: relative;
+            top: 3px; /* 蓋住容器邊框 */
+            z-index: 10;
+        }
+
+        /* 範圍滑塊自定義 */
+        input[type=range] {
+            -webkit-appearance: none; width: 100%; background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 20px; width: 20px; border: 2px solid black; background: var(--c-teal); cursor: pointer; margin-top: -8px;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; background: black;
+        }
+    </style>
+</head>
+<body class="p-6 min-h-screen flex flex-col gap-6">
+
+    <!-- 1. Dashboard Header (狀態總覽) -->
+    <header class="neo-box p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+        <div>
+            <h1 class="font-display text-3xl font-bold uppercase flex items-center gap-3">
+                <i class="ph-fill ph-database text-[var(--c-teal)]"></i>
+                Vector Core
+            </h1>
+            <div class="flex gap-2 mt-2">
+                <div class="status-pill status-ok"><i class="ph-bold ph-check"></i> MONGO: CONNECTED</div>
+                <div class="status-pill status-ok"><i class="ph-bold ph-check"></i> CUDA: ACTIVE</div>
+                <div class="status-pill bg-black text-white border-black"><i class="ph-bold ph-cpu"></i> RTX 3060 Ti</div>
+            </div>
+        </div>
+
+        <!-- 核心指標 (KPI) -->
+        <div class="flex gap-4">
+            <div class="border-2 border-black p-3 bg-[#f9fafb] min-w-[120px]">
+                <div class="text-xs font-bold text-gray-500 uppercase">Vectors</div>
+                <div class="text-2xl font-mono font-bold">1,270</div>
+            </div>
+            <div class="border-2 border-black p-3 bg-[#f9fafb] min-w-[120px]">
+                <div class="text-xs font-bold text-gray-500 uppercase">Documents</div>
+                <div class="text-2xl font-mono font-bold">269</div>
+            </div>
+            <div class="border-2 border-black p-3 bg-[var(--c-teal)] text-white min-w-[120px]">
+                <div class="text-xs font-bold uppercase opacity-80">Dimension</div>
+                <div class="text-2xl font-mono font-bold">768</div>
+            </div>
+        </div>
+    </header>
+
+    <!-- 2. 主要操作區 (Tabs System) -->
+    <div class="flex-1 flex flex-col">
+        
+        <!-- Tab Navigation -->
+        <div class="flex gap-2 px-4">
+            <button class="tab-btn active" onclick="switchTab('data')">
+                <i class="ph-bold ph-files"></i> Data Management
+            </button>
+            <button class="tab-btn" onclick="switchTab('search')">
+                <i class="ph-bold ph-flask"></i> Search Playground
+            </button>
+            <button class="tab-btn" onclick="switchTab('config')">
+                <i class="ph-bold ph-gear"></i> Configuration
+            </button>
+        </div>
+
+        <!-- Tab Content Container -->
+        <div class="neo-box flex-1 p-0 relative z-0">
+            
+            <!-- VIEW A: Data Management (數據管理列表) -->
+            <div id="tab-data" class="p-6">
+                
+                <!-- Toolbar -->
+                <div class="flex justify-between items-center mb-6">
+                    <div class="flex gap-2">
+                        <button class="neo-btn primary px-4 py-2 text-sm"><i class="ph-bold ph-arrow-clockwise"></i> Re-Index All</button>
+                        <button class="neo-btn danger px-4 py-2 text-sm"><i class="ph-bold ph-trash"></i> Prune Deleted</button>
+                    </div>
+                    <div class="relative w-64">
+                        <i class="ph-bold ph-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2"></i>
+                        <input type="text" placeholder="Filter files..." class="w-full border-2 border-black py-2 pl-9 pr-2 font-bold text-sm">
+                    </div>
+                </div>
+
+                <!-- Table -->
+                <div class="border-2 border-black overflow-hidden">
+                    <table class="w-full text-left text-sm">
+                        <thead class="bg-black text-white font-display uppercase">
+                            <tr>
+                                <th class="p-3"><input type="checkbox" class="accent-[var(--c-lime)] w-4 h-4"></th>
+                                <th class="p-3">Filename</th>
+                                <th class="p-3">Vector Status</th>
+                                <th class="p-3">Vectors</th>
+                                <th class="p-3 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y-2 divide-black font-bold">
+                            <tr class="hover:bg-[var(--c-lime)] transition-colors">
+                                <td class="p-3"><input type="checkbox" class="accent-black w-4 h-4"></td>
+                                <td class="p-3 font-mono">2025-03-12_report.pdf</td>
+                                <td class="p-3"><span class="status-pill status-ok w-fit">COMPLETED</span></td>
+                                <td class="p-3">128</td>
+                                <td class="p-3 text-right">
+                                    <button class="hover:text-[var(--c-red)] p-1"><i class="ph-bold ph-trash"></i></button>
+                                    <button class="hover:text-[var(--c-teal)] p-1"><i class="ph-bold ph-arrows-clockwise"></i></button>
+                                </td>
+                            </tr>
+                            <!-- Repeat Items -->
+                            <tr class="hover:bg-[var(--c-lime)] transition-colors bg-red-50">
+                                <td class="p-3"><input type="checkbox" class="accent-black w-4 h-4"></td>
+                                <td class="p-3 font-mono">error_log_dump.txt</td>
+                                <td class="p-3"><span class="status-pill status-err w-fit">FAILED</span></td>
+                                <td class="p-3">0</td>
+                                <td class="p-3 text-right">
+                                    <button class="hover:text-[var(--c-red)] p-1"><i class="ph-bold ph-trash"></i></button>
+                                    <button class="hover:text-[var(--c-teal)] p-1"><i class="ph-bold ph-arrows-clockwise"></i></button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <!-- Pagination -->
+                <div class="flex justify-between items-center mt-4">
+                    <span class="text-xs font-bold text-gray-500">SHOWING 1-10 OF 269</span>
+                    <div class="flex gap-1">
+                        <button class="w-8 h-8 border-2 border-black flex items-center justify-center hover:bg-black hover:text-white"><</button>
+                        <button class="w-8 h-8 border-2 border-black bg-[var(--c-teal)] text-white font-bold flex items-center justify-center">1</button>
+                        <button class="w-8 h-8 border-2 border-black flex items-center justify-center hover:bg-black hover:text-white">2</button>
+                        <button class="w-8 h-8 border-2 border-black flex items-center justify-center hover:bg-black hover:text-white">></button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VIEW B: Search Playground (搜尋實驗室) -->
+            <div id="tab-search" class="hidden h-[600px] flex">
+                
+                <!-- 左側：調參區 -->
+                <div class="w-1/3 border-r-3 border-black p-6 bg-gray-50 flex flex-col gap-6 overflow-y-auto">
+                    <h3 class="font-display font-bold text-xl border-b-2 border-black pb-2">Parameters</h3>
+                    
+                    <!-- Search Input -->
+                    <div>
+                        <label class="text-xs font-bold uppercase mb-1 block">Test Query</label>
+                        <textarea class="w-full border-2 border-black p-3 font-bold h-24 resize-none" placeholder="Enter semantic query..."></textarea>
+                    </div>
+
+                    <!-- Sliders -->
+                    <div>
+                        <div class="flex justify-between mb-1"><label class="text-xs font-bold uppercase">Similarity Threshold</label> <span class="font-mono font-bold">0.4</span></div>
+                        <input type="range" min="0" max="1" step="0.1" value="0.4">
+                    </div>
+                    
+                    <div>
+                        <div class="flex justify-between mb-1"><label class="text-xs font-bold uppercase">Hybrid Alpha (RRF)</label> <span class="font-mono font-bold">0.7</span></div>
+                        <input type="range" min="0" max="1" step="0.1" value="0.7">
+                    </div>
+
+                    <!-- Strategy Toggles -->
+                    <div class="space-y-2">
+                        <label class="text-xs font-bold uppercase">Strategy</label>
+                        <div class="flex flex-col gap-2">
+                            <label class="flex items-center gap-2 border-2 border-black p-2 bg-white cursor-pointer hover:bg-[var(--c-lime)]">
+                                <input type="radio" name="strat" class="accent-black" checked>
+                                <span class="font-bold text-sm">Two-Stage Hybrid (Rec.)</span>
+                            </label>
+                            <label class="flex items-center gap-2 border-2 border-black p-2 bg-white cursor-pointer hover:bg-[var(--c-lime)]">
+                                <input type="radio" name="strat" class="accent-black">
+                                <span class="font-bold text-sm">Dense Vector Only</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <button class="neo-btn primary w-full py-3 justify-center mt-auto">
+                        <i class="ph-bold ph-play"></i> Run Test
+                    </button>
+                </div>
+
+                <!-- 右側：結果預覽 -->
+                <div class="flex-1 p-6 bg-white overflow-y-auto">
+                    <h3 class="font-display font-bold text-xl border-b-2 border-black pb-2 mb-4 flex justify-between">
+                        <span>Results</span>
+                        <span class="text-sm font-mono bg-black text-[var(--c-lime)] px-2">5 Found (0.04s)</span>
+                    </h3>
+
+                    <!-- Result Card -->
+                    <div class="border-2 border-black p-4 mb-3 shadow-[4px_4px_0px_#e5e7eb] hover:shadow-[4px_4px_0px_var(--c-teal)] transition-shadow">
+                        <div class="flex justify-between items-start mb-2">
+                            <div class="font-mono text-xs bg-gray-200 px-2 py-1 border border-black">Score: 0.89</div>
+                            <div class="font-bold text-xs text-[var(--c-teal)]">#1</div>
+                        </div>
+                        <p class="text-sm font-bold mb-1">...<span class="bg-[var(--c-lime)]">water bill</span> payment terms for 2025...</p>
+                        <div class="text-xs text-gray-500 font-mono mt-2">Source: 2025_contract_draft.pdf (Page 4)</div>
+                    </div>
+
+                     <!-- Result Card -->
+                     <div class="border-2 border-black p-4 mb-3 shadow-[4px_4px_0px_#e5e7eb] hover:shadow-[4px_4px_0px_var(--c-teal)] transition-shadow">
+                        <div class="flex justify-between items-start mb-2">
+                            <div class="font-mono text-xs bg-gray-200 px-2 py-1 border border-black">Score: 0.72</div>
+                            <div class="font-bold text-xs text-[var(--c-teal)]">#2</div>
+                        </div>
+                        <p class="text-sm font-bold mb-1">...monthly <span class="bg-[var(--c-lime)]">payment</span> schedule...</p>
+                        <div class="text-xs text-gray-500 font-mono mt-2">Source: finance_report_q1.xlsx</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VIEW C: Config (隱藏，結構類似) -->
+            <div id="tab-config" class="hidden p-6">
+                <div class="grid grid-cols-2 gap-6">
+                     <div class="border-2 border-black p-4">
+                        <h3 class="font-bold mb-4">Model Selection</h3>
+                        <select class="w-full border-2 border-black p-2 font-bold">
+                            <option>paraphrase-multilingual-mpnet-base-v2</option>
+                            <option>text-embedding-3-small</option>
+                        </select>
+                     </div>
+                     <div class="border-2 border-black p-4">
+                        <h3 class="font-bold mb-4">Compute Device</h3>
+                        <div class="flex gap-4">
+                             <label class="flex items-center gap-2 font-bold"><input type="radio" checked class="accent-black"> CUDA (GPU)</label>
+                             <label class="flex items-center gap-2 font-bold"><input type="radio" class="accent-black"> CPU</label>
+                        </div>
+                     </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        function switchTab(tabName) {
+            // Hide all contents
+            ['data', 'search', 'config'].forEach(t => {
+                document.getElementById('tab-' + t).classList.add('hidden');
+                document.getElementById('tab-' + t).classList.remove('flex');
+            });
+            
+            // Reset buttons
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+
+            // Activate selected
+            const content = document.getElementById('tab-' + tabName);
+            content.classList.remove('hidden');
+            if(tabName === 'search') content.classList.add('flex'); // Search uses flex layout
+            
+            // Activate button style (Simple logic for demo)
+            event.currentTarget.classList.add('active');
+        }
+    </script>
+</body>
+</html>
