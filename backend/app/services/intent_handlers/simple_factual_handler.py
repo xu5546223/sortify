@@ -3,6 +3,7 @@
 
 處理簡單的事實查詢,執行輕量級搜索,快速回答
 """
+import re
 import time
 import logging
 from typing import Optional
@@ -133,10 +134,36 @@ class SimpleFactualHandler:
         
         processing_time = time.time() - start_time
         
-        # 保存對話記錄（無文檔情況）
+        # ⭐ 關鍵：source_documents 必須包含完整的文檔池順序（與 AI 看到的順序一致）
+        # 這樣前端才能正確解析 citation:N（N 對應 source_documents[N-1]）
+        # 
+        # 注意：不能只返回 AI 引用的文檔，因為 citation:3 需要知道完整順序才能找到第 3 個文檔
+        source_doc_ids_in_order = []
+        if cached_doc_data:
+            logger.info(f"📋 [SimpleFactual] 構建 source_documents，cached_doc_data 順序:")
+            for idx, doc_info in enumerate(cached_doc_data, 1):
+                doc_id = doc_info.get('document_id')
+                filename = doc_info.get('filename', 'unknown')
+                logger.info(f"   #{idx}: {filename} (ID: {doc_id[:8] if doc_id else 'N/A'}...)")
+                if doc_id and doc_id not in source_doc_ids_in_order:
+                    source_doc_ids_in_order.append(doc_id)
+        
+        # 記錄 AI 實際引用了哪些文檔（用於日誌）
+        citation_pattern = r'\[.*?\]\(citation:(\d+)\)'
+        citation_matches = re.findall(citation_pattern, answer)
+        if citation_matches:
+            cited_indices = sorted(set(int(m) for m in citation_matches))
+            logger.info(f"📌 AI 引用了 citation:{cited_indices}，文檔池共 {len(source_doc_ids_in_order)} 個文檔")
+            # 顯示引用對應的文檔
+            for idx in cited_indices:
+                if 1 <= idx <= len(cached_doc_data):
+                    doc_info = cached_doc_data[idx - 1]
+                    logger.info(f"   citation:{idx} -> {doc_info.get('filename', 'unknown')}")
+        
+        # 保存對話記錄
         if db is not None:
-            # ✅ 如果用戶提供了 @ 文件，也要保存
-            source_docs = request.document_ids if request.document_ids else []
+            # ✅ 保存完整的文檔池順序
+            source_docs = source_doc_ids_in_order if source_doc_ids_in_order else (request.document_ids if request.document_ids else [])
             
             await conversation_helper.save_qa_to_conversation(
                 db=db,
@@ -154,18 +181,9 @@ class SimpleFactualHandler:
             f"API調用: {api_calls}次"
         )
         
-        # ⭐ 修復：返回文檔池中的文檔 ID（按順序），讓前端能正確顯示引用
-        # 順序與 AI 看到的順序一致（cached_doc_data 的順序）
-        source_doc_ids_in_order = []
-        if cached_doc_data:
-            for doc_info in cached_doc_data:
-                doc_id = doc_info.get('document_id')
-                if doc_id and doc_id not in source_doc_ids_in_order:
-                    source_doc_ids_in_order.append(doc_id)
-        
         return AIQAResponse(
             answer=answer,
-            source_documents=source_doc_ids_in_order,  # ⭐ 修復：返回文檔池中的文檔 ID
+            source_documents=source_doc_ids_in_order,  # ⭐ 返回完整文檔池順序（與 AI 看到的順序一致）
             confidence_score=0.85 if cached_doc_data else 0.75,  # 有文檔池時置信度更高
             tokens_used=api_calls * 100,
             processing_time=processing_time,

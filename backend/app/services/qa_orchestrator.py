@@ -743,7 +743,42 @@ class QAOrchestrator:
                         request, classification, context, db, user_id, request_id  # ✅ 传递 context
                     )
                     if response.answer:
+                        # ⭐ 發送 complete 事件
                         yield StreamEvent('complete', {'answer': response.answer})
+                        
+                        # ⭐⭐ 關鍵修復：發送 metadata 事件，包含 current_round_documents
+                        # 這樣前端才能正確解析 citation:N
+                        if response.source_documents and request.conversation_id and user_id:
+                            try:
+                                # 構建 current_round_snapshot（按 source_documents 順序）
+                                current_round_snapshot = []
+                                
+                                # 從 context['cached_documents'] 中按 source_documents 順序構建快照
+                                cached_docs = context.get('cached_documents', []) if context else []
+                                doc_id_to_info = {doc.get('document_id'): doc for doc in cached_docs}
+                                
+                                for doc_id in response.source_documents:
+                                    if doc_id in doc_id_to_info:
+                                        doc_info = doc_id_to_info[doc_id]
+                                        current_round_snapshot.append({
+                                            'document_id': doc_id,
+                                            'filename': doc_info.get('filename', 'unknown'),
+                                            'summary': doc_info.get('summary', ''),
+                                            'relevance_score': doc_info.get('relevance_score', 0),
+                                            'access_count': doc_info.get('access_count', 0)
+                                        })
+                                
+                                if current_round_snapshot:
+                                    metadata_payload = {
+                                        'current_round_documents': current_round_snapshot,
+                                        'document_pool_count': len(current_round_snapshot)
+                                    }
+                                    logger.info(f"📚 [SimpleFactual] 發送文檔快照: {len(current_round_snapshot)} 個文檔")
+                                    for idx, doc in enumerate(current_round_snapshot[:5], 1):
+                                        logger.info(f"   #{idx}: {doc['filename']}")
+                                    yield StreamEvent('metadata', metadata_payload)
+                            except Exception as e:
+                                logger.warning(f"⚠️ 構建文檔快照失敗: {e}")
                     else:
                         yield StreamEvent('error', {'message': '處理失敗'})
                 else:
