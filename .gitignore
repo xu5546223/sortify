@@ -104,3 +104,5 @@ logs/
 *~
 *.bak
 *.swp 
+.claude/
+CLAUDE.md

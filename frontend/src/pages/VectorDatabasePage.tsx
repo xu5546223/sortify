@@ -60,6 +60,7 @@ import {
   processDocumentToVector,
   deleteDocumentFromVectorDB,
   deleteDocumentsFromVectorDB,
+  reindexAllDocuments,
 } from '../services/vectorDBService';
 import {
   getDocuments,
@@ -112,6 +113,10 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
   
   const [deleteBatchConfirmDialog, setDeleteBatchConfirmDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // 重新索引相關狀態
+  const [isReindexing, setIsReindexing] = useState(false);
+  const [reindexConfirmDialog, setReindexConfirmDialog] = useState(false);
 
   // 加載數據的函數
   const loadData = useCallback(async (page = pagination.current, pageSize = pagination.pageSize) => {
@@ -270,6 +275,33 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
       setIsBatchDeleting(false);
       setIsDeleting(false);
       setDeleteBatchConfirmDialog(false);
+    }
+  };
+
+  // 重新索引所有文檔
+  const handleReindexAll = () => {
+    setReindexConfirmDialog(true);
+  };
+
+  const confirmReindexAll = async () => {
+    setIsReindexing(true);
+    try {
+      const response = await reindexAllDocuments();
+      if (response.success) {
+        showPCMessage(response.message || '已開始重新索引所有文檔', 'success');
+        // 延遲刷新以等待後台任務開始
+        setTimeout(() => {
+          refreshData();
+        }, 2000);
+      } else {
+        showPCMessage(response.message || '重新索引失敗', 'error');
+      }
+    } catch (error) {
+      console.error('重新索引失敗:', error);
+      showPCMessage('重新索引操作失敗', 'error');
+    } finally {
+      setIsReindexing(false);
+      setReindexConfirmDialog(false);
     }
   };
 
@@ -582,8 +614,8 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
         </Card>
 
         <Card title="快速操作">
-          <Row gutter={16}>
-            <Col xs={24} sm={12} lg={6}>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} sm={12} lg={8}>
               <Button
                 onClick={handleInitializeVectorDB}
                 loading={isInitializing}
@@ -594,7 +626,7 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
                 初始化向量數據庫
               </Button>
             </Col>
-            <Col xs={24} sm={12} lg={6}>
+            <Col xs={24} sm={12} lg={8}>
               <Button
                 onClick={() => setShowSearchModal(true)}
                 icon={<SearchOutlined />}
@@ -603,7 +635,7 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
                 開始語義搜索
               </Button>
             </Col>
-            <Col xs={24} sm={12} lg={6}>
+            <Col xs={24} sm={12} lg={8}>
               <Button
                 onClick={() => setShowVectorizeModal(true)}
                 icon={<ThunderboltOutlined />}
@@ -612,7 +644,18 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
                 管理文檔向量
               </Button>
             </Col>
-            <Col xs={24} sm={12} lg={6}>
+            <Col xs={24} sm={12} lg={8}>
+              <Button
+                onClick={handleReindexAll}
+                loading={isReindexing}
+                icon={<ReloadOutlined />}
+                className="w-full"
+                type="default"
+              >
+                重新索引全部
+              </Button>
+            </Col>
+            <Col xs={24} sm={12} lg={8}>
               <Button
                 onClick={refreshData}
                 icon={<SyncOutlined />}
@@ -932,6 +975,18 @@ const VectorDatabasePage: React.FC<VectorDatabasePageProps> = ({ showPCMessage }
           cancelText="取消"
           isDanger
           isLoading={isDeleting}
+        />
+
+        {/* 確認重新索引對話框 */}
+        <ConfirmDialog
+          isOpen={reindexConfirmDialog}
+          onClose={() => setReindexConfirmDialog(false)}
+          onConfirm={confirmReindexAll}
+          title="重新索引所有文檔"
+          content="此操作將重新向量化您的所有文檔。這可能需要較長時間，具體取決於文檔數量。確定要繼續嗎？"
+          confirmText="開始重新索引"
+          cancelText="取消"
+          isLoading={isReindexing}
         />
 
       </Space>

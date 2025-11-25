@@ -61,7 +61,22 @@ class DocumentInDBBase(DocumentBase):
 
     extracted_text: Optional[str] = Field(None, description="從文件中提取的文本內容")
     text_extraction_completed_at: Optional[datetime] = None
-    
+
+    # 行號映射 (用於 AI 邏輯分塊的座標系統)
+    line_mapping: Optional[Dict[str, Any]] = Field(None, description="行號到字符位置的映射")
+    # line_mapping 結構:
+    # {
+    #   "L001": {
+    #     "local_index": 0,
+    #     "global_line": 1,
+    #     "char_start": 0,
+    #     "char_end": 45,
+    #     "length": 45,
+    #     "content_preview": "第一行內容..."
+    #   },
+    #   "L002": {...}
+    # }
+
     analysis: Optional[DocumentAnalysis] = Field(None, description="AI分析結果")
     
     error_details: Optional[str] = Field(None, description="處理過程中的詳細錯誤信息")

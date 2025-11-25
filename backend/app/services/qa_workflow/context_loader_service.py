@@ -9,6 +9,7 @@ from uuid import UUID
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.logging_utils import AppLogger
+from app.models.context_config import context_config
 from app.models.question_models import ConversationContext
 
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
@@ -52,8 +53,9 @@ class ContextLoaderService:
             conversation_uuid = UUID(conversation_id)
             user_uuid = UUID(str(user_id)) if not isinstance(user_id, UUID) else user_id
             
-            # 先嘗試從 Redis 緩存獲取消息
+            # 先嘗試從緩存獲取消息（目前直接返回 None，使用 MongoDB）
             recent_messages, _, _ = await self._load_from_cache(
+                db,
                 conversation_uuid,
                 user_uuid
             )
@@ -111,39 +113,18 @@ class ContextLoaderService:
     
     async def _load_from_cache(
         self,
+        db: AsyncIOMotorDatabase,
         conversation_uuid: UUID,
         user_uuid: UUID
     ) -> Tuple[Optional[List[Dict]], List[str], Optional[List[Dict]]]:
-        """從 Redis 緩存載入"""
-        try:
-            from app.services.cache import unified_cache, CacheNamespace
-            
-            # 獲取最近消息
-            recent_messages = await conversation_cache_service.get_recent_messages(
-                user_id=user_uuid,
-                conversation_id=conversation_uuid,
-                limit=5
-            )
-            
-            if recent_messages:
-                # 將消息轉換為字典格式
-                messages_dict = [
-                    {
-                        "role": msg.role,
-                        "content": msg.content,
-                        "created_at": msg.created_at.isoformat() if hasattr(msg, 'created_at') else None
-                    }
-                    for msg in recent_messages
-                ]
-                
-                logger.debug(f"從Redis緩存載入了 {len(messages_dict)} 條消息")
-                # ⚠️ Redis只緩存消息，文檔緩存需要從MongoDB載入
-                # 不返回空的文檔列表，而是返回None讓後續從MongoDB載入
-                return messages_dict, [], None  # 文檔ID仍需從MongoDB獲取
-            
-        except Exception as e:
-            logger.debug(f"從緩存載入失敗(將嘗試數據庫): {e}")
+        """
+        從緩存載入對話上下文
         
+        注意：conversation_cache_service 已廢棄，
+        現在直接使用 MongoDB 查詢（對話數據 Redis 加速效果有限）
+        """
+        # 直接返回 None，讓調用方使用 _load_from_database
+        # 這樣可以保持接口兼容性，同時移除對廢棄服務的依賴
         return None, [], None
     
     async def _load_from_database(
@@ -210,15 +191,16 @@ class ContextLoaderService:
         if not recent_messages or len(recent_messages) == 0:
             return ""
         
-        history_parts = ["=== 對話歷史(最近 5 條) ==="]
+        history_parts = [f"=== 對話歷史(最近 {len(recent_messages)} 條) ==="]
         
         for msg in recent_messages:
             role_name = "用戶" if msg.get("role") == "user" else "助手"
             content = msg.get("content", "")
             
-            # 截斷過長的內容
-            if len(content) > 200:
-                content = content[:200] + "..."
+            # 使用統一配置的截斷長度
+            max_length = context_config.PREVIEW_MAX_LENGTH
+            if len(content) > max_length:
+                content = content[:max_length] + "..."
             
             history_parts.append(f"{role_name}: {content}")
         

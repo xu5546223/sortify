@@ -786,7 +786,7 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
 
   const handleRetryAnalysis = async (doc: Document) => {
     setIsProcessing(prev => ({ ...prev, [doc.id]: true }));
-    showPCMessage(`正在為文件 ${doc.filename} 重試AI分析...`, 'info');
+    showPCMessage(`正在為文件 ${doc.filename} 重新分析...`, 'info');
     try {
       // 從全局設定獲取 AI 選項
       const aiOptions: TriggerDocumentProcessingOptions = {};
@@ -800,15 +800,15 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
         trigger_content_processing: true, // 確保觸發處理
         ...aiOptions
       };
-      
+
       const updatedDoc = await triggerDocumentProcessing(doc.id, options);
-      
+
       setDocuments(prevDocs => prevDocs.map(d => d.id === doc.id ? updatedDoc : d));
       if (detailedDoc && detailedDoc.id === doc.id) {
         setDetailedDoc(updatedDoc);
       }
-      showPCMessage(`已重新觸發文件 ${doc.filename} 的AI分析。`, 'success');
-      
+      showPCMessage(`已觸發文件 ${doc.filename} 的重新分析。`, 'success');
+
       // 如果文件開始處理，將其加入監測列表
       if (['pending_extraction', 'text_extracted', 'pending_analysis', 'analyzing'].includes(updatedDoc.status)) {
         setProcessingDocuments(prev => new Set(prev).add(doc.id));
@@ -816,7 +816,7 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
 
     } catch (error: any) {
       const errorMessage = error.response?.data?.detail || error.message || '未知錯誤';
-      showPCMessage(`重試AI分析失敗: ${errorMessage}`, 'error');
+      showPCMessage(`重新分析失敗: ${errorMessage}`, 'error');
       console.error(`Error retrying analysis for doc ${doc.id}:`, error);
     } finally {
       setIsProcessing(prev => ({ ...prev, [doc.id]: false }));
@@ -824,7 +824,14 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
   };
 
   const canRetryAnalysis = useCallback((doc: Document): boolean => {
-    return ['analysis_failed', 'processing_error', 'extraction_failed'].includes(doc.status);
+    // 允許對已失敗和已完成的文檔進行重新分析
+    return [
+      'analysis_failed',
+      'processing_error',
+      'extraction_failed',
+      'analysis_completed',
+      'completed'
+    ].includes(doc.status);
   }, []);
 
   const handleOpenPreview = (doc: Document) => {

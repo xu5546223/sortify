@@ -2,6 +2,7 @@ from typing import List, Optional, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.services.vector.vector_db_service import vector_db_service
 from app.services.vector.embedding_service import embedding_service
+from app.services.vector.reranker_service import reranker_service
 from app.core.logging_utils import AppLogger, log_event, LogLevel
 from app.models.vector_models import SemanticSearchResult
 from app.core.config import settings
@@ -105,11 +106,11 @@ class EnhancedSearchService:
                 # 🚀 新增：RRF 融合檢索策略
                 return await self._execute_rrf_fusion_search(
                     db, query_vector, user_id, stage2_k, sim_threshold, log_details,
-                    rrf_weights, rrf_k_constant, document_ids
+                    rrf_weights, rrf_k_constant, document_ids, query
                 )
             else:  # "hybrid" 預設
                 return await self._execute_two_stage_search(
-                    db, query_vector, user_id, stage1_k, stage2_k, sim_threshold, log_details, document_ids
+                    db, query_vector, user_id, stage1_k, stage2_k, sim_threshold, log_details, document_ids, query
                 )
                 
         except ValueError as ve:
@@ -134,7 +135,8 @@ class EnhancedSearchService:
         stage2_k: int,
         sim_threshold: float,
         log_details: Dict[str, Any],
-        document_ids: Optional[List[str]] = None
+        document_ids: Optional[List[str]] = None,
+        query: str = None
     ) -> List[SemanticSearchResult]:
         """執行完整的兩階段混合檢索"""
         
@@ -188,9 +190,9 @@ class EnhancedSearchService:
             # 降級策略：返回第一階段的摘要結果
             return stage1_results[:stage2_k]
         
-        # 對第二階段結果進行重排序和去重
+        # 對第二階段結果進行重排序和去重（包含 Cross-Encoder 重排序）
         final_results = await self._rerank_and_deduplicate_results(
-            stage2_results, stage1_results, stage2_k
+            stage2_results, stage1_results, stage2_k, query
         )
         
         final_details = {
@@ -285,7 +287,8 @@ class EnhancedSearchService:
         log_details: Dict[str, Any],
         rrf_weights: Optional[Dict[str, float]] = None,
         rrf_k_constant: Optional[int] = None,
-        document_ids: Optional[List[str]] = None
+        document_ids: Optional[List[str]] = None,
+        query: str = None
     ) -> List[SemanticSearchResult]:
         """
         🚀 執行 RRF (Reciprocal Rank Fusion) 融合檢索
@@ -348,6 +351,18 @@ class EnhancedSearchService:
                 "rrf_k": effective_rrf_k,
                 "rrf_weights": effective_rrf_weights
             }
+            
+            # 🚀 使用 Cross-Encoder 重排序
+            if query and reranker_service.enabled:
+                try:
+                    fused_results = reranker_service.rerank(
+                        query=query,
+                        results=fused_results,
+                        top_k=top_k
+                    )
+                    logger.info(f"Cross-Encoder 重排序完成：{len(fused_results)} 個結果")
+                except Exception as e:
+                    logger.warning(f"Cross-Encoder 重排序失敗，使用 RRF 排序: {e}")
             
             logger.info(f"🎯 RRF 融合檢索完成：最終返回 {len(fused_results)} 個結果")
             await log_event(db, LogLevel.INFO, f"RRF 融合檢索完成：{len(fused_results)} 個結果", 
@@ -502,7 +517,11 @@ class EnhancedSearchService:
                     "fusion_method": "rrf",
                     "rrf_details": detailed_scores.get(doc_id, {}),
                     "search_strategy": "rrf_fusion"
-                }
+                },
+                # Phase 4: 傳遞行號資訊
+                start_line=result.start_line,
+                end_line=result.end_line,
+                chunk_type=result.chunk_type,
             )
             
             final_results.append(fused_result)
@@ -529,7 +548,8 @@ class EnhancedSearchService:
         self,
         stage2_results: List[SemanticSearchResult],
         stage1_results: List[SemanticSearchResult],
-        target_count: int
+        target_count: int,
+        query: str = None
     ) -> List[SemanticSearchResult]:
         """
         重排序和去重第二階段結果
@@ -538,6 +558,7 @@ class EnhancedSearchService:
         1. 按相似度分數排序
         2. 按文檔去重（每個文檔只保留最高分的塊）
         3. 如果第二階段結果不足，用第一階段結果補充
+        4. 🚀 使用 Cross-Encoder 重排序（如果啟用）
         """
         
         # 按相似度分數排序
@@ -552,7 +573,7 @@ class EnhancedSearchService:
                 seen_documents.add(result.document_id)
                 deduplicated_results.append(result)
                 
-                if len(deduplicated_results) >= target_count:
+                if len(deduplicated_results) >= target_count * 2:  # 多取一些給 reranker
                     break
         
         # 如果第二階段結果不足，用第一階段結果補充
@@ -563,9 +584,21 @@ class EnhancedSearchService:
                     deduplicated_results.append(stage1_result)
                     seen_documents.add(stage1_result.document_id)
         
+        # 🚀 使用 Cross-Encoder 重排序
+        if query and reranker_service.enabled:
+            try:
+                deduplicated_results = reranker_service.rerank(
+                    query=query,
+                    results=deduplicated_results,
+                    top_k=target_count
+                )
+                logger.info(f"Cross-Encoder 重排序完成：{len(deduplicated_results)} 個結果")
+            except Exception as e:
+                logger.warning(f"Cross-Encoder 重排序失敗，使用原始排序: {e}")
+        
         logger.info(f"重排序完成：{len(stage2_results)} → {len(deduplicated_results)} 個去重結果")
         
         return deduplicated_results[:target_count]
 
 # 創建全局實例
-enhanced_search_service = EnhancedSearchService() 
+enhanced_search_service = EnhancedSearchService()

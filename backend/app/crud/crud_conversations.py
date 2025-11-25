@@ -115,6 +115,11 @@ async def list_user_conversations(
     return conversations
 
 
+# 從統一配置載入歷史對話長度限制
+from app.models.context_config import context_config
+MAX_MESSAGES_PER_CONVERSATION = context_config.MAX_MESSAGES_PER_CONVERSATION
+
+
 async def add_message_to_conversation(
     db: AsyncIOMotorDatabase,
     conversation_id: UUID,
@@ -124,7 +129,7 @@ async def add_message_to_conversation(
     tokens_used: Optional[int] = None
 ) -> bool:
     """
-    添加消息到對話
+    添加消息到對話（帶長度控制）
     
     Args:
         db: 數據庫連接
@@ -136,6 +141,10 @@ async def add_message_to_conversation(
         
     Returns:
         是否成功添加
+        
+    Note:
+        當消息數超過 MAX_MESSAGES_PER_CONVERSATION 時，
+        會自動移除最舊的消息以控制對話長度
     """
     message = ConversationMessage(
         role=role,
@@ -163,6 +172,10 @@ async def add_message_to_conversation(
     
     if result.modified_count > 0:
         logger.info(f"✅ Added {role} message to conversation {conversation_id}")
+        
+        # 檢查並清理超出長度限制的舊消息
+        await _trim_conversation_messages(db, conversation_id, user_id)
+        
         return True
     else:
         # 檢查對話是否存在
@@ -176,6 +189,62 @@ async def add_message_to_conversation(
         
         logger.warning(f"Failed to add message to conversation {conversation_id}: matched={result.matched_count}, modified={result.modified_count}")
         return False
+
+
+async def _trim_conversation_messages(
+    db: AsyncIOMotorDatabase,
+    conversation_id: UUID,
+    user_id: UUID
+) -> None:
+    """
+    裁剪對話消息，保持在長度限制內
+    
+    當消息數超過 MAX_MESSAGES_PER_CONVERSATION 時，
+    移除最舊的消息直到符合限制
+    
+    Args:
+        db: 數據庫連接
+        conversation_id: 對話ID
+        user_id: 用戶ID
+    """
+    # 獲取當前消息數量
+    conversation = await db.conversations.find_one(
+        {"_id": conversation_id, "user_id": user_id},
+        {"message_count": 1}
+    )
+    
+    if not conversation:
+        return
+    
+    message_count = conversation.get("message_count", 0)
+    
+    # 如果未超過限制，不需要裁剪
+    if message_count <= MAX_MESSAGES_PER_CONVERSATION:
+        return
+    
+    # 計算需要移除的消息數量
+    messages_to_remove = message_count - MAX_MESSAGES_PER_CONVERSATION
+    
+    logger.info(
+        f"🗑️ 對話 {conversation_id} 消息數 ({message_count}) 超過限制 ({MAX_MESSAGES_PER_CONVERSATION})，"
+        f"移除最舊的 {messages_to_remove} 條消息"
+    )
+    
+    # 使用 $pop 移除最舊的消息（-1 表示移除第一個元素）
+    # 需要執行多次以移除多條消息
+    for _ in range(messages_to_remove):
+        await db.conversations.update_one(
+            {"_id": conversation_id, "user_id": user_id},
+            {"$pop": {"messages": -1}}  # -1 移除第一條（最舊的）
+        )
+    
+    # 更新 message_count（因為 $pop 不會自動更新計數）
+    await db.conversations.update_one(
+        {"_id": conversation_id, "user_id": user_id},
+        {"$set": {"message_count": MAX_MESSAGES_PER_CONVERSATION}}
+    )
+    
+    logger.info(f"✅ 已裁剪對話 {conversation_id}，保留最近 {MAX_MESSAGES_PER_CONVERSATION} 條消息")
 
 
 async def get_recent_messages(

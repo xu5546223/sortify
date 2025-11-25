@@ -377,6 +377,45 @@ async def get_documents_by_ids(
         logger.error(f"批量獲取文檔失敗: {e}")
         return []
 
+
+async def get_documents_by_owner(
+    db: AsyncIOMotorDatabase,
+    owner_id: uuid.UUID
+) -> List[Document]:
+    """
+    獲取指定用戶的所有文檔（無分頁限制）
+
+    用於重新索引整個資料庫等需要處理所有文檔的場景。
+
+    Args:
+        db: 資料庫連接
+        owner_id: 用戶ID
+
+    Returns:
+        該用戶的所有文檔列表
+    """
+    try:
+        query = {"owner_id": owner_id}
+        documents = await db[DOCUMENT_COLLECTION].find(query).to_list(length=None)
+
+        result_documents = []
+        for doc_data in documents:
+            try:
+                document = Document(**doc_data)
+                result_documents.append(document)
+            except Exception as e:
+                doc_id = str(doc_data.get('_id', 'Unknown'))
+                logger.warning(f"轉換文檔模型失敗 (ID: {doc_id}): {e}")
+                continue
+
+        logger.info(f"獲取用戶 {owner_id} 的所有文檔: {len(result_documents)} 個")
+        return result_documents
+
+    except Exception as e:
+        logger.error(f"獲取用戶所有文檔失敗: {e}")
+        return []
+
+
 # 更多專用更新函數可以按需添加，例如：
 async def update_document_status(
     db: AsyncIOMotorDatabase, document_id: uuid.UUID, new_status: DocumentStatus, error_details: Optional[str] = None
@@ -416,11 +455,19 @@ async def update_document_status(
     return updated_doc
 
 async def update_document_on_extraction_success(
-    db: AsyncIOMotorDatabase, 
-    document_id: uuid.UUID, 
-    extracted_text: str
+    db: AsyncIOMotorDatabase,
+    document_id: uuid.UUID,
+    extracted_text: str,
+    line_mapping: Optional[Dict[str, Any]] = None
 ) -> Optional[Document]:
-    """專門用於文本提取成功後更新文檔記錄。"""
+    """專門用於文本提取成功後更新文檔記錄。
+
+    Args:
+        db: 數據庫連接
+        document_id: 文檔ID
+        extracted_text: 提取的原始文本
+        line_mapping: 行號映射 (用於 AI 邏輯分塊的座標系統)
+    """
     update_payload = {
         "extracted_text": extracted_text,
         "text_extraction_completed_at": datetime.now(UTC),
@@ -428,6 +475,11 @@ async def update_document_on_extraction_success(
         "error_details": None,  # 清除任何先前的錯誤
         "updated_at": datetime.now(UTC)
     }
+
+    # 如果有行號映射，一併儲存
+    if line_mapping is not None:
+        update_payload["line_mapping"] = line_mapping
+
     return await update_document(db, document_id, update_payload)
 
 async def set_document_analysis(

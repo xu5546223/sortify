@@ -25,22 +25,33 @@ class Settings(BaseSettings):
 
     # 向量資料庫相關設定 (使用 ChromaDB)
     VECTOR_DB_PATH: str = "./data/chromadb"
-    EMBEDDING_MODEL: str = "paraphrase-multilingual-mpnet-base-v2"  # 預設使用多語言模型
+    EMBEDDING_MODEL: str = "intfloat/multilingual-e5-base"  # 多語言 Embedding 模型（100+ 語言）
     EMBEDDING_MAX_LENGTH: int = 512  # Embedding最大輸入長度
     VECTOR_SEARCH_TOP_K: int = 10  # 預設向量搜索返回結果數量
     VECTOR_SIMILARITY_THRESHOLD: float = 0.5  # 預設相似度閾值
     
+    # Cross-Encoder Reranker 設定
+    RERANKER_ENABLED: bool = True  # 是否啟用 Cross-Encoder 重排序
+    RERANKER_MODEL: str = "BAAI/bge-reranker-v2-m3"  # 多語言 Reranker 模型
+    RERANKER_TOP_K: int = 20  # 對 top-k 結果進行重排序
+    
     # 文本分塊策略設定
     VECTOR_CHUNK_SIZE: int = 512  # 每個文本塊的字符數
     VECTOR_CHUNK_OVERLAP: int = 50  # 文本塊之間的重疊字符數
+
+    # AI 邏輯分塊向量化策略設定 (Phase 3)
+    CHUNK_HYBRID_THRESHOLD: int = 350      # 低於此長度使用混合增強 (summary + content)
+    CHUNK_SAFE_LENGTH: int = 480           # 單向量最大原文長度 (低於 512 留 buffer)
+    SUB_CHUNK_OVERLAP: int = 50            # 子分塊重疊字符數
+    USE_AI_LOGICAL_CHUNKS: bool = True     # 是否使用 AI 邏輯分塊 (False 則使用固定分塊)
     
     # 兩階段混合檢索設定
     VECTOR_SEARCH_STAGE1_TOP_K: int = 10  # 第一階段（粗篩選）返回的候選文檔數
     VECTOR_SEARCH_STAGE2_TOP_K: int = 5   # 第二階段（精排序）最終返回的結果數
     
     # RRF 融合檢索設定
-    RRF_K_CONSTANT: int = 60  # RRF 常數 k，降低高排名影響力（標準值為60）
-    RRF_WEIGHTS: dict = {"summary": 2.0, "chunks": 1.0}  # 摘要和內容塊搜索的權重配置
+    RRF_K_CONSTANT: int = 20  # RRF 常數 k（優化後：原60→20）
+    RRF_WEIGHTS: dict = {"summary": 1.5, "chunks": 1.0}  # 摘要和內容塊搜索的權重配置
     
     # 問題分類器設定
     QUESTION_CLASSIFIER_ENABLED: bool = True  # 是否啟用問題分類器

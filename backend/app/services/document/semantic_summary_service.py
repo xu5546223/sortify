@@ -12,6 +12,12 @@ from app.services.ai.prompt_manager_simplified import prompt_manager_simplified,
 from app.crud.crud_documents import update_document_vector_status
 from app.core.config import settings
 from app.utils.text_processing import create_text_chunks, smart_truncate, smart_compress_list
+from app.services.document.line_marker_service import (
+    extract_text_by_line_range,
+    process_logical_chunk_for_vectorization,
+    ChunkVectorizationResult,
+    remove_line_markers
+)
 import logging
 import uuid
 from datetime import datetime
@@ -28,7 +34,7 @@ class SemanticSummaryService:
     
     def _get_document_text(self, document: Document) -> tuple[str, str]:
         """
-        從文檔中獲取最佳的文本內容
+        從文檔中獲取最佳的文本內容（自動移除行號標記）
         
         按優先級順序嘗試不同的文本來源：
         1. document.extracted_text (頂層)
@@ -37,37 +43,48 @@ class SemanticSummaryService:
         4. document.analysis.extracted_text (如果存在)
         
         Returns:
-            tuple[str, str]: (找到的最佳文本內容, 文本來源說明)
+            tuple[str, str]: (找到的最佳文本內容（已移除行號標記）, 文本來源說明)
         """
+        text = ""
+        source = "no_text_found"
+        
         # 1. 優先使用頂層 extracted_text
         if document.extracted_text and document.extracted_text.strip():
-            return document.extracted_text.strip(), "document.extracted_text"
+            text = document.extracted_text.strip()
+            source = "document.extracted_text"
         
         # 如果沒有 analysis，返回空字符串
-        if not document.analysis:
+        elif not document.analysis:
             return "", "no_analysis"
         
         # 2. 嘗試 analysis.ai_analysis_output.extracted_text
-        if (document.analysis.ai_analysis_output and 
+        elif (document.analysis.ai_analysis_output and 
             isinstance(document.analysis.ai_analysis_output, dict) and
             document.analysis.ai_analysis_output.get("extracted_text")):
             extracted_text = document.analysis.ai_analysis_output["extracted_text"]
             if isinstance(extracted_text, str) and extracted_text.strip():
-                return extracted_text.strip(), "analysis.ai_analysis_output.extracted_text"
+                text = extracted_text.strip()
+                source = "analysis.ai_analysis_output.extracted_text"
         
         # 3. 嘗試 analysis.text_content.full_text (如果存在這個結構)
-        if hasattr(document.analysis, 'text_content') and hasattr(document.analysis.text_content, 'full_text'):
+        elif hasattr(document.analysis, 'text_content') and hasattr(document.analysis.text_content, 'full_text'):
             full_text = document.analysis.text_content.full_text
             if isinstance(full_text, str) and full_text.strip():
-                return full_text.strip(), "analysis.text_content.full_text"
+                text = full_text.strip()
+                source = "analysis.text_content.full_text"
         
         # 4. 嘗試 analysis.extracted_text (如果存在)
-        if hasattr(document.analysis, 'extracted_text') and document.analysis.extracted_text:
+        elif hasattr(document.analysis, 'extracted_text') and document.analysis.extracted_text:
             extracted_text = document.analysis.extracted_text
             if isinstance(extracted_text, str) and extracted_text.strip():
-                return extracted_text.strip(), "analysis.extracted_text"
+                text = extracted_text.strip()
+                source = "analysis.extracted_text"
         
-        return "", "no_text_found"
+        # 自動移除行號標記（處理舊數據兼容性）
+        if text:
+            text = remove_line_markers(text)
+        
+        return text, source
 
     def _create_enhanced_metadata(self, document: Document, semantic_summary: SemanticSummary) -> Dict[str, Any]:
         """
@@ -315,52 +332,86 @@ class SemanticSummaryService:
             # Step 4: 創建摘要向量 (Summary Vector) - 第一階段粗篩選
             step_start_time = datetime.now()
             logger.info(f"[{step_start_time.isoformat()}] Creating summary vector for document {doc_id_str}.")
-            
+
             summary_vector = await self._create_summary_vector(document, semantic_summary)
-            
+
             step_end_time = datetime.now()
             logger.info(f"[{step_end_time.isoformat()}] Summary vector created for document {doc_id_str}. Duration: {step_end_time - step_start_time}")
-            
-            # Step 5: 對文檔的原始文本進行分塊
+
+            # Step 5 & 6: 根據配置選擇分塊策略
             step_start_time = datetime.now()
-            logger.info(f"[{step_start_time.isoformat()}] Creating text chunks for document {doc_id_str}.")
-            
-            # 設定分塊參數（自動適配embedding模型限制）
-            chunk_overlap = getattr(settings, 'VECTOR_CHUNK_OVERLAP', 50)  # 可配置的重疊大小
-            
-            # 使用新的文本獲取方法
+            use_ai_chunks = getattr(settings, 'USE_AI_LOGICAL_CHUNKS', True)
+
+            # 嘗試獲取 AI 的 logical_chunks
+            logical_chunks = None
+            if use_ai_chunks and semantic_summary.full_ai_analysis:
+                logical_chunks = semantic_summary.full_ai_analysis.get("logical_chunks", [])
+
+            # 獲取文檔的 line_mapping 和原始文本
+            line_mapping = getattr(document, 'line_mapping', None) or {}
             document_text, text_source = self._get_document_text(document)
-            text_chunks = create_text_chunks(
-                document_text,
-                chunk_size=None,  # 使用自動計算的大小
-                chunk_overlap=chunk_overlap
-            )
-            
-            step_end_time = datetime.now()
-            
-            if not text_chunks:
-                logger.warning(f"[{step_end_time.isoformat()}] Document {doc_id_str} has no valid text content for chunking. Duration: {step_end_time - step_start_time}. Text source: {text_source}, Text length: {len(document_text)}")
-                # 即使沒有chunks，我們仍然可以繼續，只使用摘要向量
-                text_chunks = []
-                logger.info(f"Document {doc_id_str} will only have summary vector (no content chunks).")
 
-            # 計算實際使用的chunk_size（用於日誌）
-            max_embedding_length = getattr(settings, 'EMBEDDING_MAX_LENGTH', 512)
-            actual_chunk_size = max_embedding_length - 50  # 與_create_text_chunks中的邏輯一致
-            
-            logger.info(f"[{step_end_time.isoformat()}] Document {doc_id_str} split into {len(text_chunks)} chunks. Duration: {step_end_time - step_start_time}. Text source: {text_source}")
-            await log_event(db=db, level=LogLevel.INFO, message=f"Document successfully split into {len(text_chunks)} text chunks from {text_source}.",
-                            source="service.semantic_summary.process_doc_hybrid.chunks_created", 
-                            details={**log_details_base, "chunk_count": len(text_chunks), "chunk_size": actual_chunk_size, "chunk_overlap": chunk_overlap, "text_source": text_source, "text_length": len(document_text)})
+            if use_ai_chunks and logical_chunks and line_mapping:
+                # === 使用 AI 邏輯分塊策略 ===
+                logger.info(f"[{step_start_time.isoformat()}] Using AI logical chunks strategy for document {doc_id_str}. Found {len(logical_chunks)} chunks.")
 
-            # Step 6: 創建內容塊向量 (Chunk Vectors) - 第二階段精排序
-            step_start_time = datetime.now()
-            logger.info(f"[{step_start_time.isoformat()}] Creating chunk vectors for document {doc_id_str}.")
-            
-            chunk_vectors = await self._create_chunk_vectors(document, semantic_summary, text_chunks)
-            
-            step_end_time = datetime.now()
-            logger.info(f"[{step_end_time.isoformat()}] Created {len(chunk_vectors)} chunk vectors for document {doc_id_str}. Duration: {step_end_time - step_start_time}")
+                chunk_vectors = await self._create_chunk_vectors_from_logical_chunks(
+                    document=document,
+                    semantic_summary=semantic_summary,
+                    logical_chunks=logical_chunks,
+                    line_mapping=line_mapping,
+                    original_text=document_text
+                )
+
+                step_end_time = datetime.now()
+                logger.info(f"[{step_end_time.isoformat()}] Created {len(chunk_vectors)} chunk vectors using AI logical chunks. Duration: {step_end_time - step_start_time}")
+                await log_event(db=db, level=LogLevel.INFO,
+                                message=f"Document processed with AI logical chunks strategy.",
+                                source="service.semantic_summary.process_doc_hybrid.ai_chunks",
+                                details={
+                                    **log_details_base,
+                                    "logical_chunks_count": len(logical_chunks),
+                                    "vector_count": len(chunk_vectors),
+                                    "strategy": "ai_logical_chunks"
+                                })
+            else:
+                # === Fallback: 使用固定大小分塊策略 ===
+                logger.info(f"[{step_start_time.isoformat()}] Using fixed-size chunking strategy for document {doc_id_str}. (AI chunks available: {bool(logical_chunks)}, line_mapping available: {bool(line_mapping)})")
+
+                # 設定分塊參數（自動適配embedding模型限制）
+                chunk_overlap = getattr(settings, 'VECTOR_CHUNK_OVERLAP', 50)
+
+                text_chunks = create_text_chunks(
+                    document_text,
+                    chunk_size=None,  # 使用自動計算的大小
+                    chunk_overlap=chunk_overlap
+                )
+
+                if not text_chunks:
+                    logger.warning(f"Document {doc_id_str} has no valid text content for chunking. Text source: {text_source}, Text length: {len(document_text)}")
+                    text_chunks = []
+
+                # 計算實際使用的chunk_size（用於日誌）
+                max_embedding_length = getattr(settings, 'EMBEDDING_MAX_LENGTH', 512)
+                actual_chunk_size = max_embedding_length - 50
+
+                logger.info(f"Document {doc_id_str} split into {len(text_chunks)} fixed-size chunks. Text source: {text_source}")
+
+                chunk_vectors = await self._create_chunk_vectors(document, semantic_summary, text_chunks)
+
+                step_end_time = datetime.now()
+                logger.info(f"[{step_end_time.isoformat()}] Created {len(chunk_vectors)} chunk vectors using fixed-size chunking. Duration: {step_end_time - step_start_time}")
+                await log_event(db=db, level=LogLevel.INFO,
+                                message=f"Document processed with fixed-size chunking strategy (fallback).",
+                                source="service.semantic_summary.process_doc_hybrid.fixed_chunks",
+                                details={
+                                    **log_details_base,
+                                    "chunk_count": len(text_chunks),
+                                    "chunk_size": actual_chunk_size,
+                                    "chunk_overlap": chunk_overlap,
+                                    "text_source": text_source,
+                                    "strategy": "fixed_size_fallback"
+                                })
 
             # Step 7: 組合所有向量記錄
             all_vector_records = [summary_vector] + chunk_vectors
@@ -626,7 +677,144 @@ class SemanticSummaryService:
             except Exception as e_chunk:
                 logger.warning(f"Failed to vectorize chunk {chunk_id}: {str(e_chunk)}")
                 continue
-        
+
+        return chunk_vectors
+
+    async def _create_chunk_vectors_from_logical_chunks(
+        self,
+        document: Document,
+        semantic_summary: SemanticSummary,
+        logical_chunks: List[Dict[str, Any]],
+        line_mapping: Dict[str, Dict[str, Any]],
+        original_text: str
+    ) -> List[VectorRecord]:
+        """
+        使用 AI 的 logical_chunks 創建內容塊向量
+
+        智能選擇向量化策略：
+        - 短 chunk (≤ 350 字符): 使用混合增強 [Summary] + [Content]
+        - 中等 chunk (351-480 字符): 只用原文
+        - 長 chunk (> 480 字符): 子分塊
+
+        Args:
+            document: 文檔對象
+            semantic_summary: 語義摘要
+            logical_chunks: AI 返回的邏輯分塊列表
+            line_mapping: 行號到位置的映射
+            original_text: 原始文本（無行號標記）
+
+        Returns:
+            向量記錄列表
+        """
+        doc_id_str = str(document.id)
+        chunk_vectors = []
+
+        # 獲取配置參數
+        hybrid_threshold = getattr(settings, 'CHUNK_HYBRID_THRESHOLD', 350)
+        safe_length = getattr(settings, 'CHUNK_SAFE_LENGTH', 480)
+        sub_chunk_overlap = getattr(settings, 'SUB_CHUNK_OVERLAP', 50)
+
+        # 獲取基礎元數據
+        base_metadata = self._create_enhanced_metadata(document, semantic_summary)
+
+        # 統計信息
+        strategy_counts = {"hybrid": 0, "raw_only": 0, "sub_chunked": 0}
+
+        for chunk in logical_chunks:
+            try:
+                # 提取 chunk 資訊
+                chunk_id = chunk.get("chunk_id", 0)
+                start_id = chunk.get("start_id", "")
+                end_id = chunk.get("end_id", "")
+                chunk_type = chunk.get("type", "paragraph")
+                summary = chunk.get("summary", "")
+
+                # 從 line_mapping 提取原文
+                raw_text = extract_text_by_line_range(
+                    original_text=original_text,
+                    line_mapping=line_mapping,
+                    start_line=start_id,
+                    end_line=end_id
+                )
+
+                if not raw_text:
+                    logger.warning(f"Chunk {chunk_id} ({start_id}-{end_id}) 提取原文為空，跳過")
+                    continue
+
+                # 使用智能向量化策略處理這個 chunk
+                vectorization_results = process_logical_chunk_for_vectorization(
+                    chunk_id=chunk_id,
+                    start_id=start_id,
+                    end_id=end_id,
+                    chunk_type=chunk_type,
+                    summary=summary,
+                    raw_text=raw_text,
+                    hybrid_threshold=hybrid_threshold,
+                    safe_length=safe_length,
+                    sub_chunk_overlap=sub_chunk_overlap
+                )
+
+                # 為每個向量化結果創建 VectorRecord
+                for result in vectorization_results:
+                    try:
+                        # 向量化內容
+                        embedding_vector = embedding_service.encode_text(result.content)
+
+                        if not embedding_vector or len(embedding_vector) == 0:
+                            logger.warning(f"Chunk {chunk_id} sub {result.sub_index} vectorization returned empty, skipping.")
+                            continue
+
+                        # 生成唯一的 chunk_id
+                        if result.total_sub_chunks > 1:
+                            unique_chunk_id = f"{doc_id_str}_chunk_{chunk_id}_sub_{result.sub_index}"
+                        else:
+                            unique_chunk_id = f"{doc_id_str}_chunk_{chunk_id}"
+
+                        # 創建 chunk 向量的元數據
+                        chunk_metadata = base_metadata.copy()
+                        chunk_metadata.update({
+                            "type": "chunk",
+                            "vector_purpose": "fine_ranking",
+                            "chunk_id": unique_chunk_id,
+                            "logical_chunk_id": chunk_id,
+                            "chunk_index": chunk_id,
+                            "chunk_type": result.chunk_type,
+                            "start_line": result.start_line,
+                            "end_line": result.end_line,
+                            "sub_index": result.sub_index,
+                            "total_sub_chunks": result.total_sub_chunks,
+                            "vectorization_strategy": result.strategy,
+                            "chunk_summary": result.summary,
+                            "chunk_length": len(raw_text)
+                        })
+
+                        # 創建向量記錄
+                        chunk_vector = VectorRecord(
+                            document_id=doc_id_str,
+                            owner_id=str(document.owner_id),
+                            embedding_vector=embedding_vector,
+                            chunk_text=raw_text if result.strategy != "hybrid" else result.content,
+                            embedding_model=embedding_service.model_name,
+                            metadata=chunk_metadata
+                        )
+                        chunk_vectors.append(chunk_vector)
+
+                        # 更新統計
+                        strategy_counts[result.strategy] = strategy_counts.get(result.strategy, 0) + 1
+
+                    except Exception as e_vec:
+                        logger.warning(f"Failed to vectorize chunk {chunk_id} sub {result.sub_index}: {str(e_vec)}")
+                        continue
+
+            except Exception as e_chunk:
+                logger.warning(f"Failed to process logical chunk {chunk.get('chunk_id', 'unknown')}: {str(e_chunk)}")
+                continue
+
+        logger.info(
+            f"Document {doc_id_str}: Created {len(chunk_vectors)} vectors from {len(logical_chunks)} logical chunks. "
+            f"Strategy breakdown: hybrid={strategy_counts['hybrid']}, raw_only={strategy_counts['raw_only']}, sub_chunked={strategy_counts['sub_chunked']}"
+        )
+
         return chunk_vectors
     
     async def _save_semantic_summary_to_db(

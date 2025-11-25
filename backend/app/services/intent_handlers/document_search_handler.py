@@ -373,9 +373,20 @@ class DocumentSearchHandler:
             f"找到 {len(documents_for_answer)} 個高相關性文檔, API調用: {api_calls}次"
         )
         
+        # ⚠️ 重要：source_documents 的順序必須與 AI 看到的順序一致
+        # AI 看到的是 semantic_results[:5] 的順序，所以這裡也要用這個順序
+        source_doc_ids_in_ai_order = []
+        if semantic_results:
+            for result in semantic_results[:5]:
+                if result.document_id not in source_doc_ids_in_ai_order:
+                    source_doc_ids_in_ai_order.append(result.document_id)
+        else:
+            # Fallback: 使用 documents_for_answer 的順序
+            source_doc_ids_in_ai_order = [str(doc.id) for doc in documents_for_answer]
+        
         return AIQAResponse(
             answer=answer,
-            source_documents=[str(doc.id) for doc in documents_for_answer],
+            source_documents=source_doc_ids_in_ai_order,
             confidence_score=0.85,
             tokens_used=api_calls * 150,
             processing_time=processing_time,
@@ -518,51 +529,69 @@ class DocumentSearchHandler:
             conversation_history_text += "=== 當前問題 ===\n"
             logger.info(f"document_search使用傳入的{len(context['recent_messages'])}條歷史")
         else:
-            # 使用統一工具載入（保留完整內容）
+            # 使用統一工具載入（使用統一配置的默認值）
             conversation_history_text = await unified_context_helper.load_and_format_conversation_history(
                 db=db,
                 conversation_id=conversation_id,
-                user_id=user_id,
-                limit=5,
-                max_content_length=2000  # 保留完整內容
+                user_id=user_id
             )
         
-        # 構建上下文(使用摘要+關鍵信息)
+        # 🚀 優化：優先使用搜索結果的 chunk 內容 (方案 C)
         context_parts = []
         if conversation_history_text:
             context_parts.append(conversation_history_text)
         
-        for i, doc in enumerate(documents[:5], 1):  # 最多5個文檔
-            doc_context = []
-            doc_context.append(f"=== 文檔{i}（引用編號: citation:{i}）: {getattr(doc, 'filename', 'Unknown')} ===")
+        # 優先使用 semantic_results 的 chunk 內容
+        if semantic_results and len(semantic_results) > 0:
+            logger.info(f"使用優化上下文: {len(semantic_results)} 個搜索結果的 chunk 內容")
             
-            # 嘗試獲取AI分析結果
-            if hasattr(doc, 'analysis') and doc.analysis:
-                if hasattr(doc.analysis, 'ai_analysis_output') and isinstance(doc.analysis.ai_analysis_output, dict):
-                    key_info = doc.analysis.ai_analysis_output.get('key_information', {})
-                    
-                    # 摘要
-                    if key_info.get('content_summary'):
-                        doc_context.append(f"摘要: {key_info['content_summary']}")
-                    
-                    # 關鍵概念
-                    if key_info.get('key_concepts'):
-                        doc_context.append(f"關鍵概念: {', '.join(key_info['key_concepts'][:5])}")
-                    
-                    # 主題
-                    if key_info.get('main_topics'):
-                        doc_context.append(f"主題: {', '.join(key_info['main_topics'][:3])}")
-            
-            # 如果沒有AI分析,使用提取的文本片段
-            if len(doc_context) == 1:  # 只有標題
-                matching_result = next(
-                    (r for r in semantic_results if r.document_id == str(doc.id)),
+            for i, result in enumerate(semantic_results[:5], 1):
+                # 從 metadata 提取摘要
+                chunk_summary = result.metadata.get('chunk_summary', '') if result.metadata else ''
+                
+                # 嘗試找到對應的文檔以獲取文件名
+                matching_doc = next(
+                    (doc for doc in documents if str(doc.id) == result.document_id),
                     None
                 )
-                if matching_result:
-                    doc_context.append(matching_result.summary_text[:500])
+                filename = getattr(matching_doc, 'filename', 'Unknown') if matching_doc else 'Unknown'
+                
+                # 構建精簡上下文 (只保留 AI 需要的資訊)
+                context_content = f"""=== 文檔 {i}（引用編號: citation:{i}）: {filename} ===
+摘要: {chunk_summary}
+
+內容:
+{result.summary_text}
+"""
+                context_parts.append(context_content)
             
-            context_parts.append("\n".join(doc_context))
+            logger.info(f"優化上下文: {len(context_parts) - (1 if conversation_history_text else 0)} 個搜索結果 chunk")
+        
+        # Fallback: 如果沒有搜索結果，使用文檔的 AI 分析摘要
+        else:
+            logger.info("使用 Fallback 上下文: 文檔 AI 分析摘要")
+            for i, doc in enumerate(documents[:5], 1):  # 最多5個文檔
+                doc_context = []
+                doc_context.append(f"=== 文檔{i}（引用編號: citation:{i}）: {getattr(doc, 'filename', 'Unknown')} ===")
+                
+                # 嘗試獲取AI分析結果
+                if hasattr(doc, 'analysis') and doc.analysis:
+                    if hasattr(doc.analysis, 'ai_analysis_output') and isinstance(doc.analysis.ai_analysis_output, dict):
+                        key_info = doc.analysis.ai_analysis_output.get('key_information', {})
+                        
+                        # 摘要
+                        if key_info.get('content_summary'):
+                            doc_context.append(f"摘要: {key_info['content_summary']}")
+                        
+                        # 關鍵概念
+                        if key_info.get('key_concepts'):
+                            doc_context.append(f"關鍵概念: {', '.join(key_info['key_concepts'][:5])}")
+                        
+                        # 主題
+                        if key_info.get('main_topics'):
+                            doc_context.append(f"主題: {', '.join(key_info['main_topics'][:3])}")
+                
+                context_parts.append("\n".join(doc_context))
         
         # 調用AI生成答案(使用用戶偏好的模型)
         try:

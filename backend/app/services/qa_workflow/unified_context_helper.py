@@ -9,6 +9,7 @@ from uuid import UUID
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.logging_utils import AppLogger
+from app.models.context_config import context_config
 
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
 
@@ -21,8 +22,8 @@ class UnifiedContextHelper:
         db: AsyncIOMotorDatabase,
         conversation_id: Optional[str],
         user_id: Optional[str],
-        limit: int = 5,
-        max_content_length: int = 2000,  # 默認2000字，生成答案時保留完整信息
+        limit: int = None,  # 默認使用配置值
+        max_content_length: int = None,  # 默認使用配置值
         preserve_full_content: bool = False  # 是否保留完整內容（不截斷）
     ) -> str:
         """
@@ -44,6 +45,12 @@ class UnifiedContextHelper:
         """
         if not conversation_id or not user_id or db is None:
             return ""
+        
+        # 使用統一配置的默認值
+        if limit is None:
+            limit = context_config.DEFAULT_HISTORY_LIMIT
+        if max_content_length is None:
+            max_content_length = context_config.ANSWER_GEN_CONTENT_MAX_LENGTH
         
         try:
             from app.crud import crud_conversations
@@ -88,7 +95,7 @@ class UnifiedContextHelper:
         db: AsyncIOMotorDatabase,
         conversation_id: Optional[str],
         user_id: Optional[str],
-        limit: int = 5
+        limit: int = None  # 默認使用配置值
     ) -> list:
         """
         載入對話歷史為列表格式
@@ -100,6 +107,10 @@ class UnifiedContextHelper:
         """
         if not conversation_id or not user_id or db is None:
             return []
+        
+        # 使用統一配置的默認值
+        if limit is None:
+            limit = context_config.DEFAULT_HISTORY_LIMIT
         
         try:
             from app.crud import crud_conversations

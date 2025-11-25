@@ -28,6 +28,7 @@ import {
   deleteDocumentFromVectorDB,
   deleteDocumentsFromVectorDB,
   performHybridSearch,
+  reindexAllDocuments,
 } from '../services/vectorDBService';
 import {
   getEmbeddingModelConfig,
@@ -76,6 +77,10 @@ const VectorDatabasePageNeo: React.FC<VectorDatabasePageNeoProps> = ({ showPCMes
   
   const [deleteBatchConfirmDialog, setDeleteBatchConfirmDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // 重新索引相關狀態
+  const [isReindexing, setIsReindexing] = useState(false);
+  const [reindexConfirmDialog, setReindexConfirmDialog] = useState(false);
 
   // Search Playground 相關狀態
   const [searchQuery, setSearchQuery] = useState('');
@@ -241,6 +246,32 @@ const VectorDatabasePageNeo: React.FC<VectorDatabasePageNeoProps> = ({ showPCMes
       setIsBatchDeleting(false);
       setIsDeleting(false);
       setDeleteBatchConfirmDialog(false);
+    }
+  };
+
+  // 重新索引所有文檔
+  const handleReindexAll = () => {
+    setReindexConfirmDialog(true);
+  };
+
+  const confirmReindexAll = async () => {
+    setIsReindexing(true);
+    try {
+      const response = await reindexAllDocuments();
+      if (response.success) {
+        showPCMessage(response.message || '已開始重新索引所有文檔', 'success');
+        setTimeout(() => {
+          refreshData();
+        }, 2000);
+      } else {
+        showPCMessage(response.message || '重新索引失敗', 'error');
+      }
+    } catch (error) {
+      console.error('重新索引失敗:', error);
+      showPCMessage('重新索引操作失敗', 'error');
+    } finally {
+      setIsReindexing(false);
+      setReindexConfirmDialog(false);
     }
   };
 
@@ -492,6 +523,23 @@ const VectorDatabasePageNeo: React.FC<VectorDatabasePageNeoProps> = ({ showPCMes
                   >
                     <CloseCircleOutlined />
                     Prune Deleted
+                  </button>
+                  <button
+                    onClick={handleReindexAll}
+                    disabled={isReindexing || totalDocuments === 0}
+                    className="px-4 py-2 text-sm bg-neo-active text-white border-2 border-neo-black shadow-[3px_3px_0px_0px_black] hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-[5px_5px_0px_0px_black] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all font-bold uppercase disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {isReindexing ? (
+                      <>
+                        <SyncOutlined className="animate-spin" />
+                        Reindexing...
+                      </>
+                    ) : (
+                      <>
+                        <ReloadOutlined />
+                        Reindex All
+                      </>
+                    )}
                   </button>
                 </div>
                 <div className="relative w-full md:w-64">
@@ -1220,6 +1268,17 @@ const VectorDatabasePageNeo: React.FC<VectorDatabasePageNeoProps> = ({ showPCMes
         cancelText="取消"
         isDanger
         isLoading={isDeleting}
+      />
+
+      <ConfirmDialog
+        isOpen={reindexConfirmDialog}
+        onClose={() => setReindexConfirmDialog(false)}
+        onConfirm={confirmReindexAll}
+        title="重新索引所有文檔"
+        content="此操作將重新向量化您的所有文檔。這可能需要較長時間，具體取決於文檔數量。確定要繼續嗎？"
+        confirmText="開始重新索引"
+        cancelText="取消"
+        isLoading={isReindexing}
       />
 
       {/* 搜索結果詳細視圖模態框 */}

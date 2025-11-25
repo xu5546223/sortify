@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { Document, DocumentStatus, AITextAnalysisOutput } from '../../types/apiTypes';
+import type { Document, DocumentStatus, AITextAnalysisOutput, LogicalChunk } from '../../types/apiTypes';
 import { formatBytes, formatDate, mapMimeTypeToSimpleType } from '../../utils/documentFormatters';
 import { apiClient } from '../../services/apiClient';
 import PreviewModal from './PreviewModal';
@@ -411,6 +411,127 @@ const TagCloud: React.FC<{ tags: string[] }> = ({ tags }) => {
   );
 };
 
+// AI 邏輯分段顯示組件（可折疊）
+const LogicalChunksView: React.FC<{ chunks: LogicalChunk[] }> = ({ chunks }) => {
+  const [isExpanded, setIsExpanded] = React.useState(false);
+
+  if (!chunks || chunks.length === 0) return null;
+
+  // 統計各類型數量
+  const typeStats = chunks.reduce((acc, chunk) => {
+    acc[chunk.type] = (acc[chunk.type] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  // 區塊類型對應的圖標和顏色
+  const getChunkStyle = (type: string) => {
+    const styles: Record<string, { icon: string; bgColor: string; borderColor: string; label: string }> = {
+      header: { icon: '📌', bgColor: 'bg-purple-50', borderColor: 'border-purple-500', label: '標題' },
+      paragraph: { icon: '📝', bgColor: 'bg-blue-50', borderColor: 'border-blue-500', label: '段落' },
+      list: { icon: '📋', bgColor: 'bg-green-50', borderColor: 'border-green-500', label: '列表' },
+      table: { icon: '📊', bgColor: 'bg-orange-50', borderColor: 'border-orange-500', label: '表格' },
+      code_block: { icon: '💻', bgColor: 'bg-gray-50', borderColor: 'border-gray-500', label: '代碼' },
+      section: { icon: '📄', bgColor: 'bg-indigo-50', borderColor: 'border-indigo-500', label: '段落組' },
+      items_list: { icon: '🛒', bgColor: 'bg-yellow-50', borderColor: 'border-yellow-500', label: '品項' },
+      totals: { icon: '💰', bgColor: 'bg-red-50', borderColor: 'border-red-500', label: '總計' },
+      footer: { icon: '🔖', bgColor: 'bg-pink-50', borderColor: 'border-pink-500', label: '註腳' },
+    };
+    return styles[type] || { icon: '📄', bgColor: 'bg-gray-50', borderColor: 'border-gray-500', label: '其他' };
+  };
+
+  return (
+    <div className="border-2 border-neo-black bg-white">
+      {/* 概覽標題欄（可點擊折疊/展開） */}
+      <div
+        className="px-4 py-3 bg-gradient-to-r from-purple-100 to-blue-100 border-b-2 border-neo-black cursor-pointer hover:from-purple-200 hover:to-blue-200 transition-colors"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">🧩</span>
+            <div>
+              <div className="font-black text-sm text-gray-800">
+                AI 語義分段
+              </div>
+              <div className="text-xs text-gray-600 mt-0.5">
+                已分為 <strong className="text-purple-700">{chunks.length}</strong> 個邏輯區塊
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {/* 類型統計標籤 */}
+            <div className="flex gap-1.5">
+              {Object.entries(typeStats).slice(0, 3).map(([type, count]) => {
+                const style = getChunkStyle(type);
+                return (
+                  <span
+                    key={type}
+                    className="px-2 py-1 text-[10px] font-bold bg-white border border-gray-300 rounded flex items-center gap-1"
+                  >
+                    <span>{style.icon}</span>
+                    <span>{count}</span>
+                  </span>
+                );
+              })}
+              {Object.keys(typeStats).length > 3 && (
+                <span className="px-2 py-1 text-[10px] font-bold bg-white border border-gray-300 rounded">
+                  +{Object.keys(typeStats).length - 3}
+                </span>
+              )}
+            </div>
+
+            {/* 展開/折疊按鈕 */}
+            <button className="w-8 h-8 flex items-center justify-center bg-white border-2 border-neo-black hover:bg-gray-100 transition-colors">
+              <span className={`transform transition-transform ${isExpanded ? 'rotate-180' : ''}`}>
+                ▼
+              </span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 詳細分段列表（可折疊） */}
+      {isExpanded && (
+        <div className="p-4 space-y-3 max-h-[500px] overflow-y-auto">
+          {chunks.map((chunk) => {
+            const style = getChunkStyle(chunk.type);
+            return (
+              <div
+                key={chunk.chunk_id}
+                className={`border-2 ${style.borderColor} ${style.bgColor} shadow-neo-sm hover:shadow-neo-md transition-all`}
+              >
+                {/* 區塊標題欄 */}
+                <div className={`px-3 py-2 border-b-2 ${style.borderColor} flex items-center justify-between bg-white`}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">{style.icon}</span>
+                    <span className="font-black text-xs text-gray-700 uppercase">{style.label}</span>
+                    <span className="text-[10px] text-gray-400">#{chunk.chunk_id}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px] font-bold text-gray-500">
+                    <span className="px-2 py-1 bg-gray-100 border border-gray-300 rounded">
+                      {chunk.start_id}
+                    </span>
+                    <span>→</span>
+                    <span className="px-2 py-1 bg-gray-100 border border-gray-300 rounded">
+                      {chunk.end_id}
+                    </span>
+                  </div>
+                </div>
+
+                {/* 區塊摘要 */}
+                <div className="px-3 py-2">
+                  <p className="text-xs text-gray-700 leading-relaxed">{chunk.summary}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const DocumentDetailsModal: React.FC<DocumentDetailsModalProps> = ({ document, isOpen, onClose }) => {
   const [showPreview, setShowPreview] = useState(false);
 
@@ -506,6 +627,11 @@ const DocumentDetailsModal: React.FC<DocumentDetailsModalProps> = ({ document, i
                   </div>
                 )}
               </div>
+            )}
+
+            {/* AI 邏輯分段 */}
+            {aiOutput?.logical_chunks && aiOutput.logical_chunks.length > 0 && (
+              <LogicalChunksView chunks={aiOutput.logical_chunks} />
             )}
 
             {/* 結構化數據（通用展示） */}

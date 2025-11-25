@@ -29,6 +29,14 @@ class AIMongoDBQueryDetailOutput(BaseModel):
 
 # === 核心通用結構 ===
 
+class LogicalChunk(BaseModel):
+    """邏輯分塊結構 - 用於 AI 分塊的座標系統"""
+    chunk_id: int = Field(..., description="區塊序號")
+    start_id: str = Field(..., description="起始行號標記 (如 'L001')")
+    end_id: str = Field(..., description="結束行號標記 (如 'L010')")
+    type: str = Field(..., description="區塊類型: header|paragraph|list|table|code_block|section|items_list|totals|footer")
+    summary: str = Field(..., description="區塊摘要 (1-2句描述核心內容)")
+
 class BaseKeyInformation(BaseModel):
     """關鍵訊息的基礎類別，包含通用的分析相關欄位"""
     confidence_level: Optional[str] = Field(None, description="分析置信度 (high|medium|low)")
@@ -49,41 +57,18 @@ class FlexibleKeyInformation(BaseKeyInformation):
     # 核心必填欄位（保證一致性）
     content_type: str = Field(..., description="內容類型分類")
     content_summary: str = Field(..., description="內容摘要 (2-3句話)")
-    
+
     # 語意搜索優化欄位（重要性較高）
     semantic_tags: List[str] = Field(default_factory=list, description="語意標籤，適合向量搜索")
     searchable_keywords: List[str] = Field(default_factory=list, description="可搜索的關鍵詞")
     knowledge_domains: List[str] = Field(default_factory=list, description="涉及的知識領域")
-    
-    # 動態欄位區域（AI自由決定）
-    dynamic_fields: Dict[str, Any] = Field(default_factory=dict, description="AI根據內容動態決定的欄位")
-    
+
     # 結構化常用欄位（選填，AI判斷是否需要）
     extracted_entities: Optional[List[str]] = Field(None, description="提取的實體名稱（人名、地名、機構等）")
     main_topics: Optional[List[str]] = Field(None, description="主要主題")
     key_concepts: Optional[List[str]] = Field(None, description="核心概念")
-    action_items: Optional[List[str]] = Field(None, description="行動項目或任務")
-    dates_mentioned: Optional[List[str]] = Field(None, description="提及的日期")
-    amounts_mentioned: Optional[List[Dict[str, Any]]] = Field(None, description="提及的金額或數量")
-    
-    # 文檔特性（AI判斷適用性）
-    document_purpose: Optional[str] = Field(None, description="文檔目的或用途")
-    target_audience: Optional[str] = Field(None, description="目標受眾")
-    urgency_level: Optional[str] = Field(None, description="緊急程度")
-    
-    # 個人筆記特性（當內容為筆記時填充）
-    note_structure: Optional[str] = Field(None, description="筆記結構類型")
-    thinking_patterns: Optional[List[str]] = Field(None, description="思考模式")
-    
-    # 商業文檔特性（當內容為商業文檔時填充）
-    business_context: Optional[str] = Field(None, description="商業背景")
-    stakeholders: Optional[List[str]] = Field(None, description="相關利益方")
-    
-    # 法律/官方文檔特性（當內容為法律文檔時填充）
-    legal_context: Optional[str] = Field(None, description="法律背景")
-    compliance_requirements: Optional[List[str]] = Field(None, description="合規要求")
-    
-    # 新增: 結構化實體提取 (用於動態分類系統)
+
+    # 結構化實體提取 (用於動態分類系統) - 整合所有實體、金額、日期
     structured_entities: Optional[Dict[str, Any]] = Field(None, description="結構化實體提取")
     # structured_entities 結構:
     # {
@@ -95,8 +80,8 @@ class FlexibleKeyInformation(BaseKeyInformation):
     #   "amounts": List[Dict[str, Any]],  # 金額列表 [{"value": 80, "currency": "TWD", "context": "總計"}]
     #   "dates": List[Dict[str, str]]  # 日期列表 [{"date": "2024-05-21", "context": "交易日期"}]
     # }
-    
-    # 新增: 自動標題生成
+
+    # 自動標題生成
     auto_title: Optional[str] = Field(None, description="AI自動生成的文檔標題(6-15字)")
 
 # === 主要輸出模型 ===
@@ -104,10 +89,11 @@ class FlexibleKeyInformation(BaseKeyInformation):
 class AIImageAnalysisOutput(BaseModel):
     """圖片分析輸出 - 統一使用靈活結構"""
     initial_summary: str = Field(..., description="圖片的初步摘要或描述")
-    extracted_text: Optional[str] = Field(None, description="從圖片中提取的全部可見文字")
+    extracted_text: Optional[str] = Field(None, description="從圖片中提取的全部可見文字（帶行號標記）")
     content_type: str = Field(..., description="AI識別的內容類型")
     intermediate_analysis: Union[FlexibleIntermediateAnalysis, Dict[str, Any]] = Field(..., description="AI的中間分析過程")
     key_information: Union[FlexibleKeyInformation, Dict[str, Any]] = Field(..., description="提取的結構化關鍵信息")
+    logical_chunks: Optional[List[LogicalChunk]] = Field(None, description="AI 邏輯分塊結果 (座標 + 摘要)")
     model_used: Optional[str] = Field(None, description="實際用於分析的AI模型名稱")
     error_message: Optional[str] = Field(None, description="分析過程中的錯誤訊息")
 
@@ -117,6 +103,7 @@ class AITextAnalysisOutput(BaseModel):
     content_type: str = Field(..., description="AI識別的內容類型")
     intermediate_analysis: Union[FlexibleIntermediateAnalysis, Dict[str, Any]] = Field(..., description="AI的中間分析過程")
     key_information: Union[FlexibleKeyInformation, Dict[str, Any]] = Field(..., description="提取的結構化關鍵信息")
+    logical_chunks: Optional[List[LogicalChunk]] = Field(None, description="AI 邏輯分塊結果 (座標 + 摘要)")
     model_used: Optional[str] = Field(None, description="實際用於分析的AI模型名稱")
     error_message: Optional[str] = Field(None, description="分析過程中的錯誤訊息")
 

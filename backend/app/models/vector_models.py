@@ -71,6 +71,11 @@ class SemanticSearchResult(BaseModel):
     summary_text: str = Field(..., description="語義摘要文本")
     metadata: Optional[Dict[str, Any]] = Field(None, description="元數據")
 
+    # Phase 4: AI 邏輯分塊行號資訊 (用於精確引用)
+    start_line: Optional[str] = Field(None, description="區塊起始行號 (例如 'L001')")
+    end_line: Optional[str] = Field(None, description="區塊結束行號 (例如 'L010')")
+    chunk_type: Optional[str] = Field(None, description="區塊類型 (header, paragraph, list, table 等)")
+
 class AIQARequest(BaseModel):
     """AI問答請求"""
     question: str = Field(..., description="User's question to be answered")

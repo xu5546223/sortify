@@ -17,6 +17,7 @@ from ..ai.unified_ai_service_simplified import AIRequest, TaskType as AIServiceT
 from ..ai.unified_ai_config import unified_ai_config
 from ...core.logging_utils import log_event, LogLevel, AppLogger
 from .vectorization_queue import vectorization_queue
+from .line_marker_service import add_line_markers, process_text_with_line_markers, remove_line_markers
 
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
 
@@ -102,6 +103,25 @@ class DocumentTasksService:
             token_usage_to_save = ai_response.token_usage
             model_used_for_analysis = ai_response.model_used
             analysis_data_to_save = ai_image_output.model_dump()
+            
+            # 🎯 統一圖片文檔處理：從帶行號的 OCR 結果生成純文本和行號映射
+            # AI 返回的 extracted_text 格式如：[L001] 內容\n[L002] 內容...
+            extracted_text_with_markers = analysis_data_to_save.get("extracted_text", "")
+            if extracted_text_with_markers:
+                # 移除行號標記，儲存純文本
+                clean_extracted_text = remove_line_markers(extracted_text_with_markers)
+                
+                # 基於帶行號的文本生成 line_mapping（用於後續向量化時的座標定位）
+                # 注意：這裡的 line_mapping 是基於帶行號文本的，但 extracted_text 儲存純文本
+                _, line_mapping = add_line_markers(clean_extracted_text)
+                
+                # 更新 analysis_data 中的 extracted_text 為純文本版本
+                analysis_data_to_save["extracted_text"] = clean_extracted_text
+                # 將 line_mapping 加入 analysis_data，供向量化時使用
+                analysis_data_to_save["_line_mapping"] = line_mapping
+                
+                logger.info(f"圖片 {doc_uuid} OCR 文本處理完成: {len(clean_extracted_text)} 字符, {len(line_mapping)} 行")
+            
             new_status = DocumentStatus.ANALYSIS_COMPLETED
             if ai_image_output.error_message or (hasattr(ai_image_output, 'content_type') and "Error" in str(ai_image_output.content_type)):
                 new_status = DocumentStatus.ANALYSIS_FAILED
@@ -143,16 +163,32 @@ class DocumentTasksService:
                 return None, None, None, DocumentStatus.EXTRACTION_FAILED
 
             extracted_text_content = extracted_text_result
-            await crud_documents.update_document_on_extraction_success(db, doc_uuid, extracted_text_content)
-            logger.info(f"成功從 {doc_uuid} 提取 {len(extracted_text_content)} 字元的文本。開始 AI 分析...")
 
+            # 🎯 Phase 1: 為提取的文本添加行號標記
+            # 這是 Meta-Chunking 遷移的關鍵步驟，為 AI 邏輯分塊提供座標系統
+            file_extension = doc_path.suffix if doc_path else ""
+            marked_text, line_mapping, batches = process_text_with_line_markers(
+                extracted_text_content, file_extension
+            )
+            logger.info(f"文檔 {doc_uuid} 行號標記完成: {len(line_mapping)} 行" +
+                       (f"，分為 {len(batches)} 批" if batches else ""))
+
+            # 儲存原始文本和行號映射到 MongoDB
+            await crud_documents.update_document_on_extraction_success(
+                db, doc_uuid, extracted_text_content, line_mapping
+            )
+            logger.info(f"成功從 {doc_uuid} 提取 {len(extracted_text_content)} 字元的文本並儲存行號映射。開始 AI 分析...")
+
+            # 🎯 Phase 2: 傳遞帶行號標記的文本給 AI 分析
+            # AI 需要看到行號標記才能在 logical_chunks 中輸出正確的座標
+            text_for_ai = marked_text
             max_prompt_len = settings_obj.AI_MAX_INPUT_CHARS_TEXT_ANALYSIS
-            if len(extracted_text_content) > max_prompt_len:
-                logger.warning(f"提取的文本長度 ({len(extracted_text_content)}) 超過最大允許長度 ({max_prompt_len})。將進行截斷。 Doc ID: {doc_uuid}")
-                extracted_text_content = extracted_text_content[:max_prompt_len]
+            if len(text_for_ai) > max_prompt_len:
+                logger.warning(f"帶行號文本長度 ({len(text_for_ai)}) 超過最大允許長度 ({max_prompt_len})。將進行截斷。 Doc ID: {doc_uuid}")
+                text_for_ai = text_for_ai[:max_prompt_len]
 
             ai_response = await unified_ai_service_simplified.analyze_text( # type: ignore
-                text=extracted_text_content, model_preference=ai_model_preference, db=db
+                text=text_for_ai, model_preference=ai_model_preference, db=db
             )
             
             if not ai_response.success or not isinstance(ai_response.output_data, AITextAnalysisOutput):
@@ -178,12 +214,28 @@ class DocumentTasksService:
         doc_uuid = document.id
         try:
             if analysis_data and token_usage and processing_status in [DocumentStatus.ANALYSIS_COMPLETED, DocumentStatus.ANALYSIS_FAILED]:
+                # 🎯 圖片文檔：儲存純文本和行號映射
+                # 從 analysis_data 中提取 _line_mapping（由 _process_image_document 生成）
+                line_mapping_from_image = analysis_data.pop("_line_mapping", None)
+                extracted_text_from_image = analysis_data.get("extracted_text", "")
+                
                 await crud_documents.set_document_analysis(
                     db=db, document_id=doc_uuid, analysis_data_dict=analysis_data,
                     token_usage_dict=token_usage.model_dump(), model_used_str=model_used,
                     analysis_status_enum=processing_status, 
                     analyzed_content_type_str=analysis_data.get("content_type", "Unknown")
                 )
+                
+                # 如果是圖片分析且有 extracted_text，儲存到文檔的頂層欄位
+                if processing_type == "image_analysis" and extracted_text_from_image:
+                    image_update_dict: Dict[str, Any] = {
+                        "extracted_text": extracted_text_from_image
+                    }
+                    if line_mapping_from_image:
+                        image_update_dict["line_mapping"] = line_mapping_from_image
+                    
+                    await crud_documents.update_document(db, doc_uuid, image_update_dict)
+                    logger.info(f"圖片文檔 {doc_uuid} 已儲存純文本 ({len(extracted_text_from_image)} 字符) 和行號映射")
                 
                 # 新增: 如果分析成功,進行實體提取和語義豐富化
                 if processing_status == DocumentStatus.ANALYSIS_COMPLETED:
@@ -382,14 +434,34 @@ class DocumentTasksService:
                         error_detail = extraction_error or "未能從文件中提取到有效文本內容以進行分析"
                         await self._save_analysis_results(document, db, str(current_user_id), request_id, None, None, None, DocumentStatus.EXTRACTION_FAILED, processing_type_for_save)
                         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_detail)
+
+                    # 🎯 Phase 1: 為提取的文本添加行號標記
+                    file_extension = Path(str(document.file_path)).suffix if document.file_path else ""
+                    marked_text, line_mapping, batches = process_text_with_line_markers(
+                        extracted_text_result, file_extension
+                    )
+                    logger.info(f"文檔 {document.id} 行號標記完成: {len(line_mapping)} 行" +
+                               (f"，分為 {len(batches)} 批" if batches else ""))
+
                     document.extracted_text = extracted_text_result
-                    await crud_documents.update_document_on_extraction_success(db, document.id, extracted_text_result)
-                content_for_ai = document.extracted_text
+                    await crud_documents.update_document_on_extraction_success(
+                        db, document.id, extracted_text_result, line_mapping
+                    )
+                    # 🎯 Phase 2: 使用帶行號的文本進行 AI 分析
+                    content_for_ai = marked_text
+                else:
+                    # 已有提取文本，重新生成帶行號文本用於 AI 分析
+                    file_extension = Path(str(document.file_path)).suffix if document.file_path else ""
+                    marked_text, _, _ = process_text_with_line_markers(
+                        document.extracted_text, file_extension
+                    )
+                    content_for_ai = marked_text
+
                 if not content_for_ai:
                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文檔無提取文本可供分析。")
                 max_prompt_len = settings_obj.AI_MAX_INPUT_CHARS_TEXT_ANALYSIS
                 if len(content_for_ai) > max_prompt_len:
-                    logger.warning(f"提取的文本長度 ({len(content_for_ai)}) 超過最大允許長度 ({max_prompt_len})。將進行截斷。 Doc ID: {document.id}")
+                    logger.warning(f"帶行號文本長度 ({len(content_for_ai)}) 超過最大允許長度 ({max_prompt_len})。將進行截斷。 Doc ID: {document.id}")
                     content_for_ai = content_for_ai[:max_prompt_len]
             else: # Should have been caught by earlier task type check
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"不支持的AI任務類型進行內部觸發: {effective_task_type}")

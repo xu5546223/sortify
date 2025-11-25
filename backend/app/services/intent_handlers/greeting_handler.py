@@ -64,8 +64,7 @@ class GreetingHandler:
             db=db,
             conversation_id=request.conversation_id,
             user_id=user_id,
-            limit=3,  # 寒暄只需要少量歷史
-            max_content_length=500  # 保留足夠的上下文
+            limit=3  # 寒暄只需要少量歷史
         )
         
         if conversation_history_text:

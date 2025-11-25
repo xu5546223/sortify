@@ -172,14 +172,13 @@ class ComplexAnalysisHandler:
             conversation_history_text = await unified_context_helper.load_and_format_conversation_history(
                 db=db,
                 conversation_id=request.conversation_id,
-                user_id=user_id,
-                limit=5,
-                max_content_length=2000
+                user_id=user_id
             )
             
             logger.info(f"載入對話歷史: {len(conversation_history_text) if conversation_history_text else 0} 字符")
             
             # Step 7: 生成答案
+            # 🚀 優化：傳遞搜索結果，讓 AI 能看到具體的 chunk 內容
             answer, answer_tokens, confidence, contexts = await qa_answer_service.generate_answer(
                 db=db,
                 original_query=request.question,
@@ -190,7 +189,8 @@ class ComplexAnalysisHandler:
                 user_id=str(user_id) if user_id else None,
                 request_id=request_id,
                 model_preference=request.model_preference,
-                conversation_history=conversation_history_text
+                conversation_history=conversation_history_text,
+                search_results=semantic_results  # 🚀 傳遞搜索結果
             )
             total_tokens += answer_tokens
             
@@ -224,9 +224,20 @@ class ComplexAnalysisHandler:
                 f"文檔數: {doc_pool_size}"
             )
             
+            # ⭐ 修復：source_documents 的順序必須與 AI 看到的順序一致
+            # AI 看到的是 semantic_results 的順序，所以這裡也要用這個順序
+            source_doc_ids_in_ai_order = []
+            if semantic_results:
+                for result in semantic_results:
+                    if result.document_id not in source_doc_ids_in_ai_order:
+                        source_doc_ids_in_ai_order.append(result.document_id)
+            else:
+                # Fallback: 使用 documents 的順序
+                source_doc_ids_in_ai_order = [str(d.id) for d in documents]
+            
             return AIQAResponse(
                 answer=answer,
-                source_documents=[str(d.id) for d in documents],
+                source_documents=source_doc_ids_in_ai_order,  # ⭐ 修復：使用與 AI 看到的相同順序
                 confidence_score=confidence,
                 tokens_used=total_tokens,
                 processing_time=processing_time,

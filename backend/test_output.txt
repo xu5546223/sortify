@@ -1,0 +1,28 @@
+﻿
+執行時間: 2025-11-25 22:47:17
+
+
+
+================================================================================
+.venv\Scripts\python.exe : Traceback (most recent call last):
+位於 線路:1 字元:1
++ .venv\Scripts\python.exe scripts/test_citation_reference.py --real -- ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "C:\Users\xu554\Desktop\sortify\sortify\backend\scripts\test_citation_reference.py", line 914, in <module>
+    real_success = asyncio.run(test_with_real_backend())
+  File "C:\Users\xu554\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Users\xu554\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\xu554\AppData\Local\Programs\Python\Python313\Lib\asyncio\base_events.py", line 719, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "C:\Users\xu554\Desktop\sortify\sortify\backend\scripts\test_citation_reference.py", line 420, in test_with_real_backend
+    print("\U0001f50c 真實後端端到端測試")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'cp950' codec can't encode character '\U0001f50c' in position 0: illegal multibyte sequence

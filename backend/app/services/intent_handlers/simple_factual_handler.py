@@ -76,13 +76,11 @@ class SimpleFactualHandler:
         # 統一策略：總是載入對話歷史和文檔池信息
         from app.services.qa_workflow.unified_context_helper import unified_context_helper
         
-        # 1. 載入對話歷史（最近 5 條）
+        # 1. 載入對話歷史（使用統一配置的默認值）
         conversation_history_text = await unified_context_helper.load_and_format_conversation_history(
             db=db,
             conversation_id=request.conversation_id,
-            user_id=user_id,
-            limit=5,
-            max_content_length=2000
+            user_id=user_id
         )
         
         # 2. 構建文檔池上下文（如果有）
@@ -156,9 +154,18 @@ class SimpleFactualHandler:
             f"API調用: {api_calls}次"
         )
         
+        # ⭐ 修復：返回文檔池中的文檔 ID（按順序），讓前端能正確顯示引用
+        # 順序與 AI 看到的順序一致（cached_doc_data 的順序）
+        source_doc_ids_in_order = []
+        if cached_doc_data:
+            for doc_info in cached_doc_data:
+                doc_id = doc_info.get('document_id')
+                if doc_id and doc_id not in source_doc_ids_in_order:
+                    source_doc_ids_in_order.append(doc_id)
+        
         return AIQAResponse(
             answer=answer,
-            source_documents=[],
+            source_documents=source_doc_ids_in_order,  # ⭐ 修復：返回文檔池中的文檔 ID
             confidence_score=0.85 if cached_doc_data else 0.75,  # 有文檔池時置信度更高
             tokens_used=api_calls * 100,
             processing_time=processing_time,
@@ -204,9 +211,7 @@ class SimpleFactualHandler:
         conversation_history_text = await unified_context_helper.load_and_format_conversation_history(
             db=db,
             conversation_id=request.conversation_id,
-            user_id=user_id,
-            limit=5,
-            include_summary=False
+            user_id=user_id
         )
         
         # 構建文檔池上下文（格式化為易讀的文本）
@@ -281,9 +286,7 @@ class SimpleFactualHandler:
         conversation_history_text = await unified_context_helper.load_and_format_conversation_history(
             db=db,
             conversation_id=conversation_id,
-            user_id=user_id,
-            limit=5,  # 增加到5條，確保能看到之前的完整回答
-            max_content_length=2000  # 保留完整內容（答案可能在歷史中）
+            user_id=user_id
         )
         
         # 構建上下文(只使用摘要,不查詢詳細內容)
@@ -352,9 +355,7 @@ class SimpleFactualHandler:
         conversation_history_text = await unified_context_helper.load_and_format_conversation_history(
             db=db,
             conversation_id=conversation_id,
-            user_id=user_id,
-            limit=5,  # 增加到5條
-            max_content_length=2000  # 保留完整內容（答案可能在歷史中）
+            user_id=user_id
         )
         
         context_parts = []

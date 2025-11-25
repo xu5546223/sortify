@@ -116,48 +116,7 @@ class EntityExtractionService:
                 "metadata": {},
                 "embedding_generated": False
             }
-    
-    def _extract_entities_from_flexible_fields(self, key_information: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        從flexible fields中提取實體信息(備用方案)
-        當structured_entities不可用時使用
-        """
-        entities = {}
-        
-        # 從 extracted_entities 提取
-        extracted_entities = key_information.get("extracted_entities", [])
-        if extracted_entities and isinstance(extracted_entities, list):
-            # 簡單分類處理
-            entities["general_entities"] = extracted_entities[:30]
-        
-        # 從 amounts_mentioned 提取金額
-        amounts_mentioned = key_information.get("amounts_mentioned", [])
-        if amounts_mentioned and isinstance(amounts_mentioned, list):
-            entities["amounts"] = amounts_mentioned[:20]
-        
-        # 從 dates_mentioned 提取日期
-        dates_mentioned = key_information.get("dates_mentioned", [])
-        if dates_mentioned and isinstance(dates_mentioned, list):
-            # 轉換為統一格式
-            formatted_dates = []
-            for date in dates_mentioned:
-                if isinstance(date, str):
-                    formatted_dates.append({"date": date, "context": "提及日期"})
-                elif isinstance(date, dict):
-                    formatted_dates.append(date)
-            entities["dates"] = formatted_dates[:20]
-        
-        # 從 dynamic_fields 中尋找更多實體
-        dynamic_fields = key_information.get("dynamic_fields", {})
-        if dynamic_fields and isinstance(dynamic_fields, dict):
-            # 嘗試找到vendor, location等
-            for key in ["vendor", "商家", "店家", "location", "地點"]:
-                if key in dynamic_fields:
-                    entities["vendor"] = str(dynamic_fields[key])
-                    break
-        
-        return entities
-    
+
     def get_document_text(self, document: Document) -> Optional[str]:
         """
         獲取文檔的文本內容

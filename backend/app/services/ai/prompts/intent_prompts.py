@@ -98,16 +98,29 @@ def get_question_intent_classification_prompt() -> PromptTemplate:
      * **requires_context 必須設為 true**（需要載入緩存的文檔ID）
      * **requires_documents 必須設為 true**
      * **必須識別目標文檔ID**：從緩存文檔列表中找到用戶提到的文檔，填入 target_document_ids
-   - **文檔識別方法**:
-     * **明確編號**: "文檔五" → 查找 reference_number=5 的文檔，取其 document_id
-     * **編號引用**: "第一個文檔" → 查找 reference_number=1 的文檔
-     * **歷史引用**: "那張罰單" → 從對話歷史中找到提到的罰單文檔，從緩存列表匹配
-     * **內容特徵匹配** ⭐: "南投的罰單" → 從文檔摘要中找到包含"南投"的文檔
-     * **屬性匹配**: "2024年的發票" → 從摘要中匹配包含2024年份的文檔
-     * **多文檔匹配**: 如果用戶提到多個特徵，返回所有匹配的文檔ID列表
+   - **文檔識別原則**:
+     * **對話上下文優先**: 用戶提到的編號或順序，應優先參考對話歷史中 AI 回答的引用順序，而非文檔池的排列順序
+     * **內容特徵匹配**: 根據用戶描述的特徵（地點、時間、類型等）從文檔摘要中匹配
+     * **指代詞解析**: 結合對話上下文理解「這個」、「那張」等指代詞
+   - **🚨 文檔編號解析規則（極其重要！）**:
+     * **規則1 - AI 回答中的引用優先**: 
+       - 當用戶說「第一個文件」、「文檔1」、「第一張」、「我們的第一個文件」時
+       - 應該查找 **AI 上一次回答中 citation:1 對應的文檔**
+       - 而不是文檔池中的第一個文檔
+       - 例：AI 回答包含 "[發票A](citation:1)" 和 "[發票B](citation:2)"
+       - 用戶問「第一個文件的金額」→ 應該查詢發票A，不是文檔池第一個
+     * **規則2 - 文檔池順序作為備用**:
+       - 如果對話歷史中沒有 AI 的引用回答
+       - 則使用文檔池的 reference_number 順序（按相關性排序）
+     * **規則3 - 內容特徵匹配**:
+       - 根據用戶描述的特徵（地點、時間、類型等）從文檔摘要中匹配
+     * **規則4 - 指代詞解析**:
+       - 結合對話上下文理解「這個」、「那張」等指代詞
    - **範例**:
      * 歷史:找到發票文檔 → 問:"這張發票花了多少錢" → document_detail_query, target_document_ids=["發票ID"], requires_context=true ✅
      * 歷史:找到合約文檔 → 問:"甲方是誰" → document_detail_query, target_document_ids=["合約ID"], requires_context=true ✅
+     * ⭐⭐ 歷史:AI回答"根據[發票A](citation:1)和[發票B](citation:2)..." → 問:"第一個文件的金額" → document_detail_query, target_document_ids=["發票A的ID"], reasoning="用戶說第一個文件，對應AI回答中citation:1的發票A" ✅
+     * ⭐ 歷史:AI回答"[文檔 1](citation:1):新北市罰單900元, [文檔 2](citation:2):南投罰單" → 問:"第一張罰單金額" → document_detail_query, target_document_ids=["新北市罰單的ID"], reasoning="用戶說第一張，對應AI回答中citation:1的新北市罰單" ✅
      * 歷史:AI總結了5個罰單 → 問:"文檔五的詳細內容" → document_detail_query, target_document_ids=["第5個罰單ID"], requires_context=true ✅
      * 緩存:文檔1(南投罰單),文檔2(台北罰單) → 問:"南投的罰單詳細資訊" → document_detail_query, target_document_ids=["文檔1的ID"], reasoning="摘要包含南投" ✅ ⭐
      * 緩存:文檔1(2023發票),文檔2(2024發票) → 問:"2024年的發票金額" → document_detail_query, target_document_ids=["文檔2的ID"], reasoning="摘要包含2024" ✅ ⭐

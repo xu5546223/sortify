@@ -11,7 +11,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import ValidationError
 
 from app.core.logging_utils import AppLogger, log_event, LogLevel
-from app.models.vector_models import QueryRewriteResult, LLMContextDocument
+from app.models.vector_models import QueryRewriteResult, LLMContextDocument, SemanticSearchResult
 from app.models.ai_models_simplified import AIDocumentAnalysisOutputDetail, AIGeneratedAnswerOutput
 from app.services.ai.unified_ai_service_simplified import unified_ai_service_simplified, AIResponse as UnifiedAIResponse
 
@@ -35,7 +35,9 @@ class QAAnswerService:
         ensure_chinese_output: Optional[bool] = None,
         detailed_text_max_length: Optional[int] = None,
         max_chars_per_doc: Optional[int] = None,
-        conversation_history: Optional[str] = None
+        conversation_history: Optional[str] = None,
+        # 新增：向量搜索結果，用於提供精確的 chunk 內容
+        search_results: Optional[List[SemanticSearchResult]] = None
     ) -> Tuple[str, int, float, List[LLMContextDocument]]:
         """
         生成最終答案
@@ -87,55 +89,95 @@ class QAAnswerService:
                 
                 logger.info(f"聚焦上下文: {len(context_parts)} 個詳細查詢結果")
             
-            # === 通用上下文邏輯: 使用文件摘要 ===
+            # === 通用上下文邏輯: 優先使用搜索結果的 chunk 內容 ===
             else:
-                logger.info("使用通用上下文: 文件摘要")
-                max_general_docs = 5
+                # 🚀 優化：如果有搜索結果，優先使用搜索到的 chunk 內容
+                if search_results and len(search_results) > 0:
+                    logger.info(f"使用優化上下文: {len(search_results)} 個搜索結果的 chunk 內容")
+                    max_results = 5
+                    
+                    # 建立 document_id 到文檔的映射，用於獲取文件名
+                    doc_map = {str(doc.id): doc for doc in documents_for_context if hasattr(doc, 'id')}
+                    
+                    for i, result in enumerate(search_results[:max_results], 1):
+                        doc_id_str = result.document_id
+                        
+                        # 從 metadata 提取摘要
+                        chunk_summary = result.metadata.get('chunk_summary', '') if result.metadata else ''
+                        chunk_type = result.metadata.get('type', 'unknown') if result.metadata else 'unknown'
+                        
+                        # 獲取文件名
+                        matching_doc = doc_map.get(doc_id_str)
+                        filename = getattr(matching_doc, 'filename', 'Unknown') if matching_doc else 'Unknown'
+                        
+                        # 構建精簡上下文 (只保留 AI 需要的資訊)
+                        context_content = f"""=== 文檔 {i}（引用編號: citation:{i}）: {filename} ===
+摘要: {chunk_summary}
+
+內容:
+{result.summary_text}
+"""
+                        context_parts.append(context_content)
+                        
+                        actual_contexts_for_llm.append(LLMContextDocument(
+                            document_id=doc_id_str,
+                            content_used=result.summary_text[:300],
+                            source_type=f"search_chunk_{chunk_type}"
+                        ))
+                    
+                    logger.info(f"優化上下文: {len(context_parts)} 個搜索結果 chunk")
                 
-                for i, doc in enumerate(documents_for_context[:max_general_docs], 1):
-                    doc_content = ""
-                    content_source = "unknown"
-                    doc_id_str = str(doc.id) if hasattr(doc, 'id') else f"unknown_doc_{i}"
+                # Fallback: 如果沒有搜索結果，使用文件摘要
+                else:
+                    logger.info("使用 Fallback 上下文: 文件摘要")
+                    max_general_docs = 5
                     
-                    # 嘗試獲取 AI 分析的摘要
-                    ai_summary = None
-                    if hasattr(doc, 'analysis') and doc.analysis:
-                        if hasattr(doc.analysis, 'ai_analysis_output') and \
-                           isinstance(doc.analysis.ai_analysis_output, dict):
-                            try:
-                                analysis_output = AIDocumentAnalysisOutputDetail(**doc.analysis.ai_analysis_output)
-                                if analysis_output.key_information and analysis_output.key_information.content_summary:
-                                    ai_summary = analysis_output.key_information.content_summary
-                                elif analysis_output.initial_summary:
-                                    ai_summary = analysis_output.initial_summary
-                            except (ValidationError, Exception):
-                                pass
+                    for i, doc in enumerate(documents_for_context[:max_general_docs], 1):
+                        doc_content = ""
+                        content_source = "unknown"
+                        doc_id_str = str(doc.id) if hasattr(doc, 'id') else f"unknown_doc_{i}"
+                        
+                        # 嘗試獲取 AI 分析的摘要
+                        ai_summary = None
+                        if hasattr(doc, 'analysis') and doc.analysis:
+                            if hasattr(doc.analysis, 'ai_analysis_output') and \
+                               isinstance(doc.analysis.ai_analysis_output, dict):
+                                try:
+                                    analysis_output = AIDocumentAnalysisOutputDetail(**doc.analysis.ai_analysis_output)
+                                    if analysis_output.key_information and analysis_output.key_information.content_summary:
+                                        ai_summary = analysis_output.key_information.content_summary
+                                    elif analysis_output.initial_summary:
+                                        ai_summary = analysis_output.initial_summary
+                                except (ValidationError, Exception):
+                                    pass
+                        
+                        # 選擇最佳內容來源
+                        if ai_summary:
+                            doc_content = ai_summary
+                            content_source = "ai_summary"
+                        elif hasattr(doc, 'extracted_text') and doc.extracted_text:
+                            # 截斷過長文本
+                            doc_content = doc.extracted_text[:1000]
+                            if len(doc.extracted_text) > 1000:
+                                doc_content += "..."
+                            content_source = "extracted_text"
+                        else:
+                            doc_content = f"文件 '{getattr(doc, 'filename', 'N/A')}' 沒有可用內容"
+                            content_source = "placeholder"
+                        
+                        actual_contexts_for_llm.append(LLMContextDocument(
+                            document_id=doc_id_str,
+                            content_used=doc_content[:300],
+                            source_type=content_source
+                        ))
+                        
+                        # ⭐ 使用統一的引用格式，確保 AI 生成的引用能被前端正確解析
+                        filename = getattr(doc, 'filename', 'Unknown')
+                        context_parts.append(
+                            f"=== 文檔 {i}（引用編號: citation:{i}）: {filename} ===\n{doc_content}"
+                        )
                     
-                    # 選擇最佳內容來源
-                    if ai_summary:
-                        doc_content = ai_summary
-                        content_source = "ai_summary"
-                    elif hasattr(doc, 'extracted_text') and doc.extracted_text:
-                        # 截斷過長文本
-                        doc_content = doc.extracted_text[:1000]
-                        if len(doc.extracted_text) > 1000:
-                            doc_content += "..."
-                        content_source = "extracted_text"
-                    else:
-                        doc_content = f"文件 '{getattr(doc, 'filename', 'N/A')}' 沒有可用內容"
-                        content_source = "placeholder"
-                    
-                    actual_contexts_for_llm.append(LLMContextDocument(
-                        document_id=doc_id_str,
-                        content_used=doc_content[:300],
-                        source_type=content_source
-                    ))
-                    
-                    context_parts.append(
-                        f"文件 {i} (ID: {doc_id_str}):\n{doc_content}"
-                    )
-                
-                logger.info(f"通用上下文: {len(context_parts)} 個文件摘要")
+                    logger.info(f"Fallback 上下文: {len(context_parts)} 個文件摘要")
             
             # 準備查詢
             query_for_answer = query_rewrite_result.rewritten_queries[0] \

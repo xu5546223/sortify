@@ -104,38 +104,15 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
   const [selectedDocForDetail, setSelectedDocForDetail] = useState<Document | null>(null);
   const [isLoadingDocDetail, setIsLoadingDocDetail] = useState(false);
   
-  // ⭐ 監控 documentPool 狀態變化，並更新最後一個會話的快照（如果需要）
+  // ⭐ 監控 documentPool 狀態變化（僅用於調試）
   useEffect(() => {
     console.log('🔄 [documentPool 狀態更新]:', {
       count: documentPool.length,
       filenames: documentPool.map(d => d.filename)
     });
-    
-    // ⭐ 如果最後一個會話的快照不完整（比實際文檔池小），更新它
-    if (qaHistory.length > 0 && documentPool.length > 0) {
-      const lastSession = qaHistory[qaHistory.length - 1];
-      const snapshotSize = lastSession.documentPoolSnapshot?.length || 0;
-      
-      // 如果快照明顯小於當前文檔池，說明保存時狀態還沒更新，現在修正它
-      // 注意：只在快照 > 0 但 < documentPool 時修正，避免不必要的更新
-      if (snapshotSize > 0 && snapshotSize < documentPool.length) {
-        console.log(`🔧 修正最後一個會話的文檔池快照: ${snapshotSize} -> ${documentPool.length}`);
-        setQAHistory(prev => {
-          const updated = [...prev];
-          const lastIndex = updated.length - 1;
-          const lastSession = updated[lastIndex];
-          // 再次檢查，避免競態條件
-          if (lastSession && (lastSession.documentPoolSnapshot?.length || 0) < documentPool.length) {
-            updated[lastIndex] = {
-              ...lastSession,
-              documentPoolSnapshot: [...documentPool]
-            };
-          }
-          return updated;
-        });
-      }
-    }
-  }, [documentPool, qaHistory.length]); // 只依賴 length 避免無限循環
+    // 注意：不再自動修正快照，因為現在使用 current_round_documents
+    // 每個會話的快照只包含該輪次 AI 看到的文檔
+  }, [documentPool]);
   
   // Removed AI Settings
 
@@ -150,6 +127,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
     isStreaming: boolean;
     startTime: number;
     workflowState?: any;
+    currentRoundDocuments?: any[]; // ⭐ 當前輪次的文檔快照（用於引用解析）
   } | null>(null);
 
   // Document Preview
@@ -290,7 +268,9 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
       });
       
       // 解析文檔池
-      const docPool = [];
+      // ⭐ 重要：按相關性排序，與後端 _build_classification_context 保持一致
+      // 這樣 citation:1 才能正確對應到相關性最高的文檔
+      const docPool: any[] = [];
       if (conversationDetail.cached_document_data && typeof conversationDetail.cached_document_data === 'object') {
         console.log('📦 cached_document_data 內容:', conversationDetail.cached_document_data);
         for (const [docId, docInfo] of Object.entries(conversationDetail.cached_document_data)) {
@@ -299,13 +279,14 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
             ...docInfo as any
           });
         }
-        // 按相關性排序
+        // ⭐ 按相關性排序，與後端保持一致
+        // 後端 _build_classification_context 也是按 relevance_score 降序排列
         docPool.sort((a: any, b: any) => (b.relevance_score || 0) - (a.relevance_score || 0));
       } else {
         console.warn('⚠️ cached_document_data 不存在或格式錯誤，需要後端自動修復');
       }
       setDocumentPool(docPool);
-      console.log('📚 文檔池:', docPool);
+      console.log('📚 文檔池（按相關性排序）:', docPool.map(d => `${d.filename}(${d.relevance_score?.toFixed(2)})`));
       
       const loadedSessions: QASession[] = [];
       
@@ -316,6 +297,10 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
         
         // 確保用戶消息和助手消息都存在
         if (userMsg && assistantMsg && userMsg.role === 'user' && assistantMsg.role === 'assistant') {
+          // ⭐ 關鍵修復：為歷史對話設置 documentPoolSnapshot
+          // 由於我們無法知道每輪對話時的確切文檔池狀態，
+          // 使用當前文檔池作為快照（按相關性排序後）
+          // 這樣歷史對話中的引用點擊才能正確工作
           loadedSessions.push({
             id: `qa-${i}`,
             question: userMsg.content,
@@ -325,7 +310,8 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
             tokensUsed: assistantMsg.tokens_used || 0,
             processingTime: 0,
             reasoningSteps: [],
-            isStreaming: false
+            isStreaming: false,
+            documentPoolSnapshot: [...docPool]  // ⭐ 使用排序後的文檔池作為快照
           });
         }
       }
@@ -406,6 +392,8 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
       return;
     }
     
+    // ⭐ 關鍵修復：保持後端返回的順序（後端已按 source_documents 順序排列）
+    // Object.entries 會保持 JS 對象的插入順序
     const backendDocs = Object.entries(meta.document_pool).map(([docId, docInfo]: [string, any]) => ({
       document_id: docId,
       filename: docInfo.filename,
@@ -417,46 +405,15 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
     
     console.log('📊 [mergeDocumentPool] 後端文檔數:', backendDocs.length, backendDocs.map(d => d.filename));
     
-    setDocumentPool(prev => {
-      console.log('📊 [mergeDocumentPool] 當前文檔池大小:', prev.length, prev.map(d => d.filename));
-      
-      // 建立 ID 到後端文檔的映射
-      const backendMap = new Map(backendDocs.map(d => [d.document_id, d]));
-      
-      // 更新現有文檔的元數據，添加新文檔
-      const updated = prev.map(doc => {
-        const backendDoc = backendMap.get(doc.document_id);
-        if (backendDoc) {
-          // 更新元數據，但保留原有的 key_concepts（如果有）
-          backendMap.delete(doc.document_id); // 標記為已處理
-          return {
-            ...doc,
-            ...backendDoc,
-            key_concepts: backendDoc.key_concepts?.length > 0 
-              ? backendDoc.key_concepts 
-              : doc.key_concepts
-          };
-        }
-        return doc;
-      });
-      
-      // 添加後端返回的新文檔
-      const newDocs = Array.from(backendMap.values());
-      const merged = [...updated, ...newDocs];
-      
-      // 按相關性排序
-      merged.sort((a, b) => (b.relevance_score || 0) - (a.relevance_score || 0));
-      
-      console.log('✅ [mergeDocumentPool] 合併完成:', { 
-        prev_count: prev.length,
+    // ⭐ 直接使用後端返回的順序，不做任何合併或重排
+    // 這樣可以確保引用編號與文檔一一對應
+    setDocumentPool(() => {
+      console.log('✅ [mergeDocumentPool] 直接使用後端順序:', { 
         backend_count: backendDocs.length,
-        updated: updated.length, 
-        new: newDocs.length, 
-        total: merged.length,
-        merged_filenames: merged.map(d => d.filename)
+        filenames: backendDocs.map(d => d.filename)
       });
       
-      return merged;
+      return backendDocs;
     });
   }, []);
 
@@ -780,6 +737,14 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
           metadata = meta;
           // ⭐ 使用智能合併邏輯
           mergeDocumentPool(meta);
+          
+          // ⭐⭐ 保存當前輪次的文檔到 streaming session（用於引用解析）
+          if (meta.current_round_documents && meta.current_round_documents.length > 0) {
+            setCurrentStreamingSession(prev => prev ? {
+              ...prev,
+              currentRoundDocuments: meta.current_round_documents
+            } : null);
+          }
         },
         onComplete: (completeAnswer, completeData?: any) => {
           console.log('✅ 批准後答案完成', completeData);
@@ -847,6 +812,9 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
             return;
           }
 
+          // ⭐⭐ 使用當前輪次的文檔快照
+          const currentRoundDocs = metadata.current_round_documents || [];
+          
           const newSession: QASession = {
             id: `qa-${Date.now()}`,
             question: originalQuestion,
@@ -857,7 +825,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
             processingTime,
             reasoningSteps: tempReasoningSteps,
             isStreaming: false,
-            documentPoolSnapshot: [...documentPool] // 保存當時的文檔池快照
+            documentPoolSnapshot: currentRoundDocs.length > 0 ? currentRoundDocs : [...documentPool]
           };
 
           // 新會話添加到末尾（渲染時顯示在下面）
@@ -1013,6 +981,14 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
           metadata = meta;
           // ⭐ 使用智能合併邏輯
           mergeDocumentPool(meta);
+          
+          // ⭐⭐ 保存當前輪次的文檔到 streaming session（用於引用解析）
+          if (meta.current_round_documents && meta.current_round_documents.length > 0) {
+            setCurrentStreamingSession(prev => prev ? {
+              ...prev,
+              currentRoundDocuments: meta.current_round_documents
+            } : null);
+          }
         },
         onComplete: (completeAnswer, completeData?: any) => {
           console.log('✅ 澄清後答案完成', completeData);
@@ -1079,6 +1055,9 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
             return;
           }
 
+          // ⭐⭐ 使用當前輪次的文檔快照
+          const currentRoundDocs = metadata.current_round_documents || [];
+
           // 最終完成 - 保存整個對話到歷史
           const newSession: QASession = {
             id: `qa-${Date.now()}`,
@@ -1090,7 +1069,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
             processingTime,
             reasoningSteps: tempReasoningSteps,
             isStreaming: false,
-            documentPoolSnapshot: [...documentPool] // 保存當時的文檔池快照
+            documentPoolSnapshot: currentRoundDocs.length > 0 ? currentRoundDocs : [...documentPool]
           };
 
           // 新會話添加到末尾（渲染時顯示在下面）
@@ -1260,6 +1239,15 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
             console.log('📋 Metadata:', meta);
             // ⭐ 使用智能合併邏輯
             mergeDocumentPool(meta);
+            
+            // ⭐⭐ 保存當前輪次的文檔到 streaming session（用於引用解析）
+            if (meta.current_round_documents && meta.current_round_documents.length > 0) {
+              console.log('📸 [onMetadata] 保存當前輪次文檔:', meta.current_round_documents.map((d: any) => d.filename));
+              setCurrentStreamingSession(prev => prev ? {
+                ...prev,
+                currentRoundDocuments: meta.current_round_documents
+              } : null);
+            }
           },
 
           // Handle completion
@@ -1307,6 +1295,39 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
               setIsAsking(false);
               showPCMessage('請提供更多資訊以繼續', 'info');
               return;
+            }
+
+            // ⭐ 正常完成（無需批准的情況，如高置信度自動批准）
+            // 創建 QASession 並保存到歷史記錄
+            if (fullAnswer || completeAnswer) {
+              // ⭐⭐ 關鍵修復：使用 current_round_documents 作為快照
+              // 這只包含當前輪次 AI 看到的文檔（按順序），而不是累積的全部文檔池
+              // 這樣 citation:1 就會正確指向當前輪次的第一個文檔
+              const currentRoundDocs = metadata.current_round_documents || [];
+              
+              console.log('📸 [documentPoolSnapshot] 使用當前輪次文檔:', {
+                current_round_count: currentRoundDocs.length,
+                current_round_filenames: currentRoundDocs.map((d: any) => d.filename),
+                full_pool_count: documentPool.length
+              });
+              
+              const newSession: QASession = {
+                id: `qa-${Date.now()}`,
+                question: questionToAsk,
+                answer: fullAnswer || completeAnswer,
+                timestamp: new Date(),
+                sourceDocuments: metadata.source_documents || [],
+                tokensUsed: metadata.tokens_used || 0,
+                processingTime,
+                reasoningSteps: tempReasoningSteps,
+                isStreaming: false,
+                // ⭐⭐ 使用當前輪次的文檔快照，而不是累積的文檔池
+                documentPoolSnapshot: currentRoundDocs.length > 0 ? currentRoundDocs : [...documentPool]
+              };
+
+              // 新會話添加到末尾
+              setQAHistory(prev => [...prev, newSession]);
+              setCurrentStreamingSession(null);
             }
 
             setIsAsking(false);
@@ -1885,7 +1906,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
                         <ReasoningChainDisplay
                           steps={session.reasoningSteps}
                           isStreaming={false}
-                          onCitationClick={handleCitationClick}
+                          onCitationClick={(docId) => handleCitationClick(docId, session.documentPoolSnapshot)}
                         />
                       )}
 
@@ -1930,7 +1951,8 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
                       onApprove={handleApprove}
                       isApproving={isAsking}
                       onClarificationResponse={(response) => setQuestion(response)}
-                      onCitationClick={handleCitationClick}
+                      // ⭐⭐ 使用當前輪次的文檔快照（如果有），否則使用全局文檔池
+                      onCitationClick={(docId) => handleCitationClick(docId, currentStreamingSession.currentRoundDocuments || documentPool)}
                     />
                   )}
 
@@ -1944,7 +1966,8 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
                     <StreamedAnswer
                       content={currentStreamingSession.answer}
                       isStreaming={currentStreamingSession.isStreaming}
-                      onCitationClick={handleCitationClick}
+                      // ⭐⭐ 使用當前輪次的文檔快照（如果有），否則使用全局文檔池
+                      onCitationClick={(docId) => handleCitationClick(docId, currentStreamingSession.currentRoundDocuments || documentPool)}
                     />
                   )}
                 </div>
@@ -1965,7 +1988,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
           <div ref={messagesEndRef} />
           
           {/* 輸入框區域 - 跟隨內容流動 */}
-          <div className="mt-6 sticky bottom-0 pb-6">
+          <div className="mt-6 sticky bottom-0 pb-6 z-50">
             <div className="max-w-4xl mx-auto">
               {/* 主輸入卡片 - Neo-Brutalism 風格 */}
               <div className="bg-white border-3 border-neo-black shadow-[6px_6px_0px_0px_#000000] overflow-hidden">

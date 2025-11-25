@@ -179,6 +179,17 @@ export const initializeVectorDatabase = async (): Promise<InitializeVectorDBResp
   }
 };
 
+// 重新索引所有文檔
+export const reindexAllDocuments = async (): Promise<BasicResponse> => {
+  try {
+    const response = await apiClient.post<BasicResponse>('/vector-db/reindex-all');
+    return response.data;
+  } catch (error) {
+    console.error('重新索引所有文檔失敗:', error);
+    throw error;
+  }
+};
+
 // 獲取數據庫連接狀態 (moved here as it depends on getVectorDatabaseStats)
 export const getDatabaseConnectionStatus = async (): Promise<DatabaseConnectionStatus> => {
   try {

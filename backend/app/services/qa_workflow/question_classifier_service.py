@@ -9,6 +9,7 @@ from typing import Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.logging_utils import AppLogger, log_event, LogLevel
+from app.models.context_config import context_config
 from app.models.question_models import (
     QuestionIntent,
     QuestionClassification,
@@ -83,9 +84,10 @@ class QuestionClassifierService:
                     
                     # 智能截斷：用戶問題保留完整，AI回答保留關鍵部分
                     if role_name == "用戶":
-                        # 用戶問題保留完整（最多300字，確保不丟失關鍵信息）
-                        if len(content) > 300:
-                            content = content[:300] + "..."
+                        # 用戶問題保留完整（使用統一配置）
+                        max_user_len = context_config.USER_QUESTION_MAX_LENGTH
+                        if len(content) > max_user_len:
+                            content = content[:max_user_len] + "..."
                         conversation_history_text += f"用戶: {content}\n"
                     else:
                         # AI回答處理策略：盡量保留完整內容
@@ -101,13 +103,15 @@ class QuestionClassifierService:
                                         break
                             if core_parts:
                                 content = '\n'.join(core_parts)
-                            elif len(content) > 600:
-                                content = content[:600] + "..."
+                            else:
+                                max_citation_len = context_config.AI_ANSWER_WITH_CITATION_MAX_LENGTH
+                                if len(content) > max_citation_len:
+                                    content = content[:max_citation_len] + "..."
                         else:
-                            # 普通回答：意圖分類時適度保留即可（理解上下文即可）
-                            # 保留前800字（包含摘要和主要信息）
-                            if len(content) > 800:
-                                content = content[:800] + "...[後續省略]"
+                            # 普通回答：意圖分類時適度保留即可（使用統一配置）
+                            max_answer_len = context_config.AI_ANSWER_MAX_LENGTH
+                            if len(content) > max_answer_len:
+                                content = content[:max_answer_len] + "...[後續省略]"
                         
                         conversation_history_text += f"助手: {content}\n"
                     
@@ -135,7 +139,8 @@ class QuestionClassifierService:
                     cached_documents_text += f"  文件名: {filename}\n"
                     cached_documents_text += f"  相關性: {relevance_score:.2f} (訪問 {access_count} 次)\n"
                     if summary:
-                        cached_documents_text += f"  摘要: {summary[:200]}{'...' if len(summary) > 200 else ''}\n"
+                        preview_len = context_config.PREVIEW_MAX_LENGTH
+                        cached_documents_text += f"  摘要: {summary[:preview_len]}{'...' if len(summary) > preview_len else ''}\n"
                     if key_concepts:
                         cached_documents_text += f"  關鍵概念: {', '.join(key_concepts)}\n"
                     if semantic_tags:
@@ -360,8 +365,8 @@ class QuestionClassifierService:
                 db=db,
                 conversation_id=conversation_id,
                 user_id=user_id,
-                limit=10,  # 增加到10條，確保多輪澄清不丟失上下文
-                max_content_length=1500  # 增加到1500，保留完整信息
+                limit=context_config.CLASSIFICATION_HISTORY_LIMIT,
+                max_content_length=context_config.CLARIFICATION_CONTENT_MAX_LENGTH
             )
             
             if conversation_history_text:

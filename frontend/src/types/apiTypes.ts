@@ -192,11 +192,22 @@ export interface AITextKeyInformation {
   other_specific_text_info?: Record<string, any> | null;
 }
 
+// ========== AI 邏輯分塊相關類型 (Meta-Chunking) ==========
+
+export interface LogicalChunk {
+  chunk_id: number;
+  start_id: string;  // "L001"
+  end_id: string;    // "L010"
+  type: string;      // "header" | "paragraph" | "list" | "table" | ...
+  summary: string;   // 區塊摘要
+}
+
 export interface AITextAnalysisOutput {
   initial_summary: string;
   content_type: string;
   intermediate_analysis: AITextAnalysisIntermediateStep[] | Record<string, any>;
   key_information: AITextKeyInformation | Record<string, any>;
+  logical_chunks?: LogicalChunk[];  // AI 邏輯分塊結果
   model_used?: string | null;
   error_message?: string | null;
 }

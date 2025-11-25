@@ -13,11 +13,21 @@ logger = AppLogger(__name__, level=logging.DEBUG).get_logger() # Existing AppLog
 class EmbeddingService:
     """文本向量化服務"""
     
+    # 需要前綴的模型列表
+    MODELS_REQUIRING_PREFIX = [
+        'intfloat/multilingual-e5',
+        'intfloat/e5-',
+        'BAAI/bge-',
+    ]
+    
     def __init__(self, model_name: str = None):
-        self.model_name = model_name or getattr(settings, 'EMBEDDING_MODEL', 'paraphrase-multilingual-mpnet-base-v2')
+        self.model_name = model_name or getattr(settings, 'EMBEDDING_MODEL', 'intfloat/multilingual-e5-base')
         self.model = None
         self.vector_dimension = None
         self._model_loaded = False
+        
+        # 檢查是否需要前綴
+        self._requires_prefix = any(prefix in self.model_name for prefix in self.MODELS_REQUIRING_PREFIX)
         
         # 檢查模型是否已緩存
         self._check_model_cache()
@@ -95,12 +105,13 @@ class EmbeddingService:
                          extra={"model_name": self.model_name, "error": str(e), "error_type": type(e).__name__})
             raise # Re-raise the exception so the service knows loading failed
     
-    def encode_text(self, text: str) -> List[float]:
+    def encode_text(self, text: str, is_query: bool = True) -> List[float]:
         """
         將單個文本編碼為向量
         
         Args:
             text: 要編碼的文本
+            is_query: 是否為查詢文本（對於 e5/bge 模型需要不同前綴）
             
         Returns:
             向量列表
@@ -120,6 +131,11 @@ class EmbeddingService:
                 text = text[:max_length]
                 logger.debug(f"文本過長，已截斷到{max_length}字符")
             
+            # 為 e5/bge 模型添加前綴
+            if self._requires_prefix:
+                prefix = "query: " if is_query else "passage: "
+                text = prefix + text
+            
             # 生成向量
             embedding = self.model.encode(text, convert_to_tensor=False, normalize_embeddings=True)
             return embedding.tolist()
@@ -129,13 +145,14 @@ class EmbeddingService:
             # 返回零向量作為fallback
             return [0.0] * self.vector_dimension
     
-    def encode_batch(self, texts: List[str], batch_size: int = 32) -> List[List[float]]:
+    def encode_batch(self, texts: List[str], batch_size: int = 32, is_query: bool = False) -> List[List[float]]:
         """
         批量編碼文本為向量
         
         Args:
             texts: 文本列表
             batch_size: 批次大小
+            is_query: 是否為查詢文本（對於 e5/bge 模型需要不同前綴）
             
         Returns:
             向量列表的列表
@@ -152,14 +169,18 @@ class EmbeddingService:
             
             # 預處理文本
             max_length = getattr(settings, 'EMBEDDING_MAX_LENGTH', 512)
+            prefix = ""
+            if self._requires_prefix:
+                prefix = "query: " if is_query else "passage: "
+            
             processed_texts = []
             for text in texts:
                 if not text or not text.strip():
                     processed_texts.append("")
                 elif len(text) > max_length:
-                    processed_texts.append(text[:max_length])
+                    processed_texts.append(prefix + text[:max_length])
                 else:
-                    processed_texts.append(text)
+                    processed_texts.append(prefix + text)
             
             # 批量生成向量
             embeddings = self.model.encode(

@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.logging_utils import AppLogger
+from app.models.context_config import context_config
 
 logger = AppLogger(__name__, level=logging.DEBUG).get_logger()
 
@@ -315,22 +316,43 @@ class ConversationContextManager:
                 tokens_used=tokens_used
             )
             
-            # 更新文檔池
-            if source_documents and len(source_documents) > 0:
-                # ⚠️ 先確保文檔池已載入（避免覆蓋歷史文檔）
-                await self._ensure_cache_loaded()
+            # ⚠️ 先確保文檔池已載入
+            await self._ensure_cache_loaded()
+            
+            # 🔄 對所有未被引用的文檔進行相關性衰減
+            if self._document_pool:
+                source_doc_set = set(source_documents or [])
+                decay_rate = context_config.RELEVANCE_DECAY_RATE
                 
+                for doc_id, doc_ref in self._document_pool.items():
+                    if doc_id not in source_doc_set:
+                        # 未被引用的文檔，進行衰減
+                        old_score = doc_ref.relevance_score
+                        doc_ref.decay_relevance(self.current_round, decay_rate)
+                        if old_score != doc_ref.relevance_score:
+                            logger.debug(
+                                f"📉 文檔相關性衰減: {doc_ref.filename} "
+                                f"{old_score:.2f} → {doc_ref.relevance_score:.2f}"
+                            )
+            
+            # 更新文檔池（添加新文檔）
+            if source_documents and len(source_documents) > 0:
                 logger.debug(f"更新前文檔池: {len(self._document_pool)} 個文檔")
                 await self._update_document_pool(source_documents)
                 logger.debug(f"更新後文檔池: {len(self._document_pool)} 個文檔")
                 
-                # � 強制添加引用標註（如果 AI 沒有標註）
-                answer = self.enforce_citations(answer)
+                # 🏷️ 強制添加引用標註（如果 AI 沒有標註）
+                # 傳入 source_documents 以保持與 AI 看到的順序一致
+                answer = self.enforce_citations(answer, source_document_ids=source_documents)
                 
-                # � 檢測答案中的引用並給相應文檔加分
+                # 📈 檢測答案中的引用並給相應文檔加分（使用文檔名匹配）
                 await self.boost_cited_documents(answer)
-                
-                # 保存文檔池到 cached_document_data
+            
+            # 🗑️ 清理低相關性文檔
+            await self.cleanup_low_relevance_docs()
+            
+            # 保存文檔池到 cached_document_data
+            if self._document_pool:
                 await self._save_document_pool_to_db()
                 
                 # 更新 cached_documents (文檔ID列表)
@@ -355,8 +377,8 @@ class ConversationContextManager:
     
     async def cleanup_low_relevance_docs(
         self,
-        min_score: float = 0.35,
-        max_idle_rounds: int = 5
+        min_score: float = None,
+        max_idle_rounds: int = None
     ):
         """
         清理低相關性文檔
@@ -365,6 +387,12 @@ class ConversationContextManager:
             min_score: 最低分數閾值（低於此分數的文檔會被清理）
             max_idle_rounds: 最大閒置輪次（超過此輪次未訪問的低分文檔會被清理）
         """
+        # 使用統一配置的默認值
+        if min_score is None:
+            min_score = context_config.MIN_RELEVANCE_SCORE
+        if max_idle_rounds is None:
+            max_idle_rounds = context_config.MAX_IDLE_ROUNDS
+        
         if not self._document_pool:
             return
         
@@ -420,11 +448,8 @@ class ConversationContextManager:
         for doc_ref in self._document_pool.values():
             doc_ref.decay_relevance(self.current_round)
         
-        # 自動清理低相關性文檔（每次檢索時觸發）
-        await self.cleanup_low_relevance_docs(
-            min_score=0.35,      # 低於 0.35 分
-            max_idle_rounds=5    # 且 5 輪未訪問
-        )
+        # 自動清理低相關性文檔（每次檢索時觸發，使用統一配置）
+        await self.cleanup_low_relevance_docs()
         
         # 按相關性排序
         sorted_docs = sorted(
@@ -523,14 +548,15 @@ class ConversationContextManager:
             logger.error(f"載入消息失敗: {e}", exc_info=True)
             self._message_cache = []
     
-    def enforce_citations(self, answer_text: str) -> str:
+    def enforce_citations(self, answer_text: str, source_document_ids: Optional[List[str]] = None) -> str:
         """
         強制添加引用標註（如果 AI 沒有標註）
         
-        從答案中提取文檔名，反向查找文檔池中的引用編號
+        改進版：使用文檔 ID 作為引用標識，避免順序不一致問題
         
         Args:
             answer_text: AI 生成的答案文本
+            source_document_ids: 本輪使用的文檔 ID 列表（按順序，與 AI 看到的順序一致）
             
         Returns:
             str: 添加引用標註後的答案文本
@@ -542,18 +568,27 @@ class ConversationContextManager:
         logger.info(f"📝 開始強制引用標註，文檔池大小: {len(self._document_pool)}")
         logger.debug(f"答案內容（前 200 字符）: {answer_text[:200]}")
         
-        # 按相關性排序文檔池（與引用編號對應）
-        sorted_docs = sorted(
-            self._document_pool.values(),
-            key=lambda x: x.relevance_score,
-            reverse=True
-        )
-        
-        # 創建文件名到引用編號的映射
-        filename_to_citation: Dict[str, int] = {}
-        for idx, doc in enumerate(sorted_docs, 1):
-            filename_to_citation[doc.filename] = idx
-            logger.debug(f"  文檔 {idx}: {doc.filename} (score: {doc.relevance_score:.2f})")
+        # 如果提供了 source_document_ids，使用它來建立編號映射
+        # 否則使用文檔池中的順序（按相關性排序）
+        if source_document_ids:
+            # 使用與 AI 看到的相同順序
+            filename_to_citation: Dict[str, int] = {}
+            for idx, doc_id in enumerate(source_document_ids, 1):
+                if doc_id in self._document_pool:
+                    doc = self._document_pool[doc_id]
+                    filename_to_citation[doc.filename] = idx
+                    logger.debug(f"  文檔 {idx}: {doc.filename} (from source_documents)")
+        else:
+            # Fallback: 按相關性排序
+            sorted_docs = sorted(
+                self._document_pool.values(),
+                key=lambda x: x.relevance_score,
+                reverse=True
+            )
+            filename_to_citation = {}
+            for idx, doc in enumerate(sorted_docs, 1):
+                filename_to_citation[doc.filename] = idx
+                logger.debug(f"  文檔 {idx}: {doc.filename} (score: {doc.relevance_score:.2f})")
         
         modified_text = answer_text
         added_count = 0
@@ -596,6 +631,8 @@ class ConversationContextManager:
         """
         檢測答案中的引用並給相應文檔加分
         
+        改進版：通過文檔名匹配而不是編號匹配，避免順序不一致問題
+        
         Args:
             answer_text: AI 生成的答案文本
         """
@@ -607,6 +644,7 @@ class ConversationContextManager:
         logger.debug(f"答案內容（前 200 字符）: {answer_text[:200]}")
         
         # 使用正則表達式匹配 [文本](citation:數字) 格式
+        # 提取引用中的文本（通常包含文檔名）
         citation_pattern = r'\[([^\]]+)\]\(citation:(\d+)\)'
         matches = re.findall(citation_pattern, answer_text)
         
@@ -614,29 +652,34 @@ class ConversationContextManager:
             logger.warning("⚠️ 答案中未發現任何引用標註 [xxx](citation:N)")
             return
         
-        cited_numbers = set(int(match[1]) for match in matches)
-        logger.info(f"📌 檢測到 {len(cited_numbers)} 個引用: {cited_numbers}")
+        # 提取引用中的文本（可能是文檔名或包含文檔名）
+        cited_texts = [match[0] for match in matches]
+        logger.info(f"📌 檢測到 {len(cited_texts)} 個引用文本: {cited_texts}")
         
-        # 按相關性排序文檔池（與文檔編號對應）
-        sorted_docs = sorted(
-            self._document_pool.values(),
-            key=lambda x: x.relevance_score,
-            reverse=True
-        )
-        
-        # 給被引用的文檔加分
+        # 通過文檔名匹配（而不是編號）
         boosted_count = 0
-        for citation_num in cited_numbers:
-            doc_index = citation_num - 1  # citation:1 -> index 0
-            if 0 <= doc_index < len(sorted_docs):
-                doc = sorted_docs[doc_index]
-                doc.boost_citation(citation_boost=0.2)  # 引用加分 +0.2
-                boosted_count += 1
+        boosted_docs = set()  # 避免重複加分
+        
+        for cited_text in cited_texts:
+            # 在文檔池中查找匹配的文檔
+            for doc_id, doc in self._document_pool.items():
+                if doc_id in boosted_docs:
+                    continue
+                    
+                # 檢查文檔名是否出現在引用文本中
+                if doc.filename in cited_text or cited_text in doc.filename:
+                    doc.boost_citation(citation_boost=0.2)
+                    boosted_docs.add(doc_id)
+                    boosted_count += 1
+                    logger.info(f"  ✅ 文檔 '{doc.filename}' 被引用，相關性提升")
+                    break
         
         if boosted_count > 0:
             logger.info(f"✅ 已給 {boosted_count} 個被引用文檔加分")
             # 保存更新後的文檔池
             await self._save_document_pool_to_db()
+        else:
+            logger.warning("⚠️ 未能匹配任何文檔（引用文本可能不包含文檔名）")
     
     async def _load_document_pool(self):
         """
@@ -820,6 +863,59 @@ class ConversationContextManager:
                         last_accessed_round=self.current_round,
                         relevance_score=1.0
                     )
+        
+        # 檢查並裁剪文檔池大小
+        max_pool_size = context_config.MAX_DOCUMENT_POOL_SIZE
+        if len(self._document_pool) > max_pool_size:
+            await self._trim_document_pool(max_pool_size)
+    
+    async def _trim_document_pool(self, max_size: int):
+        """
+        裁剪文檔池到指定大小
+        
+        按照 (相關性 * 0.7 + 時效性 * 0.3) 的優先級排序，
+        保留優先級最高的文檔，移除其餘的。
+        
+        Args:
+            max_size: 文檔池最大大小
+        """
+        if len(self._document_pool) <= max_size:
+            return
+        
+        # 計算每個文檔的優先級分數
+        def compute_priority(doc_ref: DocumentRef) -> float:
+            # 時效性：最近訪問的文檔分數更高
+            idle_rounds = self.current_round - doc_ref.last_accessed_round
+            recency_score = 1 / (idle_rounds + 1)  # 避免除以零
+            
+            # 綜合分數：相關性權重 0.7，時效性權重 0.3
+            return doc_ref.relevance_score * 0.7 + recency_score * 0.3
+        
+        # 按優先級排序
+        sorted_docs = sorted(
+            self._document_pool.items(),
+            key=lambda x: compute_priority(x[1]),
+            reverse=True
+        )
+        
+        # 計算需要移除的文檔
+        to_remove = sorted_docs[max_size:]
+        
+        logger.info(
+            f"🗑️ 文檔池已滿 ({len(self._document_pool)}/{max_size})，"
+            f"移除 {len(to_remove)} 個低優先級文檔"
+        )
+        
+        # 執行移除
+        for doc_id, doc_ref in to_remove:
+            logger.debug(
+                f"  移除: {doc_ref.filename} "
+                f"(score: {doc_ref.relevance_score:.2f}, "
+                f"idle: {self.current_round - doc_ref.last_accessed_round} 輪)"
+            )
+            del self._document_pool[doc_id]
+        
+        logger.info(f"✅ 文檔池裁剪完成，當前大小: {len(self._document_pool)}")
     
     async def _save_document_pool_to_db(self):
         """
@@ -894,27 +990,35 @@ class ConversationContextManager:
             ]
         
         # 文檔摘要列表（按相關性排序）
+        # ⚠️ 重要：reference_number 必須與 AI 生成答案時看到的順序一致
+        # 這樣用戶說「第一個文件」時，AI 才能正確理解
         if self._document_pool:
-            # 按相關性排序文檔
+            # 按相關性排序文檔（這個順序會傳給 AI）
             sorted_docs = sorted(
                 self._document_pool.values(),
                 key=lambda x: x.relevance_score,
                 reverse=True
             )
             
+            # ⭐ 關鍵：保存排序後的文檔順序，供後續引用解析使用
+            # reference_number 從 1 開始，與 citation:1, citation:2 對應
             bundle.cached_documents_info = [
                 {
                     "document_id": doc.document_id,
                     "filename": doc.filename,
-                    "reference_number": idx,
+                    "reference_number": idx,  # ⭐ 這個編號與 citation:N 對應
                     "summary": doc.summary or "",
                     "relevance_score": doc.relevance_score,
                     "access_count": doc.access_count,
-                    "key_concepts": doc.key_concepts[:5] if doc.key_concepts else [],  # 最多5個
-                    "semantic_tags": doc.semantic_tags[:3] if doc.semantic_tags else []  # 最多3個
+                    "key_concepts": doc.key_concepts[:5] if doc.key_concepts else [],
+                    "semantic_tags": doc.semantic_tags[:3] if doc.semantic_tags else []
                 }
                 for idx, doc in enumerate(sorted_docs, 1)
             ]
+            
+            # ⭐ 同時保存文檔順序映射，供後續使用
+            # 這確保了 reference_number -> document_id 的映射是穩定的
+            logger.debug(f"📋 文檔池順序（用於引用）: {[(d['reference_number'], d['filename']) for d in bundle.cached_documents_info[:5]]}")
         
         return bundle
     

@@ -718,3 +718,83 @@ async def batch_process_summaries(
             details={"error": str(e), "error_type": type(e).__name__}
         )
         raise HTTPException(status_code=500, detail="Failed to batch process documents.") # User-friendly
+
+
+@router.post("/reindex-all", response_model=BasicResponse, summary="重新索引所有文檔")
+@log_api_operation(operation_name="重新索引所有文檔", log_success=True)
+async def reindex_all_documents(
+    background_tasks: BackgroundTasks,
+    request: Request,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db)
+):
+    """
+    重新索引當前用戶的所有文檔 - 將所有文檔重新向量化
+
+    這個操作會：
+    1. 獲取當前用戶的所有文檔
+    2. 將它們全部加入向量化隊列
+    3. 在背景執行向量化處理
+
+    注意：這是一個耗時操作，大量文檔可能需要較長時間完成。
+    """
+    request_id_val = request.state.request_id if hasattr(request.state, 'request_id') else None
+
+    await log_event(
+        db=db, level=LogLevel.INFO,
+        message=f"User {current_user.username} initiated full database reindex.",
+        source="api.vector_db.reindex_all", user_id=str(current_user.id), request_id=request_id_val
+    )
+
+    try:
+        # 獲取當前用戶的所有文檔 ID
+        from app.crud.crud_documents import get_documents_by_owner
+
+        all_documents = await get_documents_by_owner(db, current_user.id)
+
+        if not all_documents:
+            await log_event(
+                db=db, level=LogLevel.WARNING,
+                message=f"User {current_user.username} has no documents to reindex.",
+                source="api.vector_db.reindex_all", user_id=str(current_user.id), request_id=request_id_val
+            )
+            return BasicResponse(
+                success=True,
+                message="沒有找到可重新索引的文檔",
+                details={"document_count": 0}
+            )
+
+        # 提取所有文檔 ID
+        document_ids = [str(doc.id) for doc in all_documents]
+
+        await log_event(
+            db=db, level=LogLevel.INFO,
+            message=f"Queueing {len(document_ids)} documents for reindexing.",
+            source="api.vector_db.reindex_all", user_id=str(current_user.id), request_id=request_id_val,
+            details={"document_count": len(document_ids)}
+        )
+
+        # 在背景任務中批量處理
+        background_tasks.add_task(
+            semantic_summary_service.batch_process_documents,
+            db,
+            document_ids
+        )
+
+        return BasicResponse(
+            success=True,
+            message=f"已開始重新索引 {len(document_ids)} 個文檔，此操作將在背景執行",
+            details={
+                "document_count": len(document_ids),
+                "status": "processing_queued"
+            }
+        )
+
+    except Exception as e:
+        await log_event(
+            db=db, level=LogLevel.ERROR,
+            message=f"Full database reindex failed for user {current_user.username}: {str(e)}",
+            source="api.vector_db.reindex_all", user_id=str(current_user.id), request_id=request_id_val,
+            details={"error": str(e), "error_type": type(e).__name__}
+        )
+        raise HTTPException(status_code=500, detail=f"重新索引失敗: {str(e)}")

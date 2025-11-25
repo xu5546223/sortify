@@ -32,9 +32,9 @@ def get_mongodb_detail_query_prompt() -> PromptTemplate:
 
 3. **根據問題類型選擇**：
    - **問「詳細資訊」、「完整內容」、「所有資料」** → 查詢 `analysis.ai_analysis_output.key_information` **完整對象**（最安全）
-   - **問特定金額、繳費資訊** → `analysis.ai_analysis_output.key_information`（包含所有 amounts_mentioned 和 dynamic_fields）
-   - **問日期、時間** → `analysis.ai_analysis_output.key_information`（包含所有 dates_mentioned 和 dynamic_fields）
-   - **問人名、機構、地點** → `analysis.ai_analysis_output.key_information`（包含所有 entities）
+   - **問特定金額、繳費資訊** → `analysis.ai_analysis_output.key_information`（包含 structured_entities.amounts）
+   - **問日期、時間** → `analysis.ai_analysis_output.key_information`（包含 structured_entities.dates）
+   - **問人名、機構、地點** → `analysis.ai_analysis_output.key_information`（包含 structured_entities）
    - **問摘要、概述** → `analysis.ai_analysis_output.key_information`
    - **問原始文字** → `extracted_text`
 
@@ -99,12 +99,11 @@ def get_mongodb_detail_query_prompt() -> PromptTemplate:
   "projection": {{
     "_id": 1,
     "filename": 1,
-    "analysis.ai_analysis_output.key_information.amounts_mentioned": 1,
-    "analysis.ai_analysis_output.key_information.dates_mentioned": 1,
-    "analysis.ai_analysis_output.key_information.dynamic_fields": 1
+    "analysis.ai_analysis_output.key_information.structured_entities": 1,
+    "analysis.ai_analysis_output.key_information.content_summary": 1
   }},
   "sub_filter": {{}},
-  "reasoning": "查詢金額和日期相關資訊"
+  "reasoning": "查詢結構化實體（金額、日期、人物等）和摘要資訊"
 }}
 ```
 

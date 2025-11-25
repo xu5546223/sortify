@@ -33,7 +33,14 @@ export interface StreamCallbacks {
   onChunk?: (text: string) => void;
   onComplete?: (fullText: string, completeData?: any) => void;
   onApprovalNeeded?: (workflowState: any) => void;
-  onMetadata?: (metadata: { tokens_used?: number; source_documents?: string[]; processing_time?: number }) => void;
+  onMetadata?: (metadata: { 
+    tokens_used?: number; 
+    source_documents?: string[]; 
+    processing_time?: number;
+    document_pool?: Record<string, any>;  // 累積的文檔池
+    document_pool_count?: number;
+    current_round_documents?: any[];  // ⭐ 當前輪次的文檔（用於引用解析）
+  }) => void;
   onProgress?: (stage: string, message: string, detail?: any) => void;
   onError?: (error: string) => void;
 }

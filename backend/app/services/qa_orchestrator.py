@@ -313,7 +313,9 @@ class QAOrchestrator:
                 )
             
             # Step 7: 生成答案（使用 qa_answer_service）
-            answer_result = await self.answer_service.generate_answer(
+            # generate_answer 返回 Tuple[answer_text, tokens_used, confidence, contexts_used]
+            # 🚀 優化：傳遞搜索結果，讓 AI 能看到具體的 chunk 內容
+            answer_text, answer_tokens, confidence, llm_contexts = await self.answer_service.generate_answer(
                 db=db,
                 original_query=request.question,
                 documents_for_context=documents,
@@ -324,23 +326,27 @@ class QAOrchestrator:
                 request_id=request_id,
                 model_preference=request.model_preference,
                 ensure_chinese_output=getattr(request, 'ensure_chinese_output', None),
-                conversation_history=None  # 可以擴展支持
+                conversation_history=None,  # 可以擴展支持
+                search_results=search_results  # 🚀 傳遞搜索結果
             )
             
-            total_tokens += answer_result['tokens_used']
+            total_tokens += answer_tokens
+            
+            # 提取來源文檔 ID
+            source_doc_ids = [ctx.document_id for ctx in llm_contexts] if llm_contexts else []
             
             # Step 8: 構建響應
             processing_time = time.time() - start_time
             
             response = AIQAResponse(
-                answer=answer_result['answer'],
-                source_documents=answer_result['source_documents'],
-                confidence_score=answer_result['confidence_score'],
+                answer=answer_text,
+                source_documents=source_doc_ids,
+                confidence_score=confidence,
                 tokens_used=total_tokens,
                 processing_time=processing_time,
                 query_rewrite_result=query_rewrite_result,
                 semantic_search_contexts=semantic_contexts_for_response,
-                llm_context_documents=answer_result['llm_context_documents'],
+                llm_context_documents=llm_contexts,
                 session_id=request.session_id
             )
             
@@ -950,22 +956,50 @@ class QAOrchestrator:
                                 await temp_ctx_mgr._load_document_pool()
                                 
                                 if temp_ctx_mgr._document_pool:
-                                    # 轉換為前端可用的格式
+                                    # ⭐ 關鍵修復：按 source_documents 的順序構建 document_pool
+                                    # 這樣前端的引用編號才能正確對應文檔
                                     document_pool_data = {}
+                                    source_doc_ids = response.source_documents if response.source_documents else []
+                                    
+                                    # ⭐⭐ 新增：構建當前輪次的文檔快照（只包含 AI 看到的文檔）
+                                    # 這是前端用來解析引用的關鍵數據
+                                    current_round_snapshot = []
+                                    
+                                    # 1. 先按 source_documents 順序添加（這是 AI 看到的順序）
+                                    for doc_id in source_doc_ids:
+                                        if doc_id in temp_ctx_mgr._document_pool:
+                                            doc_ref = temp_ctx_mgr._document_pool[doc_id]
+                                            doc_data = {
+                                                'document_id': doc_id,
+                                                'filename': doc_ref.filename,
+                                                'summary': doc_ref.summary,
+                                                'relevance_score': doc_ref.relevance_score,
+                                                'access_count': doc_ref.access_count,
+                                                'first_mentioned_round': doc_ref.first_mentioned_round,
+                                                'last_accessed_round': doc_ref.last_accessed_round
+                                            }
+                                            document_pool_data[doc_id] = doc_data
+                                            # ⭐ 同時添加到當前輪次快照（這是引用解析的關鍵）
+                                            current_round_snapshot.append(doc_data)
+                                    
+                                    # 2. 再添加其他文檔（不在 source_documents 中的）
                                     for doc_id, doc_ref in temp_ctx_mgr._document_pool.items():
-                                        document_pool_data[doc_id] = {
-                                            'document_id': doc_id,
-                                            'filename': doc_ref.filename,
-                                            'summary': doc_ref.summary,
-                                            'relevance_score': doc_ref.relevance_score,
-                                            'access_count': doc_ref.access_count,
-                                            'first_mentioned_round': doc_ref.first_mentioned_round,
-                                            'last_accessed_round': doc_ref.last_accessed_round
-                                        }
+                                        if doc_id not in document_pool_data:
+                                            document_pool_data[doc_id] = {
+                                                'document_id': doc_id,
+                                                'filename': doc_ref.filename,
+                                                'summary': doc_ref.summary,
+                                                'relevance_score': doc_ref.relevance_score,
+                                                'access_count': doc_ref.access_count,
+                                                'first_mentioned_round': doc_ref.first_mentioned_round,
+                                                'last_accessed_round': doc_ref.last_accessed_round
+                                            }
                                     
                                     metadata_payload['document_pool'] = document_pool_data
                                     metadata_payload['document_pool_count'] = len(document_pool_data)
-                                    logger.info(f"📚 發送文檔池信息: {len(document_pool_data)} 個文檔")
+                                    # ⭐⭐ 新增：當前輪次的文檔快照（用於引用解析）
+                                    metadata_payload['current_round_documents'] = current_round_snapshot
+                                    logger.info(f"📚 發送文檔池信息: {len(document_pool_data)} 個文檔, 當前輪次: {len(current_round_snapshot)} 個")
                                 else:
                                     logger.debug(f"📚 文檔池為空")
                             except Exception as e:

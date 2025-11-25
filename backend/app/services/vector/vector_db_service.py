@@ -124,7 +124,7 @@ class VectorDatabaseService:
                 
                 # 設置向量類型
                 metadata_dict["type"] = "chunk" if is_chunk else "summary"
-                
+
                 # 如果有額外的元數據，添加重要的欄位用於搜索和過濾
                 if record.metadata:
                     # 搜索相關信息
@@ -132,14 +132,44 @@ class VectorDatabaseService:
                         keywords = record.metadata["searchable_keywords"]
                         if isinstance(keywords, list) and keywords:
                             metadata_dict["searchable_keywords"] = " ".join(keywords[:10])  # 限制長度
-                    
+
                     if "knowledge_domains" in record.metadata:
                         domains = record.metadata["knowledge_domains"]
                         if isinstance(domains, list) and domains:
                             metadata_dict["knowledge_domains"] = " ".join(domains[:5])  # 限制長度
-                    
+
                     if "content_type" in record.metadata:
                         metadata_dict["content_type"] = str(record.metadata["content_type"])[:100]  # 限制長度
+
+                    # === Phase 3: AI 邏輯分塊相關 metadata ===
+                    # 行號資訊（用於精確引用）
+                    if "start_line" in record.metadata:
+                        metadata_dict["start_line"] = str(record.metadata["start_line"])
+                    if "end_line" in record.metadata:
+                        metadata_dict["end_line"] = str(record.metadata["end_line"])
+
+                    # 區塊類型（header, paragraph, list, table 等）
+                    if "chunk_type" in record.metadata:
+                        metadata_dict["chunk_type"] = str(record.metadata["chunk_type"])
+
+                    # 子分塊資訊
+                    if "sub_index" in record.metadata:
+                        metadata_dict["sub_index"] = int(record.metadata["sub_index"])
+                    if "total_sub_chunks" in record.metadata:
+                        metadata_dict["total_sub_chunks"] = int(record.metadata["total_sub_chunks"])
+
+                    # 向量化策略 (hybrid, raw_only, sub_chunked)
+                    if "vectorization_strategy" in record.metadata:
+                        metadata_dict["vectorization_strategy"] = str(record.metadata["vectorization_strategy"])
+
+                    # 區塊摘要（用於搜索結果展示）
+                    if "chunk_summary" in record.metadata:
+                        summary = record.metadata["chunk_summary"]
+                        metadata_dict["chunk_summary"] = str(summary)[:500] if summary else ""
+
+                    # 邏輯區塊 ID（AI 返回的原始 chunk_id）
+                    if "logical_chunk_id" in record.metadata:
+                        metadata_dict["logical_chunk_id"] = int(record.metadata["logical_chunk_id"])
                 
                 metadatas.append(metadata_dict)
                 
@@ -232,16 +262,30 @@ class VectorDatabaseService:
                     similarity_score = 1.0 - distance
                     
                     if similarity_score >= similarity_threshold:
+                        # 構建完整的 metadata，包含 Phase 3 AI 邏輯分塊資訊
+                        result_metadata = {
+                            "file_type": metadata.get("file_type", ""),
+                            "created_at": metadata.get("created_at", ""),
+                            "owner_id": metadata.get("owner_id", ""),
+                            "vector_id": doc_id,  # Chroma's internal ID for the vector
+                            # Phase 3: AI 邏輯分塊相關 metadata
+                            "type": metadata.get("type", ""),  # summary 或 chunk
+                            "sub_index": metadata.get("sub_index"),
+                            "total_sub_chunks": metadata.get("total_sub_chunks"),
+                            "vectorization_strategy": metadata.get("vectorization_strategy", ""),
+                            "chunk_summary": metadata.get("chunk_summary", ""),
+                            "logical_chunk_id": metadata.get("logical_chunk_id"),
+                        }
+
                         search_result = SemanticSearchResult(
                             document_id=metadata.get("document_id", ""),
                             similarity_score=similarity_score,
                             summary_text=results["documents"][0][i] if results["documents"] else "",
-                            metadata={
-                                "file_type": metadata.get("file_type", ""),
-                                "created_at": metadata.get("created_at", ""),
-                                "owner_id": metadata.get("owner_id", ""),
-                                "vector_id": doc_id # Chroma's internal ID for the vector
-                            }
+                            metadata=result_metadata,
+                            # Phase 4: 直接填充行號資訊到頂層欄位
+                            start_line=metadata.get("start_line"),
+                            end_line=metadata.get("end_line"),
+                            chunk_type=metadata.get("chunk_type"),
                         )
                         search_results.append(search_result)
             

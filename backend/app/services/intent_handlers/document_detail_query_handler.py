@@ -281,8 +281,7 @@ class DocumentDetailQueryHandler:
             "standard_analysis_fields": {
                 "analysis.ai_analysis_output.key_information.content_summary": "內容摘要",
                 "analysis.ai_analysis_output.key_information.content_type": "文檔類型",
-                "analysis.ai_analysis_output.key_information.amounts_mentioned": "提及的金額",
-                "analysis.ai_analysis_output.key_information.dates_mentioned": "提及的日期",
+                "analysis.ai_analysis_output.key_information.structured_entities": "結構化實體（金額、日期、人物等）",
                 "analysis.ai_analysis_output.key_information.extracted_entities": "提取的實體",
                 "analysis.ai_analysis_output.key_information.auto_title": "自動生成的標題"
             },
@@ -415,9 +414,22 @@ class DocumentDetailQueryHandler:
             )
             semantic_contexts.append(context_doc)
         
+        # ⭐ 修復：source_documents 的順序必須與 AI 看到的順序一致
+        # AI 看到的是 all_detailed_data 的順序（按 _reference_number 排序）
+        # 從 all_detailed_data 中提取文檔 ID，保持與 AI 看到的相同順序
+        source_doc_ids_in_ai_order = []
+        for data in all_detailed_data:
+            doc_id = str(data.get('_id', ''))
+            if doc_id and doc_id not in source_doc_ids_in_ai_order:
+                source_doc_ids_in_ai_order.append(doc_id)
+        
+        # 如果沒有詳細數據，使用 target_doc_ids 作為 fallback
+        if not source_doc_ids_in_ai_order:
+            source_doc_ids_in_ai_order = target_doc_ids
+        
         return AIQAResponse(
             answer=answer,
-            source_documents=target_doc_ids,
+            source_documents=source_doc_ids_in_ai_order,  # ⭐ 修復：使用與 AI 看到的相同順序
             confidence_score=0.90,
             tokens_used=api_calls * 150,
             processing_time=processing_time,
@@ -463,9 +475,7 @@ class DocumentDetailQueryHandler:
         conversation_history_text = await unified_context_helper.load_and_format_conversation_history(
             db=db,
             conversation_id=conversation_id,
-            user_id=user_id,
-            limit=5,
-            max_content_length=2000
+            user_id=user_id
         )
         
         # 構建上下文
@@ -474,17 +484,18 @@ class DocumentDetailQueryHandler:
             context_parts.append(conversation_history_text)
         
         # 添加詳細數據
+        # ⭐⭐ 關鍵修復：使用循環編號 i（從 1 開始），而不是文檔池中的位置
+        # 這樣 citation:1 就會對應當前查詢的第一個文檔，而不是文檔池中的第 N 個
         for i, data in enumerate(detailed_data, 1):
             # 清理數據中的 UUID 和其他不可序列化的對象
             sanitized_data = sanitize_for_json(data)
             data_str = json.dumps(sanitized_data, ensure_ascii=False, indent=2)
             
-            # 獲取文檔的原始參考編號（文檔幾）
+            # ⭐ 使用循環編號 i，確保引用編號與 source_documents 順序一致
             filename = data.get('filename', '未知文件')
-            reference_number = data.get('_reference_number', i)  # 如果有原始編號就用，沒有就用循環編號
             
-            # 構建清晰的標題，包含參考編號和文件名
-            doc_label = f"文檔{reference_number}（引用編號: citation:{reference_number}）"
+            # 構建清晰的標題，使用循環編號（不是文檔池位置）
+            doc_label = f"文檔{i}（引用編號: citation:{i}）"
             context_parts.append(f"=== {doc_label}: {filename} 的詳細數據 ===\n{data_str}\n")
             
             logger.debug(f"添加文檔上下文: {doc_label}")
@@ -525,9 +536,7 @@ class DocumentDetailQueryHandler:
         conversation_history_text = await unified_context_helper.load_and_format_conversation_history(
             db=db,
             conversation_id=conversation_id,
-            user_id=user_id,
-            limit=5,
-            max_content_length=2000
+            user_id=user_id
         )
         
         # 構建上下文
@@ -536,17 +545,18 @@ class DocumentDetailQueryHandler:
             context_parts.append(conversation_history_text)
         
         # 添加詳細數據
+        # ⭐⭐ 關鍵修復：使用循環編號 i（從 1 開始），而不是文檔池中的位置
+        # 這樣 citation:1 就會對應當前查詢的第一個文檔，而不是文檔池中的第 N 個
         for i, data in enumerate(detailed_data, 1):
             # 清理數據中的 UUID 和其他不可序列化的對象
             sanitized_data = sanitize_for_json(data)
             data_str = json.dumps(sanitized_data, ensure_ascii=False, indent=2)
             
-            # 獲取文檔的原始參考編號（文檔幾）
+            # ⭐ 使用循環編號 i，確保引用編號與 source_documents 順序一致
             filename = data.get('filename', '未知文件')
-            reference_number = data.get('_reference_number', i)  # 如果有原始編號就用，沒有就用循環編號
             
-            # 構建清晰的標題，包含參考編號和文件名
-            doc_label = f"文檔{reference_number}（引用編號: citation:{reference_number}）"
+            # 構建清晰的標題，使用循環編號（不是文檔池位置）
+            doc_label = f"文檔{i}（引用編號: citation:{i}）"
             context_parts.append(f"=== {doc_label}: {filename} 的詳細數據 ===\n{data_str}\n")
             
             logger.debug(f"添加文檔上下文: {doc_label}")
