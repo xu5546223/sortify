@@ -76,14 +76,25 @@ class ContextLoaderService:
                 )
             
             # 轉換 cached_document_data 從 dict 到 list（如果需要）
+            # ⭐ 重要：必須按 relevance_score 排序，與 AI 看到的順序一致
             cached_doc_list = None
             if cached_doc_data:
                 if isinstance(cached_doc_data, dict):
-                    # 從 dict 轉換為 list（dict 的 key 是 document_id）
-                    cached_doc_list = list(cached_doc_data.values())
+                    # 從 dict 轉換為 list，並按 relevance_score 降序排序
+                    # 這樣 citation:1 對應相關性最高的文檔
+                    cached_doc_list = sorted(
+                        cached_doc_data.values(),
+                        key=lambda x: x.get('relevance_score', 0) if isinstance(x, dict) else 0,
+                        reverse=True
+                    )
+                    logger.debug(f"📋 cached_doc_list 按 relevance_score 排序: {[d.get('filename', 'unknown') for d in cached_doc_list[:5]]}")
                 elif isinstance(cached_doc_data, list):
-                    # 已經是 list 格式
-                    cached_doc_list = cached_doc_data
+                    # 已經是 list 格式，也需要排序
+                    cached_doc_list = sorted(
+                        cached_doc_data,
+                        key=lambda x: x.get('relevance_score', 0) if isinstance(x, dict) else 0,
+                        reverse=True
+                    )
             
             context = ConversationContext(
                 conversation_id=conversation_id,

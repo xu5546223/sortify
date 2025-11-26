@@ -159,9 +159,9 @@ class QADocumentProcessor:
         model_preference: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         """
-        對單個文檔執行 AI 生成的詳細查詢
-        
-        保留原有的 MongoDB 詳細查詢功能
+        對單個文檔執行詳細查詢
+
+        ✅ 簡化方案：使用固定 projection 直接查詢 extracted_text
         """
         try:
             # 獲取文檔對象
@@ -169,65 +169,52 @@ class QADocumentProcessor:
             if not documents:
                 logger.warning(f"文檔 {document_id} 不存在")
                 return None
-            
+
             target_document = documents[0]
-            
-            # 使用 AI 生成 MongoDB 查詢
-            ai_query_response = await unified_ai_service_simplified.generate_mongodb_detail_query(
-                user_question=user_question,
-                document_id=str(target_document.id),
-                document_schema_info=document_schema_info,
-                db=db,
-                model_preference=model_preference,
-                user_id=user_id
+
+            # ✅ 使用固定 projection（簡化方案）
+            fixed_projection = {
+                "_id": 1,
+                "filename": 1,
+                "extracted_text": 1  # 完整的提取文本（適用於所有文件類型）
+            }
+
+            logger.debug(f"執行固定查詢 - 文檔ID: {document_id}")
+
+            # 直接查詢（不需要 AI 生成）
+            fetched_data = await db.documents.find_one(
+                {"_id": target_document.id},
+                projection=fixed_projection
             )
-            
-            if not ai_query_response.success or not ai_query_response.output_data:
-                logger.error(f"AI生成MongoDB查詢失敗: {ai_query_response.error_message}")
-                return await self._fallback_basic_query(db, target_document)
-            
-            from app.models.ai_models_simplified import AIMongoDBQueryDetailOutput
-            if not isinstance(ai_query_response.output_data, AIMongoDBQueryDetailOutput):
-                return await self._fallback_basic_query(db, target_document)
-            
-            query_components = ai_query_response.output_data
-            
-            # 構建 MongoDB 查詢
-            mongo_filter = {"_id": target_document.id}
-            mongo_projection = query_components.projection
-            
-            if query_components.sub_filter:
-                mongo_filter.update(query_components.sub_filter)
-            
-            if mongo_projection or query_components.sub_filter:
-                # 執行 AI 生成的詳細查詢
-                logger.debug(f"執行AI查詢 - Filter: {mongo_filter}, Projection: {mongo_projection}")
-                safe_projection = remove_projection_path_collisions(mongo_projection) if mongo_projection else None
-                fetched_data = await db.documents.find_one(mongo_filter, projection=safe_projection)
-                
-                if fetched_data:
-                    # 清理數據
-                    def sanitize(data: Any) -> Any:
-                        if isinstance(data, dict):
-                            return {k: sanitize(v) for k, v in data.items()}
-                        if isinstance(data, list):
-                            return [sanitize(i) for i in data]
-                        if isinstance(data, uuid.UUID):
-                            return str(data)
-                        return data
-                    
-                    logger.info(f"成功獲取文檔 {document_id} 的詳細資料")
-                    return sanitize(fetched_data)
-                else:
-                    # AI 查詢沒有返回結果,使用回退查詢
-                    logger.warning(f"文檔 {document_id} 的AI查詢無結果,使用回退查詢")
+
+            if fetched_data:
+                # 清理數據
+                def sanitize(data: Any) -> Any:
+                    if isinstance(data, dict):
+                        return {k: sanitize(v) for k, v in data.items()}
+                    if isinstance(data, list):
+                        return [sanitize(i) for i in data]
+                    if isinstance(data, uuid.UUID):
+                        return str(data)
+                    return data
+
+                sanitized_data = sanitize(fetched_data)
+
+                # 容錯處理：如果沒有 extracted_text
+                if not sanitized_data.get('extracted_text') or len(sanitized_data.get('extracted_text', '').strip()) < 10:
+                    logger.warning(f"文檔 {document_id} 沒有足夠的 extracted_text，使用回退查詢")
                     return await self._fallback_basic_query(db, target_document)
+
+                logger.info(f"✅ 成功獲取文檔 {document_id} 的詳細資料（{len(sanitized_data.get('extracted_text', ''))} 字符）")
+                return sanitized_data
             else:
+                # 查詢沒有返回結果，使用回退查詢
+                logger.warning(f"文檔 {document_id} 查詢無結果，使用回退查詢")
                 return await self._fallback_basic_query(db, target_document)
-                
+
         except Exception as e:
             logger.error(f"查詢文檔詳細資料失敗: {e}", exc_info=True)
-            return None
+            return await self._fallback_basic_query(db, target_document)
     
     async def _fallback_basic_query(self, db: AsyncIOMotorDatabase, document) -> Optional[Dict[str, Any]]:
         """回退到基本查詢"""

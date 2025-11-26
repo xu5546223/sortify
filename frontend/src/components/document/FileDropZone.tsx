@@ -86,8 +86,9 @@ const FileDropZone: React.FC<FileDropZoneProps> = ({
     setIsProcessing(true);
 
     try {
-      // 調用聚類 API
-      const result = await triggerClustering(false);
+      // 調用聚類 API，使用 force_recluster=true 重新分類所有文件
+      // 這會先清除舊的聚類數據，然後對所有文件進行重新分類
+      const result = await triggerClustering(true);
       setJobStatus(result);
       
       // 開始輪詢狀態
@@ -120,8 +121,14 @@ const FileDropZone: React.FC<FileDropZoneProps> = ({
           setShowAnimation(false);
           setIsProcessing(false);
           
-          if (status.status === 'completed' && onClusteringComplete) {
-            onClusteringComplete();
+          if (status.status === 'completed') {
+            // 發送聚類完成事件，通知其他組件刷新
+            window.dispatchEvent(new CustomEvent('clustering-complete'));
+            console.log('📢 聚類完成，已發送刷新事件');
+            
+            if (onClusteringComplete) {
+              onClusteringComplete();
+            }
           }
         }
       } catch (error) {

@@ -118,9 +118,48 @@ class ClusteringService:
             # 保存初始任務狀態
             await db[CLUSTERING_JOBS_COLLECTION].insert_one(job_status.model_dump())
             
+            # 如果是強制重新分類，先清除舊的聚類數據
+            if force_recluster:
+                logger.info(f"強制重新分類: 清除用戶 {owner_id_str} 的舊聚類數據")
+                
+                # 刪除所有舊的聚類
+                await db[CLUSTERS_COLLECTION].delete_many({"owner_id": owner_id})
+                
+                # 重置所有文檔的分類狀態為 pending（包括 pending、clustered、excluded 所有狀態）
+                # 這確保所有文檔都會被重新處理
+                await db[DOCUMENTS_COLLECTION].update_many(
+                    {
+                        "owner_id": owner_id,
+                        # 處理所有可能的狀態：clustered、excluded、pending，以及狀態為 null 或不存在的情況
+                        "$or": [
+                            {"clustering_status": {"$in": ["clustered", "excluded", "pending"]}},
+                            {"clustering_status": {"$exists": False}},
+                            {"clustering_status": None}
+                        ]
+                    },
+                    {
+                        "$set": {
+                            "clustering_status": "pending",
+                            "cluster_info": None
+                        }
+                    }
+                )
+                
+                await log_event(
+                    db=db,
+                    level=LogLevel.INFO,
+                    message=f"已清除用戶 {owner_id_str} 的舊聚類數據，準備重新分類",
+                    source="clustering_service.run_clustering",
+                    user_id=owner_id_str
+                )
+            
             # 1. 提取用戶的embeddings
+            # 當 force_recluster=true 時，強制包含所有已向量化的文檔
+            should_include_all = include_all_vectorized or force_recluster
             document_ids, embeddings = await self._extract_user_embeddings(
-                db, owner_id, force_recluster, include_all_vectorized
+                db, owner_id, 
+                include_clustered=force_recluster, 
+                include_all_vectorized=should_include_all
             )
             
             if len(document_ids) < self.min_documents_for_clustering:
@@ -1003,10 +1042,18 @@ class ClusteringService:
         small_clusters = []
         
         async for cluster_doc in cursor:
+            cluster_id = cluster_doc["cluster_id"]
+            
+            # 動態計算實際文檔數量（從 documents 集合查詢）
+            actual_document_count = await db[DOCUMENTS_COLLECTION].count_documents({
+                "owner_id": owner_id,
+                "cluster_info.cluster_id": cluster_id
+            })
+            
             cluster_summary = ClusterSummary(
-                cluster_id=cluster_doc["cluster_id"],
+                cluster_id=cluster_id,
                 cluster_name=cluster_doc["cluster_name"],
-                document_count=cluster_doc["document_count"],
+                document_count=actual_document_count,  # 使用動態計算的數量
                 keywords=cluster_doc.get("keywords", []),
                 created_at=cluster_doc.get("created_at"),
                 updated_at=cluster_doc.get("updated_at")
@@ -1019,10 +1066,18 @@ class ClusteringService:
             else:
                 main_clusters.append(cluster_summary)
         
-        # 統計未分類文檔數量
+        # 按實際文檔數量重新排序
+        main_clusters.sort(key=lambda c: c.document_count, reverse=True)
+        small_clusters.sort(key=lambda c: c.document_count, reverse=True)
+        
+        # 統計未分類文檔數量（包括 excluded 和 pending 狀態）
         unclustered_count = await db[DOCUMENTS_COLLECTION].count_documents({
             "owner_id": owner_id,
-            "clustering_status": "excluded"
+            "$or": [
+                {"clustering_status": "excluded"},
+                {"clustering_status": "pending"},
+                {"cluster_info": None}
+            ]
         })
         
         return {

@@ -291,82 +291,130 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
   const hasLoadedInitialData = useRef(false);
   const debouncedSearchTerm = useDebounce(searchTerm, 500);
   const isRequestPending = useRef(false);
+  const isPollingPending = useRef(false); // 新增：轮询请求锁
 
   const statusPollingInterval = useRef<NodeJS.Timeout | null>(null);
   const [processingDocuments, setProcessingDocuments] = useState<Set<string>>(new Set());
-
-  const shouldPollStatus = useMemo(() => {
-    return documents.some(doc => 
-      ['pending_extraction', 'text_extracted', 'pending_analysis', 'analyzing'].includes(doc.status)
-    );
+  
+  // 使用 ref 來追蹤處理中的文檔，避免 useCallback 依賴變化導致重複請求
+  const processingDocumentsRef = useRef<Set<string>>(new Set());
+  const documentsRef = useRef<Document[]>([]);
+  const detailedDocRef = useRef<Document | null>(null);
+  
+  // 同步 ref 與 state
+  useEffect(() => {
+    processingDocumentsRef.current = processingDocuments;
+  }, [processingDocuments]);
+  
+  useEffect(() => {
+    documentsRef.current = documents;
   }, [documents]);
+  
+  useEffect(() => {
+    detailedDocRef.current = detailedDoc;
+  }, [detailedDoc]);
 
   const pollDocumentStatus = useCallback(async () => {
-    if (isRequestPending.current || !isMounted.current || processingDocuments.size === 0) return;
-    
+    // 使用 ref 來避免依賴變化導致的重複請求
+    const currentProcessingDocs = processingDocumentsRef.current;
+
+    // 新增：檢查是否已有輪詢請求在進行中
+    if (isPollingPending.current || !isMounted.current || currentProcessingDocs.size === 0) return;
+
+    isPollingPending.current = true; // 設置輪詢鎖
+
     try {
-      const processingDocIds = Array.from(processingDocuments);
+      const processingDocIds = Array.from(currentProcessingDocs);
       console.log(`Polling status for ${processingDocIds.length} processing documents:`, processingDocIds);
       const updatedDocs = await getDocumentsByIds(processingDocIds);
-      
+
       if (isMounted.current && updatedDocs.length > 0) {
-        const stillProcessingDocs = updatedDocs.filter(doc => 
+        const stillProcessingDocs = updatedDocs.filter(doc =>
           ['pending_extraction', 'text_extracted', 'pending_analysis', 'analyzing'].includes(doc.status)
         );
-        const completedDocs = updatedDocs.filter(doc => 
+        const completedDocs = updatedDocs.filter(doc =>
           ['analysis_completed', 'completed', 'analysis_failed', 'processing_error', 'extraction_failed'].includes(doc.status)
         );
-        
-        setDocuments(prevDocs => 
+
+        setDocuments(prevDocs =>
           prevDocs.map(prevDoc => {
             const updatedDoc = updatedDocs.find(updated => updated.id === prevDoc.id);
             return updatedDoc || prevDoc;
           })
         );
-        
+
         if (completedDocs.length > 0) {
-          const successCount = completedDocs.filter(doc => 
+          const successCount = completedDocs.filter(doc =>
             ['analysis_completed', 'completed'].includes(doc.status)
           ).length;
           const failedCount = completedDocs.length - successCount;
-          
+
           if (successCount > 0) showPCMessage(`${successCount} 個文件分析完成`, 'success');
           if (failedCount > 0) showPCMessage(`${failedCount} 個文件分析失敗`, 'error');
-          
-          if (detailedDoc && completedDocs.some(doc => doc.id === detailedDoc.id)) {
-            const updatedDetailDoc = completedDocs.find(doc => doc.id === detailedDoc.id);
+
+          const currentDetailedDoc = detailedDocRef.current;
+          if (currentDetailedDoc && completedDocs.some(doc => doc.id === currentDetailedDoc.id)) {
+            const updatedDetailDoc = completedDocs.find(doc => doc.id === currentDetailedDoc.id);
             if (updatedDetailDoc) setDetailedDoc(updatedDetailDoc);
           }
         }
-        setProcessingDocuments(new Set(stillProcessingDocs.map(doc => doc.id)));
+
+        // 優化：只有當處理中的文檔集合真正變化時才更新 state
+        const newProcessingIds = stillProcessingDocs.map(doc => doc.id).sort();
+        const currentIds = Array.from(processingDocumentsRef.current).sort();
+
+        // 使用字符串比較避免 Set 比較的不穩定性
+        const hasChanged = JSON.stringify(newProcessingIds) !== JSON.stringify(currentIds);
+
+        if (hasChanged) {
+          const newProcessingSet = new Set(newProcessingIds);
+          setProcessingDocuments(newProcessingSet);
+          console.log(`Processing documents updated: ${currentIds.length} -> ${newProcessingIds.length}`);
+        }
+
         console.log(`Status polling completed: ${stillProcessingDocs.length} still processing, ${completedDocs.length} completed`);
       }
     } catch (error) {
       console.error('Status polling failed:', error);
+    } finally {
+      isPollingPending.current = false; // 釋放輪詢鎖
     }
-  }, [processingDocuments, showPCMessage, detailedDoc, documents]);
+  }, [showPCMessage]); // 移除不必要的依賴，使用 ref 來獲取最新值
+
+  // 使用 ref 存储 pollDocumentStatus 以避免 useEffect 重新触发
+  const pollDocumentStatusRef = useRef(pollDocumentStatus);
+  useEffect(() => {
+    pollDocumentStatusRef.current = pollDocumentStatus;
+  }, [pollDocumentStatus]);
+
+  // 計算是否需要輪詢 - 基於 processingDocuments 而非 documents
+  const shouldPollStatus = processingDocuments.size > 0;
 
   useEffect(() => {
+    // 清理之前的 interval
+    if (statusPollingInterval.current) {
+      clearInterval(statusPollingInterval.current);
+      statusPollingInterval.current = null;
+    }
+
     if (shouldPollStatus && hasLoadedInitialData.current) {
-      statusPollingInterval.current = setInterval(pollDocumentStatus, 3000);
+      // 使用 ref 調用以避免依賴變化導致 interval 重設
+      statusPollingInterval.current = setInterval(() => {
+        pollDocumentStatusRef.current();
+      }, 3000);
       console.log('Started status polling for processing documents');
     } else {
+      console.log('Stopped status polling - no processing documents');
+    }
+
+    // 清理函數
+    return () => {
       if (statusPollingInterval.current) {
         clearInterval(statusPollingInterval.current);
         statusPollingInterval.current = null;
-        console.log('Stopped status polling');
       }
-    }
-    return () => {
-      if (statusPollingInterval.current) clearInterval(statusPollingInterval.current);
     };
-  }, [shouldPollStatus, pollDocumentStatus]);
-
-  useEffect(() => {
-    return () => {
-      if (statusPollingInterval.current) clearInterval(statusPollingInterval.current);
-    };
-  }, []);
+  }, [shouldPollStatus]); // 移除 pollDocumentStatus 依賴
 
   const handleQuickFilterChange = (filterId: string) => {
     setActiveQuickFilter(filterId);
@@ -571,7 +619,7 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
     }, {} as Record<keyof Document | 'actions' | 'selector', typeof definitions[0]>);
 }, []);
 
-  const fetchDocumentsData = useCallback(async () => {
+  const fetchDocumentsData = useCallback(async (showMessage: boolean = false) => {
     if (isRequestPending.current || !isMounted.current) return;
     isRequestPending.current = true;
     setIsLoading(true);
@@ -587,8 +635,26 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
       if (isMounted.current) {
         setDocuments(data.documents);
         setTotalDocuments(data.totalCount);
-        if (!hasLoadedInitialData.current) { hasLoadedInitialData.current = true; }
-        showPCMessage('文件列表已更新', 'info');
+
+        // 自動將處理中的文檔加入監測列表
+        const processingDocs = data.documents.filter(doc =>
+          ['pending_extraction', 'text_extracted', 'pending_analysis', 'analyzing'].includes(doc.status)
+        );
+        if (processingDocs.length > 0) {
+          setProcessingDocuments(prev => {
+            const newSet = new Set(prev);
+            processingDocs.forEach(doc => newSet.add(doc.id));
+            return newSet;
+          });
+        }
+
+        if (!hasLoadedInitialData.current) {
+          hasLoadedInitialData.current = true;
+          showPCMessage('文件列表已載入', 'info');
+        } else if (showMessage) {
+          // 只有明確要求時才顯示更新消息
+          showPCMessage('文件列表已更新', 'info');
+        }
       }
     } catch (error) {
       console.error('Failed to fetch documents:', error);
@@ -605,6 +671,25 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
     isMounted.current = true;
     fetchDocumentsData();
     return () => { isMounted.current = false; };
+  }, [fetchDocumentsData]);
+
+  // 監聽聚類完成事件，退出資料夾視圖並刷新數據
+  useEffect(() => {
+    const handleClusteringComplete = () => {
+      console.log('📢 DocumentsPage: 收到聚類完成事件，重置資料夾視圖');
+      // 退出資料夾視圖，因為重新分類後舊的 cluster_id 已經不存在了
+      setShowFolderDetail(false);
+      setSelectedClusterId(undefined);
+      setSelectedFolderName(null);
+      setFolderDocuments([]);
+      // 刷新文檔列表
+      fetchDocumentsData(true);
+    };
+    
+    window.addEventListener('clustering-complete', handleClusteringComplete);
+    return () => {
+      window.removeEventListener('clustering-complete', handleClusteringComplete);
+    };
   }, [fetchDocumentsData]);
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -938,6 +1023,7 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
         {/* 條件渲染：資料夾詳細視圖或列表視圖 */}
         {showFolderDetail && selectedFolderName ? (
           <FolderDetailView
+            key={`folder-${selectedClusterId}-${folderDocuments.length}`}
             folderName={selectedFolderName}
             clusterId={selectedClusterId || ''}
             documents={folderDocuments}
@@ -997,7 +1083,7 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
             }}
             isUploading={isUploading}
             pendingCount={documents.filter(d => ['uploaded', 'pending_extraction', 'pending_analysis', 'analyzing'].includes(d.status)).length}
-            onClusteringComplete={fetchDocumentsData}
+            onClusteringComplete={() => fetchDocumentsData(true)}
           />
 
           {/* 文件列表區域 */}
@@ -1126,7 +1212,7 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ showPCMessage }) => {
           onClose={() => setIsGmailImporterVisible(false)}
           onSuccess={() => {
             setCurrentPage(1);
-            fetchDocumentsData();
+            fetchDocumentsData(true);
           }}
         />
 

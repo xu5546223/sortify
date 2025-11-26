@@ -173,10 +173,10 @@ const FolderDetailView: React.FC<FolderDetailViewProps> = ({
   const endIndex = startIndex + itemsPerPage;
   const paginatedDocs = filteredDocs.slice(startIndex, endIndex);
 
-  // 切換視圖時重置頁碼
+  // 切換視圖、搜尋或文檔列表變化時重置頁碼
   useEffect(() => {
     setCurrentPage(1);
-  }, [viewMode, searchTerm]);
+  }, [viewMode, searchTerm, documents]);
 
   // 打開文件詳情模態框
   const openDocumentDetail = (doc: Document, e: React.MouseEvent) => {

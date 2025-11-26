@@ -289,29 +289,77 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
       console.log('📚 文檔池（按相關性排序）:', docPool.map(d => `${d.filename}(${d.relevance_score?.toFixed(2)})`));
       
       const loadedSessions: QASession[] = [];
-      
+
       // 將消息轉換為 QA 會話（成對處理：用戶問題 + AI 回答）
       for (let i = 0; i < conversationDetail.messages.length; i += 2) {
         const userMsg = conversationDetail.messages[i];
         const assistantMsg = conversationDetail.messages[i + 1];
-        
+
         // 確保用戶消息和助手消息都存在
         if (userMsg && assistantMsg && userMsg.role === 'user' && assistantMsg.role === 'assistant') {
-          // ⭐ 關鍵修復：為歷史對話設置 documentPoolSnapshot
-          // 由於我們無法知道每輪對話時的確切文檔池狀態，
-          // 使用當前文檔池作為快照（按相關性排序後）
-          // 這樣歷史對話中的引用點擊才能正確工作
+          // ⭐⭐ 關鍵修復：為每個歷史對話構建正確的文檔池快照
+          // 使用該輪消息的 source_documents（引用的文檔ID列表）
+          // 從 cached_document_data 中提取對應的文檔信息，並保持原始順序
+          let sessionSnapshot: any[] = [];
+
+          if (assistantMsg.source_documents && assistantMsg.source_documents.length > 0 && conversationDetail.cached_document_data) {
+            // 🔍 調試：顯示 source_documents 和 cached_document_data 的對應關係
+            console.log(`🔍 [歷史會話 ${i/2 + 1}] source_documents:`, assistantMsg.source_documents);
+            console.log(`🔍 [歷史會話 ${i/2 + 1}] cached_document_data keys:`, Object.keys(conversationDetail.cached_document_data));
+            
+            // 根據 source_documents 的順序提取文檔信息
+            // ⭐ 重要修復：即使文檔不在 cached_document_data 中，也保留佔位符以維持引用編號順序
+            sessionSnapshot = assistantMsg.source_documents
+              .map((docId, index) => {
+                const docInfo = conversationDetail.cached_document_data?.[docId];
+                
+                // 🔍 調試：顯示每個 docId 的查找結果
+                console.log(`   [${index + 1}] docId: ${docId?.substring(0, 8)}... -> found: ${!!docInfo}, filename: ${docInfo?.filename || 'N/A'}`);
+                
+                if (docInfo) {
+                  return {
+                    document_id: docId,
+                    filename: docInfo.filename,
+                    summary: docInfo.summary,
+                    key_concepts: docInfo.key_concepts || [],
+                    relevance_score: docInfo.relevance_score,
+                    access_count: docInfo.access_count
+                  };
+                }
+                // ⭐ 文檔不在 cached_document_data 中，創建佔位符以維持順序
+                console.warn(`⚠️ 文檔 ${docId} 不在 cached_document_data 中，創建佔位符 (index: ${index})`);
+                return {
+                  document_id: docId,
+                  filename: `文檔 ${index + 1}`,  // 使用編號作為佔位符
+                  summary: '文檔資料暫時無法載入',
+                  key_concepts: [],
+                  relevance_score: 0,
+                  access_count: 0
+                };
+              });
+
+            console.log(`📸 為歷史會話 ${i/2 + 1} 構建快照: ${sessionSnapshot.length} 個文檔`, {
+              source_documents: assistantMsg.source_documents,
+              snapshot_filenames: sessionSnapshot.map(d => d.filename),
+              snapshot_doc_ids: sessionSnapshot.map(d => d.document_id?.substring(0, 8))
+            });
+          } else {
+            // 如果沒有 source_documents，回退到使用全局文檔池（向後兼容）
+            console.warn(`⚠️ 歷史會話 ${i/2 + 1} 沒有 source_documents，使用全局文檔池作為快照`);
+            sessionSnapshot = [...docPool];
+          }
+
           loadedSessions.push({
             id: `qa-${i}`,
             question: userMsg.content,
             answer: assistantMsg.content,
             timestamp: new Date(userMsg.timestamp),
-            sourceDocuments: [],
+            sourceDocuments: assistantMsg.source_documents || [],
             tokensUsed: assistantMsg.tokens_used || 0,
             processingTime: 0,
             reasoningSteps: [],
             isStreaming: false,
-            documentPoolSnapshot: [...docPool]  // ⭐ 使用排序後的文檔池作為快照
+            documentPoolSnapshot: sessionSnapshot  // ⭐⭐ 使用該輪對話的實際引用文檔
           });
         }
       }

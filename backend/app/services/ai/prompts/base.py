@@ -22,10 +22,7 @@ class PromptType(Enum):
     # 問答生成
     ANSWER_GENERATION = "answer_generation"  # JSON 格式輸出（非流式）
     ANSWER_GENERATION_STREAM = "answer_generation_stream"  # Markdown 格式輸出（流式）
-    
-    # MongoDB 查詢
-    MONGODB_DETAIL_QUERY_GENERATION = "mongodb_detail_query_generation"
-    
+
     # 聚類標籤
     CLUSTER_LABEL_GENERATION = "cluster_label_generation"  # 單個聚類標籤生成
     BATCH_CLUSTER_LABEL_GENERATION = "batch_cluster_label_generation"  # 批量聚類標籤生成

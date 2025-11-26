@@ -23,8 +23,8 @@ from app.services.cache.google_context_cache_service import (
     ContextCacheInfo
 )
 from app.models.ai_models_simplified import (
-    AIPromptRequest, 
-    TokenUsage, 
+    AIPromptRequest,
+    TokenUsage,
     AIImageAnalysisOutput,
     AITextAnalysisOutput,
     FlexibleIntermediateAnalysis,
@@ -32,7 +32,6 @@ from app.models.ai_models_simplified import (
     IntermediateAnalysisStep,
     AIGeneratedAnswerOutput,
     AIQueryRewriteOutput,
-    AIMongoDBQueryDetailOutput,
     AIDocumentSelectionOutput
 )
 from app.services.ai.prompt_manager_simplified import prompt_manager_simplified, PromptType, PromptTemplate
@@ -263,10 +262,8 @@ class UnifiedAIServiceSimplified:
             prompt_type = PromptType.IMAGE_ANALYSIS
         elif request.task_type == TaskType.ANSWER_GENERATION: 
             prompt_type = PromptType.ANSWER_GENERATION
-        elif request.task_type == TaskType.QUERY_REWRITE: 
+        elif request.task_type == TaskType.QUERY_REWRITE:
             prompt_type = PromptType.QUERY_REWRITE
-        elif request.task_type == TaskType.MONGODB_DETAIL_QUERY_GENERATION:
-            prompt_type = PromptType.MONGODB_DETAIL_QUERY_GENERATION
         elif request.task_type == TaskType.DOCUMENT_SELECTION_FOR_QUERY:
             prompt_type = PromptType.DOCUMENT_SELECTION_FOR_QUERY
         elif request.task_type == TaskType.CLUSTER_LABEL_GENERATION:
@@ -391,8 +388,6 @@ class UnifiedAIServiceSimplified:
                         parsed_output.answer_text = direct_answer
                 elif request.task_type == TaskType.QUERY_REWRITE:
                     parsed_output = AIQueryRewriteOutput.model_validate_json(output_text)
-                elif request.task_type == TaskType.MONGODB_DETAIL_QUERY_GENERATION:
-                    parsed_output = AIMongoDBQueryDetailOutput.model_validate_json(output_text)
                 elif request.task_type == TaskType.DOCUMENT_SELECTION_FOR_QUERY:
                     parsed_output = AIDocumentSelectionOutput.model_validate_json(output_text)
                 elif request.task_type == TaskType.CLUSTER_LABEL_GENERATION:
@@ -728,39 +723,6 @@ class UnifiedAIServiceSimplified:
         )
         return await self.process_request(request, db)
 
-    async def generate_mongodb_detail_query(
-        self,
-        user_question: str,
-        document_id: str,
-        document_schema_info: Dict[str, Any],
-        db: Optional[AsyncIOMotorDatabase] = None,
-        model_preference: Optional[str] = None,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        ai_max_output_tokens: Optional[int] = None
-    ) -> AIResponse:
-        """
-        Generates MongoDB query components (projection and/or sub-filter)
-        for detailed data retrieval from a specific document.
-        """
-        prompt_params = {
-            "user_question": user_question,
-            "document_id": document_id,
-            "document_schema_info": json.dumps(document_schema_info) # Ensure schema is passed as a JSON string if expected by prompt
-        }
-
-        request = AIRequest(
-            task_type=TaskType.MONGODB_DETAIL_QUERY_GENERATION,
-            content=user_question,  # Main content for the request, though specifics are in prompt_params
-            prompt_params=prompt_params,
-            model_preference=model_preference,
-            user_id=user_id,
-            session_id=session_id,
-            ai_max_output_tokens=ai_max_output_tokens,
-            # require_language_consistency can be true by default or configurable if needed
-        )
-        return await self.process_request(request, db)
-
     # === Context Caching 相關方法 ===
     
     async def _get_or_create_system_instruction_cache(
@@ -794,7 +756,6 @@ class UnifiedAIServiceSimplified:
                 TaskType.IMAGE_ANALYSIS: PromptType.IMAGE_ANALYSIS,
                 TaskType.ANSWER_GENERATION: PromptType.ANSWER_GENERATION,
                 TaskType.QUERY_REWRITE: PromptType.QUERY_REWRITE,
-                TaskType.MONGODB_DETAIL_QUERY_GENERATION: PromptType.MONGODB_DETAIL_QUERY_GENERATION,
                 TaskType.DOCUMENT_SELECTION_FOR_QUERY: PromptType.DOCUMENT_SELECTION_FOR_QUERY,
                 TaskType.CLUSTER_LABEL_GENERATION: PromptType.CLUSTER_LABEL_GENERATION,
                 TaskType.BATCH_CLUSTER_LABELS: PromptType.BATCH_CLUSTER_LABEL_GENERATION,

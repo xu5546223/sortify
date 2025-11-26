@@ -23,9 +23,6 @@ from .qa_prompts import (
     get_answer_generation_prompt,
     get_answer_generation_stream_prompt
 )
-from .mongodb_prompts import (
-    get_mongodb_detail_query_prompt
-)
 from .clustering_prompts import (
     get_cluster_label_generation_prompt,
     get_batch_cluster_label_generation_prompt
@@ -58,10 +55,7 @@ __all__ = [
     # 問答生成
     'get_answer_generation_prompt',
     'get_answer_generation_stream_prompt',
-    
-    # MongoDB 查詢
-    'get_mongodb_detail_query_prompt',
-    
+
     # 聚類標籤
     'get_cluster_label_generation_prompt',
     'get_batch_cluster_label_generation_prompt',

@@ -173,7 +173,7 @@ class PromptManagerSimplified:
             final_system_prompt_parts = []
             final_system_prompt_parts.append(system_prompt)
 
-            if prompt_template.prompt_type in [PromptType.IMAGE_ANALYSIS, PromptType.TEXT_ANALYSIS, PromptType.QUERY_REWRITE, PromptType.ANSWER_GENERATION, PromptType.MONGODB_DETAIL_QUERY_GENERATION, PromptType.QUESTION_INTENT_CLASSIFICATION, PromptType.GENERATE_CLARIFICATION_QUESTION]:
+            if prompt_template.prompt_type in [PromptType.IMAGE_ANALYSIS, PromptType.TEXT_ANALYSIS, PromptType.QUERY_REWRITE, PromptType.ANSWER_GENERATION, PromptType.QUESTION_INTENT_CLASSIFICATION, PromptType.GENERATE_CLARIFICATION_QUESTION]:
                 if apply_chinese_instruction:
                     final_system_prompt_parts.append(self.CHINESE_OUTPUT_INSTRUCTION)
                 final_system_prompt_parts.append(self.GENERAL_SAFETY_INSTRUCTIONS)

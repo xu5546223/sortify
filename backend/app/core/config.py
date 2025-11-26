@@ -48,7 +48,15 @@ class Settings(BaseSettings):
     # 兩階段混合檢索設定
     VECTOR_SEARCH_STAGE1_TOP_K: int = 10  # 第一階段（粗篩選）返回的候選文檔數
     VECTOR_SEARCH_STAGE2_TOP_K: int = 5   # 第二階段（精排序）最終返回的結果數
-    
+
+    # AI 上下文文檔數量限制
+    MAX_CONTEXT_DOCUMENTS: int = 20  # 傳遞給 AI 生成答案時的最大文檔數量（預設 10，建議 5-15）
+
+    # 詳細查詢專用配置（更寬鬆的上下文限制）
+    DETAIL_QUERY_MAX_CONTEXT_LENGTH: int = 80000  # 詳細查詢總上下文限制（80k 字符 ≈ 20k tokens）
+    DETAIL_QUERY_MAX_CHARS_PER_DOC: int = 30000   # 詳細查詢單文檔字符限制（30k 字符）
+    DETAIL_QUERY_ENABLE_SMART_TRUNCATION: bool = True  # 是否啟用智能截斷（False = 完整提供）
+
     # RRF 融合檢索設定
     RRF_K_CONSTANT: int = 20  # RRF 常數 k（優化後：原60→20）
     RRF_WEIGHTS: dict = {"summary": 1.5, "chunks": 1.0}  # 摘要和內容塊搜索的權重配置

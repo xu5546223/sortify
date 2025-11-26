@@ -190,12 +190,11 @@ class AIProvider(Enum):
 class TaskType(Enum):
     """AI任務類型枚舉"""
     TEXT_GENERATION = "text_generation"
-    IMAGE_ANALYSIS = "image_analysis" 
+    IMAGE_ANALYSIS = "image_analysis"
     EMBEDDING = "embedding"
     CLASSIFICATION = "classification"
     QUERY_REWRITE = "query_rewrite"
     ANSWER_GENERATION = "answer_generation"
-    MONGODB_DETAIL_QUERY_GENERATION = "mongodb_detail_query_generation"
     DOCUMENT_SELECTION_FOR_QUERY = "document_selection_for_query"
     CLUSTER_LABEL_GENERATION = "cluster_label_generation"  # 單個聚類標籤生成
     BATCH_CLUSTER_LABELS = "batch_cluster_labels"  # 批量聚類標籤生成
@@ -344,23 +343,7 @@ class UnifiedAIConfig:
             timeout_seconds=20,
             retry_attempts=2
         )
-        
-        # Configuration for MongoDB Detail Query Generation
-        self._task_configs[TaskType.MONGODB_DETAIL_QUERY_GENERATION] = TaskConfig(
-            task_type=TaskType.MONGODB_DETAIL_QUERY_GENERATION,
-            preferred_models=get_preferred_models_for_task_init(False), # Does not require image support
-            generation_params=GenerationParams(
-                temperature=0.3, # Lower temperature for more deterministic query generation
-                top_p=settings.AI_TOP_P,
-                top_k=settings.AI_TOP_K,
-                max_output_tokens=1024, # Max tokens for query components
-                response_mime_type="application/json",
-                safety_settings=common_safety_settings
-            ),
-            timeout_seconds=25,
-            retry_attempts=2
-        )
-        
+
         # Configuration for Cluster Label Generation
         self._task_configs[TaskType.CLUSTER_LABEL_GENERATION] = TaskConfig(
             task_type=TaskType.CLUSTER_LABEL_GENERATION,
@@ -601,11 +584,9 @@ class UnifiedAIConfig:
                         model_cfg = self._models[model_id]
                         if not supports_images or model_cfg.supports_images: preferred.append(model_id)
                 return preferred if preferred else ["gemini-2.0-flash"]
-            
+
             if TaskType.TEXT_GENERATION in self._task_configs: self._task_configs[TaskType.TEXT_GENERATION].preferred_models = get_preferred_models_for_task_reload(False)
             if TaskType.IMAGE_ANALYSIS in self._task_configs: self._task_configs[TaskType.IMAGE_ANALYSIS].preferred_models = get_preferred_models_for_task_reload(True)
-            # Add MONGODB_DETAIL_QUERY_GENERATION to the reload logic
-            if TaskType.MONGODB_DETAIL_QUERY_GENERATION in self._task_configs: self._task_configs[TaskType.MONGODB_DETAIL_QUERY_GENERATION].preferred_models = get_preferred_models_for_task_reload(False)
             # Add DOCUMENT_SELECTION_FOR_QUERY to the reload logic
             if TaskType.DOCUMENT_SELECTION_FOR_QUERY in self._task_configs: self._task_configs[TaskType.DOCUMENT_SELECTION_FOR_QUERY].preferred_models = get_preferred_models_for_task_reload(False)
             

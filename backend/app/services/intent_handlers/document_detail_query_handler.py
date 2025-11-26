@@ -17,7 +17,6 @@ from app.models.vector_models import (
     QueryRewriteResult
 )
 from app.models.question_models import QuestionClassification
-from app.models.ai_models_simplified import AIMongoDBQueryDetailOutput
 from app.services.ai.unified_ai_service_simplified import unified_ai_service_simplified
 from app.services.qa_workflow.conversation_helper import conversation_helper
 from app.crud.crud_documents import get_documents_by_ids
@@ -197,102 +196,19 @@ class DocumentDetailQueryHandler:
             logger.warning("⚠️ 未找到目標文檔ID，使用前3個可用文檔作為回退")
             target_doc_ids = available_doc_ids[:3]
         
-        # 步驟4: 動態載入文檔 Schema（合併所有目標文檔的結構）
-        logger.info(f"📋 動態載入 {len(target_doc_ids)} 個文檔的 Schema...")
-        
-        # 步驟4.1: 獲取所有目標文檔的結構（合併模式，避免遺漏）
-        actual_schema_fields = {}
-        schema_by_document = {}  # 記錄每個文檔有哪些欄位
-        
-        if target_doc_ids:
-            try:
-                # 批量輕量級查詢：只獲取結構，不獲取大量數據
-                # 限制最多分析 5 個文檔（避免性能問題）
-                sample_doc_ids = target_doc_ids[:5]
-                
-                cursor = db.documents.find(
-                    {"_id": {"$in": sample_doc_ids}},
-                    projection={
-                        "_id": 1,
-                        "filename": 1,
-                        "analysis.ai_analysis_output.key_information": 1
-                    }
-                )
-                
-                sample_docs = await cursor.to_list(length=5)
-                
-                for doc in sample_docs:
-                    doc_id = str(doc.get("_id"))
-                    doc_filename = doc.get("filename", "未知文檔")
-                    doc_fields = []
-                    
-                    if "analysis" in doc:
-                        key_info = doc.get("analysis", {}).get("ai_analysis_output", {}).get("key_information", {})
-                        
-                        # 提取 dynamic_fields 的實際欄位
-                        if "dynamic_fields" in key_info and isinstance(key_info["dynamic_fields"], dict):
-                            dynamic_fields = key_info["dynamic_fields"]
-                            for field_name, field_value in dynamic_fields.items():
-                                field_type = type(field_value).__name__
-                                field_key = f"dynamic_fields.{field_name}"
-                                
-                                # 合併到總 Schema（使用 set 避免重複）
-                                if field_key not in actual_schema_fields:
-                                    actual_schema_fields[field_key] = f"{field_name} ({field_type})"
-                                
-                                doc_fields.append(field_key)
-                                
-                        # 提取 structured_entities 的實際欄位
-                        if "structured_entities" in key_info and isinstance(key_info["structured_entities"], dict):
-                            struct_entities = key_info["structured_entities"]
-                            for entity_type in struct_entities.keys():
-                                field_key = f"structured_entities.{entity_type}"
-                                
-                                if field_key not in actual_schema_fields:
-                                    actual_schema_fields[field_key] = f"{entity_type} 實體"
-                                
-                                doc_fields.append(field_key)
-                    
-                    # 記錄這個文檔有哪些欄位
-                    if doc_fields:
-                        schema_by_document[doc_filename] = doc_fields
-                
-                logger.info(f"✅ 合併載入了 {len(actual_schema_fields)} 個實際欄位（來自 {len(sample_docs)} 個文檔）")
-                
-                # 日誌記錄每個文檔的差異
-                if len(schema_by_document) > 1:
-                    logger.info(f"📊 文檔結構差異：{len(schema_by_document)} 個文檔有不同的欄位組合")
-                    for filename, fields in schema_by_document.items():
-                        logger.debug(f"  - {filename}: {len(fields)} 個欄位")
-                        
-            except Exception as e:
-                logger.warning(f"⚠️ 動態 Schema 載入失敗，使用通用 Schema: {e}")
-        
-        # 步驟4.2: 準備文檔 Schema 信息（結合通用 + 動態）
-        document_schema_info = {
-            "description": "MongoDB 文檔 Schema 結構（包含實際欄位）",
-            "required_fields": {
-                "_id": "文檔唯一ID",
-                "filename": "文件名"
-            },
-            "content_fields": {
-                "extracted_text": "OCR提取的完整文本內容"
-            },
-            "standard_analysis_fields": {
-                "analysis.ai_analysis_output.key_information.content_summary": "內容摘要",
-                "analysis.ai_analysis_output.key_information.content_type": "文檔類型",
-                "analysis.ai_analysis_output.key_information.structured_entities": "結構化實體（金額、日期、人物等）",
-                "analysis.ai_analysis_output.key_information.extracted_entities": "提取的實體",
-                "analysis.ai_analysis_output.key_information.auto_title": "自動生成的標題"
-            },
-            "recommendation": "建議查詢策略：\n1. 最推薦：查詢完整的 analysis.ai_analysis_output.key_information（確保不遺漏）\n2. 如需特定欄位：根據下面的實際欄位選擇"
+        # 步驟4: 使用固定的 projection 直接查詢文檔（簡化策略）
+        logger.info(f"📋 準備查詢 {len(target_doc_ids)} 個文檔的完整文本內容...")
+
+        # ✅ 簡化方案：固定查詢欄位，不需要 AI 生成查詢
+        # 只查詢必要的欄位：_id、filename、extracted_text
+        fixed_projection = {
+            "_id": 1,
+            "filename": 1,
+            "extracted_text": 1  # 完整的提取文本（適用於所有文件類型）
         }
-        
-        # 添加實際發現的欄位（如果有）
-        if actual_schema_fields:
-            document_schema_info["actual_fields_in_document"] = actual_schema_fields
-            document_schema_info["recommendation"] += f"\n3. 此文檔包含 {len(actual_schema_fields)} 個實際欄位，可精確查詢"
-        
+
+        logger.info(f"✅ 使用固定 projection 查詢策略（extracted_text）")
+
         # 步驟5: 對選定的文檔執行 MongoDB 詳細查詢
         all_detailed_data = []
         document_reference_map = {}  # 用於保存文檔ID到參考編號的映射
@@ -303,62 +219,42 @@ class DocumentDetailQueryHandler:
             document_reference_map[str(doc_id)] = idx
         
         documents = await get_documents_by_ids(db, target_doc_ids)
-        
+
         # 過濾權限
         if user_id:
             from uuid import UUID
             user_uuid = UUID(str(user_id)) if not isinstance(user_id, UUID) else user_id
             documents = [doc for doc in documents if hasattr(doc, 'owner_id') and doc.owner_id == user_uuid]
-        
+
+        # ✅ 直接查詢文檔，不需要 AI 生成查詢（簡化且可靠）
         for doc in documents:
-            logger.info(f"對文檔 {doc.filename} 執行詳細查詢")
-            
-            ai_query_response = await unified_ai_service_simplified.generate_mongodb_detail_query(
-                user_question=request.question,
-                document_id=str(doc.id),
-                document_schema_info=document_schema_info,
-                db=db,
-                model_preference=request.model_preference,
-                user_id=user_id,
-                session_id=request.session_id
-            )
-            api_calls += 1
-            
-            if ai_query_response.success and isinstance(ai_query_response.output_data, AIMongoDBQueryDetailOutput):
-                query_components = ai_query_response.output_data
-                
-                mongo_filter = {"_id": doc.id}
-                mongo_projection = query_components.projection
-                
-                if query_components.sub_filter:
-                    mongo_filter.update(query_components.sub_filter)
-                
-                if mongo_projection or query_components.sub_filter:
-                    safe_projection = remove_projection_path_collisions(mongo_projection) if mongo_projection else None
-                    fetched_data = await db.documents.find_one(mongo_filter, projection=safe_projection)
-                    
-                    if fetched_data:
-                        # 資料清理
-                        def sanitize(data: Any) -> Any:
-                            if isinstance(data, dict):
-                                return {k: sanitize(v) for k, v in data.items()}
-                            if isinstance(data, list):
-                                return [sanitize(i) for i in data]
-                            if isinstance(data, uuid.UUID):
-                                return str(data)
-                            return data
-                        
-                        sanitized_data = sanitize(fetched_data)
-                        
-                        # 添加元數據：原始的參考編號（文檔幾）
-                        doc_id_str = str(doc.id)
-                        if doc_id_str in document_reference_map:
-                            sanitized_data['_reference_number'] = document_reference_map[doc_id_str]
-                        
-                        all_detailed_data.append(sanitized_data)
-                        logger.info(f"成功獲取文檔 {doc.filename} 的詳細數據")
-        
-        # 步驟5: 使用詳細數據生成答案
+            logger.info(f"對文檔 {doc.filename} 執行詳細查詢（fixed projection）")
+
+            try:
+                # 直接使用固定 projection 查詢
+                fetched_data = await db.documents.find_one(
+                    {"_id": doc.id},
+                    projection=fixed_projection
+                )
+
+                if fetched_data:
+                    # 資料清理
+                    sanitized_data = sanitize_for_json(fetched_data)
+
+                    # 添加元數據：原始的參考編號（文檔幾）
+                    doc_id_str = str(doc.id)
+                    if doc_id_str in document_reference_map:
+                        sanitized_data['_reference_number'] = document_reference_map[doc_id_str]
+
+                    all_detailed_data.append(sanitized_data)
+                    logger.info(f"✅ 成功獲取文檔 {doc.filename} 的詳細數據（{len(fetched_data.get('extracted_text', ''))} 字符）")
+                else:
+                    logger.warning(f"⚠️ 文檔 {doc.filename} 查詢結果為空")
+
+            except Exception as e:
+                logger.error(f"❌ 查詢文檔 {doc.filename} 失敗: {e}", exc_info=True)
+
+        # 步驟6: 使用詳細數據生成答案
         answer = await self._generate_answer_from_details(
             question=request.question,
             detailed_data=all_detailed_data,
@@ -374,10 +270,19 @@ class DocumentDetailQueryHandler:
         
         # 保存對話
         if db is not None:
-            # ✅ 合併目標文檔 + 用戶 @ 的文件
-            all_doc_ids = set(target_doc_ids)
+            # ⭐ 合併目標文檔 + 用戶 @ 的文件（保持順序）
+            # all_detailed_data 的順序就是 AI 看到的順序
+            all_doc_ids_ordered = []
+            for data in all_detailed_data:
+                doc_id = str(data.get('_id', ''))
+                if doc_id and doc_id not in all_doc_ids_ordered:
+                    all_doc_ids_ordered.append(doc_id)
+            
+            # 添加用戶 @ 的文件（如果不在列表中）
             if request.document_ids:
-                all_doc_ids.update(request.document_ids)
+                for doc_id in request.document_ids:
+                    if doc_id not in all_doc_ids_ordered:
+                        all_doc_ids_ordered.append(doc_id)
             
             await conversation_helper.save_qa_to_conversation(
                 db=db,
@@ -386,7 +291,7 @@ class DocumentDetailQueryHandler:
                 question=request.question,
                 answer=answer,
                 tokens_used=api_calls * 150,
-                source_documents=list(all_doc_ids)
+                source_documents=all_doc_ids_ordered  # ⭐ 使用有序列表
             )
         
         logger.info(f"詳細查詢完成，耗時: {processing_time:.2f}秒, API調用: {api_calls}次")
@@ -482,32 +387,36 @@ class DocumentDetailQueryHandler:
         context_parts = []
         if conversation_history_text:
             context_parts.append(conversation_history_text)
-        
-        # 添加詳細數據
-        # ⭐⭐ 關鍵修復：使用循環編號 i（從 1 開始），而不是文檔池中的位置
-        # 這樣 citation:1 就會對應當前查詢的第一個文檔，而不是文檔池中的第 N 個
+
+        # 添加詳細數據（✅ 簡化方案：只使用 extracted_text）
         for i, data in enumerate(detailed_data, 1):
-            # 清理數據中的 UUID 和其他不可序列化的對象
-            sanitized_data = sanitize_for_json(data)
-            data_str = json.dumps(sanitized_data, ensure_ascii=False, indent=2)
-            
-            # ⭐ 使用循環編號 i，確保引用編號與 source_documents 順序一致
             filename = data.get('filename', '未知文件')
-            
-            # 構建清晰的標題，使用循環編號（不是文檔池位置）
+            extracted_text = data.get('extracted_text', '')
+
+            # 容錯處理：如果沒有提取文本，記錄警告
+            if not extracted_text or len(extracted_text.strip()) < 10:
+                logger.warning(f"⚠️ 文檔 {filename} 沒有足夠的提取文本（長度: {len(extracted_text)}）")
+                extracted_text = "[此文檔沒有可用的提取文本]"
+
+            # 構建清晰的標題，使用循環編號（citation:i）
             doc_label = f"文檔{i}（引用編號: citation:{i}）"
-            context_parts.append(f"=== {doc_label}: {filename} 的詳細數據 ===\n{data_str}\n")
-            
-            logger.debug(f"添加文檔上下文: {doc_label}")
-        
-        # 調用 AI 生成答案
+
+            # ✅ 直接提供完整文本，不使用 JSON 格式
+            context_parts.append(f"=== {doc_label}: {filename} ===\n\n{extracted_text}\n\n")
+
+            logger.debug(f"添加文檔上下文: {doc_label}，文本長度: {len(extracted_text)} 字符")
+
+        # 調用 AI 生成答案（使用更大的上下文限制）
+        from app.core.config import settings
         try:
             ai_response = await unified_ai_service_simplified.generate_answer(
                 user_question=question,
                 intent_analysis=classification.reasoning,
                 document_context=context_parts,
                 db=db,
-                user_id=user_id
+                user_id=user_id,
+                detailed_text_max_length=settings.DETAIL_QUERY_MAX_CONTEXT_LENGTH,
+                max_chars_per_doc=settings.DETAIL_QUERY_MAX_CHARS_PER_DOC
             )
             
             if ai_response.success and ai_response.output_data:
@@ -543,35 +452,39 @@ class DocumentDetailQueryHandler:
         context_parts = []
         if conversation_history_text:
             context_parts.append(conversation_history_text)
-        
-        # 添加詳細數據
-        # ⭐⭐ 關鍵修復：使用循環編號 i（從 1 開始），而不是文檔池中的位置
-        # 這樣 citation:1 就會對應當前查詢的第一個文檔，而不是文檔池中的第 N 個
+
+        # 添加詳細數據（✅ 簡化方案：只使用 extracted_text）
         for i, data in enumerate(detailed_data, 1):
-            # 清理數據中的 UUID 和其他不可序列化的對象
-            sanitized_data = sanitize_for_json(data)
-            data_str = json.dumps(sanitized_data, ensure_ascii=False, indent=2)
-            
-            # ⭐ 使用循環編號 i，確保引用編號與 source_documents 順序一致
             filename = data.get('filename', '未知文件')
-            
-            # 構建清晰的標題，使用循環編號（不是文檔池位置）
+            extracted_text = data.get('extracted_text', '')
+
+            # 容錯處理：如果沒有提取文本，記錄警告
+            if not extracted_text or len(extracted_text.strip()) < 10:
+                logger.warning(f"⚠️ 文檔 {filename} 沒有足夠的提取文本（長度: {len(extracted_text)}）")
+                extracted_text = "[此文檔沒有可用的提取文本]"
+
+            # 構建清晰的標題，使用循環編號（citation:i）
             doc_label = f"文檔{i}（引用編號: citation:{i}）"
-            context_parts.append(f"=== {doc_label}: {filename} 的詳細數據 ===\n{data_str}\n")
-            
-            logger.debug(f"添加文檔上下文: {doc_label}")
-        
-        # 調用 AI 流式生成答案
+
+            # ✅ 直接提供完整文本，不使用 JSON 格式
+            context_parts.append(f"=== {doc_label}: {filename} ===\n\n{extracted_text}\n\n")
+
+            logger.debug(f"添加文檔上下文: {doc_label}，文本長度: {len(extracted_text)} 字符")
+
+        # 調用 AI 流式生成答案（使用更大的上下文限制）
+        from app.core.config import settings
         try:
             from app.services.ai.unified_ai_service_stream import generate_answer_stream
-            
+
             async for chunk in generate_answer_stream(
                 user_question=question,
                 intent_analysis=classification.reasoning,
                 document_context=context_parts,
                 model_preference=None,
                 user_id=user_id,
-                db=db
+                db=db,
+                detailed_text_max_length=settings.DETAIL_QUERY_MAX_CONTEXT_LENGTH,
+                max_chars_per_doc=settings.DETAIL_QUERY_MAX_CHARS_PER_DOC
             ):
                 yield chunk
                 

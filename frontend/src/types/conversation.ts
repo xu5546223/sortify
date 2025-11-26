@@ -7,6 +7,7 @@ export interface ConversationMessage {
   content: string;
   timestamp: string;
   tokens_used?: number;
+  source_documents?: string[];  // 本輪回答引用的文檔ID列表（僅 assistant 消息有效）
 }
 
 export interface DocumentPoolItem {

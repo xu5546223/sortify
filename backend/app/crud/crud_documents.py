@@ -333,24 +333,32 @@ async def delete_document_by_id(db: AsyncIOMotorDatabase, document_id: uuid.UUID
         level=LogLevel.ERROR,
         message="Failed to delete document record after multiple attempts.",
         source="crud_documents.delete_document_by_id",
-        details={"document_id_uuid": str(document_id), "document_id_str": document_id_str}
+        details={"document_id": str(document_id), "string_id_attempt": document_id_str}
     )
     return False
 
 async def get_documents_by_ids(
     db: AsyncIOMotorDatabase, 
-    document_ids: List[str]  # 接受字符串ID列表
+    document_ids: List[str]
 ) -> List[Document]:
-    """根據文檔ID列表批量獲取文檔"""
+    """
+    根據文檔ID列表批量獲取文檔
+    
+    重要：返回順序與輸入的 document_ids 順序一致
+    這對於引用編號的正確性至關重要
+    """
     if not document_ids:
         return []
     
     try:
-        # 將字符串ID轉換為UUID
+        # 將字符串ID轉換為UUID，並建立順序映射
         uuid_ids = []
-        for doc_id in document_ids:
+        id_to_order = {}  # 用於保持輸入順序
+        for idx, doc_id in enumerate(document_ids):
             try:
-                uuid_ids.append(uuid.UUID(doc_id))
+                uid = uuid.UUID(doc_id)
+                uuid_ids.append(uid)
+                id_to_order[str(uid)] = idx
             except ValueError:
                 logger.warning(f"無效的文檔ID格式: {doc_id}")
                 continue
@@ -358,7 +366,7 @@ async def get_documents_by_ids(
         if not uuid_ids:
             return []
         
-        # 查詢資料庫
+        # 查詢資料庫（MongoDB $in 不保證順序）
         documents = await db[DOCUMENT_COLLECTION].find({"_id": {"$in": uuid_ids}}).to_list(length=None)
         
         # 轉換為Document模型
@@ -370,6 +378,9 @@ async def get_documents_by_ids(
             except Exception as e:
                 logger.warning(f"轉換文檔模型失敗: {e}")
                 continue
+        
+        # 按輸入順序排序結果
+        result_documents.sort(key=lambda doc: id_to_order.get(str(doc.id), 999))
         
         return result_documents
         

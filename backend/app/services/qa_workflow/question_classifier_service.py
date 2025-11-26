@@ -193,6 +193,62 @@ class QuestionClassifierService:
             logger.info(f"推理: {classification_data.get('reasoning')}")
             logger.info("="*80)
             
+            # ⭐ 驗證並轉換 target_document_ids
+            # AI 可能返回檔名而不是 UUID，需要轉換
+            raw_target_ids = classification_data.get("target_document_ids")
+            validated_target_ids = None
+            
+            if raw_target_ids and cached_documents_info:
+                validated_target_ids = []
+                # 建立檔名到 document_id 的映射
+                filename_to_id = {
+                    doc_info.get("filename", ""): doc_info.get("document_id", "")
+                    for doc_info in cached_documents_info
+                }
+                # 建立 reference_number 到 document_id 的映射
+                refnum_to_id = {
+                    str(doc_info.get("reference_number", 0)): doc_info.get("document_id", "")
+                    for doc_info in cached_documents_info
+                }
+                
+                for raw_id in raw_target_ids:
+                    if not raw_id:
+                        continue
+                    raw_id_str = str(raw_id)
+                    
+                    # 嘗試1: 直接是有效的 UUID
+                    try:
+                        from uuid import UUID
+                        UUID(raw_id_str)
+                        validated_target_ids.append(raw_id_str)
+                        logger.debug(f"✅ target_document_id 是有效 UUID: {raw_id_str[:8]}...")
+                        continue
+                    except ValueError:
+                        pass
+                    
+                    # 嘗試2: 是檔名，轉換為 document_id
+                    if raw_id_str in filename_to_id:
+                        doc_id = filename_to_id[raw_id_str]
+                        if doc_id:
+                            validated_target_ids.append(doc_id)
+                            logger.info(f"🔄 將檔名 '{raw_id_str}' 轉換為 document_id: {doc_id[:8]}...")
+                            continue
+                    
+                    # 嘗試3: 是 reference_number（如 "1", "2"）
+                    if raw_id_str in refnum_to_id:
+                        doc_id = refnum_to_id[raw_id_str]
+                        if doc_id:
+                            validated_target_ids.append(doc_id)
+                            logger.info(f"🔄 將 reference_number '{raw_id_str}' 轉換為 document_id: {doc_id[:8]}...")
+                            continue
+                    
+                    # 無法識別，記錄警告
+                    logger.warning(f"⚠️ 無法識別的 target_document_id: {raw_id_str}")
+                
+                if not validated_target_ids:
+                    validated_target_ids = None
+                    logger.warning("⚠️ 所有 target_document_ids 都無法識別，設為 None")
+            
             # 驗證並構建分類結果
             classification = QuestionClassification(
                 intent=QuestionIntent(classification_data.get("intent", "document_search")),
@@ -205,7 +261,7 @@ class QuestionClassifierService:
                 estimated_api_calls=int(classification_data.get("estimated_api_calls", 3)),
                 clarification_question=classification_data.get("clarification_question"),
                 suggested_responses=classification_data.get("suggested_responses"),
-                target_document_ids=classification_data.get("target_document_ids"),
+                target_document_ids=validated_target_ids,  # ⭐ 使用驗證後的 ID
                 target_document_reasoning=classification_data.get("target_document_reasoning")
             )
             

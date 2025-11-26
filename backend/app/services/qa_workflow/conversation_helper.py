@@ -118,7 +118,8 @@ class ConversationHelper:
                 user_id=user_uuid,
                 role="assistant",
                 content=answer,
-                tokens_used=tokens_used
+                tokens_used=tokens_used,
+                source_documents=source_documents  # ⭐ 傳遞引用文檔列表
             )
             logger.info(f"AI 回答添加結果: {result2}")
             

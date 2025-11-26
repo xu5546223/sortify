@@ -18,9 +18,6 @@ from .qa_prompts import (
     get_answer_generation_prompt,
     get_answer_generation_stream_prompt
 )
-from .mongodb_prompts import (
-    get_mongodb_detail_query_prompt
-)
 from .clustering_prompts import (
     get_cluster_label_generation_prompt,
     get_batch_cluster_label_generation_prompt
@@ -63,10 +60,7 @@ class PromptRegistry:
         # 問答生成
         self._prompts[PromptType.ANSWER_GENERATION] = get_answer_generation_prompt()
         self._prompts[PromptType.ANSWER_GENERATION_STREAM] = get_answer_generation_stream_prompt()
-        
-        # MongoDB 查詢
-        self._prompts[PromptType.MONGODB_DETAIL_QUERY_GENERATION] = get_mongodb_detail_query_prompt()
-        
+
         # 聚類標籤
         self._prompts[PromptType.CLUSTER_LABEL_GENERATION] = get_cluster_label_generation_prompt()
         self._prompts[PromptType.BATCH_CLUSTER_LABEL_GENERATION] = get_batch_cluster_label_generation_prompt()

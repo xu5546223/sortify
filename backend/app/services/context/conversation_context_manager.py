@@ -313,7 +313,8 @@ class ConversationContextManager:
                 user_id=self.user_uuid,
                 role="assistant",
                 content=answer,
-                tokens_used=tokens_used
+                tokens_used=tokens_used,
+                source_documents=source_documents  # ⭐ 傳遞引用文檔列表
             )
             
             # ⚠️ 先確保文檔池已載入

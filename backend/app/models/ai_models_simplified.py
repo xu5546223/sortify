@@ -18,15 +18,6 @@ class AIResponse(BaseModel):
     token_usage: TokenUsage = Field(..., description="本次呼叫的 Token 使用資訊")
     model_used: str = Field(..., description="實際使用的 AI 模型")
 
-class AIMongoDBQueryDetailOutput(BaseModel):
-    """
-    Represents the AI's suggested MongoDB query components for retrieving
-    specific details from a single, known document.
-    """
-    projection: Optional[Dict[str, Any]] = Field(None, description="MongoDB projection dictionary to select specific fields. e.g., {\"title\": 1, \"sections.content\": 1}")
-    sub_filter: Optional[Dict[str, Any]] = Field(None, description="MongoDB filter dictionary to apply conditions on sub-fields or array elements within the document. e.g., {\"sections.title\": \"Introduction\"} or {\"keywords\": {\"$in\": [\"AI\", \"MongoDB\"]}}")
-    reasoning: Optional[str] = Field(None, description="AI's explanation for why it chose the projection and/or sub-filter.")
-
 # === 核心通用結構 ===
 
 class LogicalChunk(BaseModel):

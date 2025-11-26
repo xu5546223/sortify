@@ -181,6 +181,9 @@ const DocumentsWithClustering: React.FC<DocumentsWithClusteringProps> = ({
   const [isDraggingOverPrev, setIsDraggingOverPrev] = useState(false);
   const [isDraggingOverNext, setIsDraggingOverNext] = useState(false);
   const itemsPerPage = 18;
+  
+  // 追蹤上一次 onRefreshDocuments 的引用，用於檢測刷新事件
+  const prevOnRefreshDocumentsRef = React.useRef(onRefreshDocuments);
 
   // 配置拖拽傳感器
   const sensors = useSensors(
@@ -217,10 +220,41 @@ const DocumentsWithClustering: React.FC<DocumentsWithClusteringProps> = ({
       console.error('獲取資料夾排序失敗:', err);
     }
   };
+  
+  // 刷新聚類樹和自定義排序
+  const refreshClusterData = async () => {
+    console.log('🔄 刷新聚類樹數據...');
+    await Promise.all([fetchClustersTree(), fetchCustomOrder()]);
+  };
 
   useEffect(() => {
     fetchClustersTree();
     fetchCustomOrder();
+  }, []);
+  
+  // 監聽 onRefreshDocuments 被調用（當文檔列表刷新時，同步刷新聚類樹）
+  // 這確保了當 AI 分類完成後，聚類樹也會更新
+  useEffect(() => {
+    // 當 onRefreshDocuments 引用變化時，說明父組件觸發了刷新
+    // 我們也需要刷新聚類樹
+    if (prevOnRefreshDocumentsRef.current !== onRefreshDocuments) {
+      prevOnRefreshDocumentsRef.current = onRefreshDocuments;
+      // 不在這裡刷新，因為引用變化不代表被調用
+    }
+  }, [onRefreshDocuments]);
+  
+  // 暴露刷新方法給父組件（通過 window 事件）
+  useEffect(() => {
+    const handleClusteringComplete = async () => {
+      console.log('📢 收到聚類完成事件，刷新聚類樹...');
+      // 直接調用 fetch 函數，避免閉包問題
+      await Promise.all([fetchClustersTree(), fetchCustomOrder()]);
+    };
+    
+    window.addEventListener('clustering-complete', handleClusteringComplete);
+    return () => {
+      window.removeEventListener('clustering-complete', handleClusteringComplete);
+    };
   }, []);
 
   // 應用自定義排序的資料夾列表

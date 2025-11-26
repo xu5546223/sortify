@@ -126,11 +126,12 @@ async def add_message_to_conversation(
     user_id: UUID,
     role: str,
     content: str,
-    tokens_used: Optional[int] = None
+    tokens_used: Optional[int] = None,
+    source_documents: Optional[List[str]] = None  # ⭐ 新增：本輪引用的文檔ID列表
 ) -> bool:
     """
     添加消息到對話（帶長度控制）
-    
+
     Args:
         db: 數據庫連接
         conversation_id: 對話ID
@@ -138,10 +139,11 @@ async def add_message_to_conversation(
         role: 消息角色（'user' 或 'assistant'）
         content: 消息內容
         tokens_used: 使用的 token 數量
-        
+        source_documents: 本輪引用的文檔ID列表（僅 assistant 消息有效）
+
     Returns:
         是否成功添加
-        
+
     Note:
         當消息數超過 MAX_MESSAGES_PER_CONVERSATION 時，
         會自動移除最舊的消息以控制對話長度
@@ -150,7 +152,8 @@ async def add_message_to_conversation(
         role=role,
         content=content,
         timestamp=datetime.now(UTC),
-        tokens_used=tokens_used
+        tokens_used=tokens_used,
+        source_documents=source_documents  # ⭐ 包含引用文檔列表
     )
     
     message_dict = message.model_dump()

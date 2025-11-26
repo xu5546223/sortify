@@ -9,6 +9,7 @@ from typing import Optional, List, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.logging_utils import AppLogger, log_event, LogLevel
+from app.core.config import settings
 from app.models.vector_models import (
     AIQARequest,
     AIQAResponse,
@@ -332,14 +333,27 @@ class DocumentSearchHandler:
         
         processing_time = time.time() - start_time
         
-        # 保存對話記錄（使用過濾後的高相關性文檔）
+        # ⚠️ 重要：source_documents 的順序必須與 AI 看到的順序一致
+        # AI 看到的是 semantic_results[:MAX_CONTEXT_DOCUMENTS] 的順序
+        # 必須先構建正確順序，再保存到數據庫
+        source_doc_ids_in_ai_order = []
+        max_context_docs = settings.MAX_CONTEXT_DOCUMENTS
+        if semantic_results:
+            for result in semantic_results[:max_context_docs]:
+                if result.document_id not in source_doc_ids_in_ai_order:
+                    source_doc_ids_in_ai_order.append(result.document_id)
+        else:
+            # Fallback: 使用 documents_for_answer 的順序
+            source_doc_ids_in_ai_order = [str(doc.id) for doc in documents_for_answer]
+        
+        # 保存對話記錄（⭐ 使用與 AI 看到的相同順序）
         if db is not None:
-            # ✅ 合併搜索結果 + 用戶 @ 的文件
-            all_doc_ids = set()
-            if documents_for_answer:
-                all_doc_ids.update(str(doc.id) for doc in documents_for_answer)
+            # 合併搜索結果 + 用戶 @ 的文件（保持順序）
+            all_doc_ids_ordered = list(source_doc_ids_in_ai_order)  # 先添加 AI 順序的文檔
             if request.document_ids:
-                all_doc_ids.update(request.document_ids)
+                for doc_id in request.document_ids:
+                    if doc_id not in all_doc_ids_ordered:
+                        all_doc_ids_ordered.append(doc_id)
             
             await conversation_helper.save_qa_to_conversation(
                 db=db,
@@ -348,7 +362,7 @@ class DocumentSearchHandler:
                 question=request.question,
                 answer=answer,
                 tokens_used=api_calls * 150,
-                source_documents=list(all_doc_ids)
+                source_documents=all_doc_ids_ordered  # ⭐ 使用有序列表
             )
         
         # 記錄日誌
@@ -372,17 +386,6 @@ class DocumentSearchHandler:
             f"文檔搜索完成,耗時: {processing_time:.2f}秒, "
             f"找到 {len(documents_for_answer)} 個高相關性文檔, API調用: {api_calls}次"
         )
-        
-        # ⚠️ 重要：source_documents 的順序必須與 AI 看到的順序一致
-        # AI 看到的是 semantic_results[:5] 的順序，所以這裡也要用這個順序
-        source_doc_ids_in_ai_order = []
-        if semantic_results:
-            for result in semantic_results[:5]:
-                if result.document_id not in source_doc_ids_in_ai_order:
-                    source_doc_ids_in_ai_order.append(result.document_id)
-        else:
-            # Fallback: 使用 documents_for_answer 的順序
-            source_doc_ids_in_ai_order = [str(doc.id) for doc in documents_for_answer]
         
         return AIQAResponse(
             answer=answer,
@@ -544,8 +547,9 @@ class DocumentSearchHandler:
         # 優先使用 semantic_results 的 chunk 內容
         if semantic_results and len(semantic_results) > 0:
             logger.info(f"使用優化上下文: {len(semantic_results)} 個搜索結果的 chunk 內容")
-            
-            for i, result in enumerate(semantic_results[:5], 1):
+            max_context_docs = settings.MAX_CONTEXT_DOCUMENTS
+
+            for i, result in enumerate(semantic_results[:max_context_docs], 1):
                 # 從 metadata 提取摘要
                 chunk_summary = result.metadata.get('chunk_summary', '') if result.metadata else ''
                 
@@ -570,7 +574,8 @@ class DocumentSearchHandler:
         # Fallback: 如果沒有搜索結果，使用文檔的 AI 分析摘要
         else:
             logger.info("使用 Fallback 上下文: 文檔 AI 分析摘要")
-            for i, doc in enumerate(documents[:5], 1):  # 最多5個文檔
+            max_context_docs = settings.MAX_CONTEXT_DOCUMENTS
+            for i, doc in enumerate(documents[:max_context_docs], 1):
                 doc_context = []
                 doc_context.append(f"=== 文檔{i}（引用編號: citation:{i}）: {getattr(doc, 'filename', 'Unknown')} ===")
                 

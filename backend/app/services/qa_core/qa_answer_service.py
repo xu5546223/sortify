@@ -11,6 +11,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import ValidationError
 
 from app.core.logging_utils import AppLogger, log_event, LogLevel
+from app.core.config import settings
 from app.models.vector_models import QueryRewriteResult, LLMContextDocument, SemanticSearchResult
 from app.models.ai_models_simplified import AIDocumentAnalysisOutputDetail, AIGeneratedAnswerOutput
 from app.services.ai.unified_ai_service_simplified import unified_ai_service_simplified, AIResponse as UnifiedAIResponse
@@ -94,7 +95,7 @@ class QAAnswerService:
                 # 🚀 優化：如果有搜索結果，優先使用搜索到的 chunk 內容
                 if search_results and len(search_results) > 0:
                     logger.info(f"使用優化上下文: {len(search_results)} 個搜索結果的 chunk 內容")
-                    max_results = 5
+                    max_results = settings.MAX_CONTEXT_DOCUMENTS  # 使用全局配置
                     
                     # 建立 document_id 到文檔的映射，用於獲取文件名
                     doc_map = {str(doc.id): doc for doc in documents_for_context if hasattr(doc, 'id')}
@@ -130,8 +131,8 @@ class QAAnswerService:
                 # Fallback: 如果沒有搜索結果，使用文件摘要
                 else:
                     logger.info("使用 Fallback 上下文: 文件摘要")
-                    max_general_docs = 5
-                    
+                    max_general_docs = settings.MAX_CONTEXT_DOCUMENTS  # 使用全局配置
+
                     for i, doc in enumerate(documents_for_context[:max_general_docs], 1):
                         doc_content = ""
                         content_source = "unknown"
