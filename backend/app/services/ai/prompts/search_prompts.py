@@ -8,161 +8,93 @@ from .base import PromptType, PromptTemplate
 
 
 def get_query_rewrite_prompt() -> PromptTemplate:
-    """獲取查詢重寫提示詞 - 針對 E5 多語言模型優化"""
+    """獲取查詢重寫提示詞 - 文件定位策略"""
     return PromptTemplate(
         prompt_type=PromptType.QUERY_REWRITE,
-        system_prompt='''你是世界級的 RAG 查詢優化專家。你的任務是分析用戶的原始問題，並將其轉化為一組更適合 **E5 多語言向量模型** 檢索的優化查詢。
+        system_prompt='''<role>
+你是搜索關鍵詞專家。你的任務是：分析用戶問題，判斷他要找什麼文件，然後給出能找到那個文件的關鍵詞。
+</role>
 
-## 🎯 E5 模型特性（必須理解）
-E5 模型使用 **非對稱檢索** 訓練：
-- **查詢 (Query)**：用戶的問題或搜索意圖
-- **段落 (Passage)**：文檔中的內容片段
+<core_task>
+## 核心任務：判斷用戶要找什麼文件
 
-**關鍵洞察**：E5 模型對 **語義完整的短句** 效果最佳，而非純關鍵詞。
-- ❌ 純關鍵詞："餐飲 收據"（語義不完整，向量表示較弱）
-- ✅ 語義短句："餐飲消費的收據記錄"（語義完整，向量表示更豐富）
+用戶問問題時，背後其實是想找某個文件。你要判斷：
+1. 用戶想找什麼類型的文件？
+2. 用什麼關鍵詞能找到那個文件？
 
----
+### 思考範例
 
-## 1. 思考過程 (Reasoning)
-分析用戶問題的核心意圖、關鍵實體和潛在歧義：
-- 用戶真正想了解什麼？
-- 問題包含哪些關鍵概念和實體？
-- 問題的複雜程度如何？
-- 需要什麼類型的答案？
+用戶問：「服裝相關花費」
+→ 用戶要找的是：有提到「服裝」的文件
+→ 搜索關鍵詞：「服裝」「服飾」
 
-## 2. 粒度分析 (Granularity Analysis)
-判斷問題的粒度，這直接影響最佳搜索策略：
+用戶問：「電費帳單」
+→ 用戶要找的是：電費帳單文件
+→ 搜索關鍵詞：「電費帳單」「電費」
 
-**thematic (主題級)**：
-- 詢問宏觀概念、架構、功能、對比等
-- 需要概括性理解和主題級信息
-- 例："什麼是機器學習？"、"Python和Java的區別"
+用戶問：「張三的電話」
+→ 用戶要找的是：有張三信息的文件
+→ 搜索關鍵詞：「張三」
+</core_task>
 
-**detailed (細節級)**：
-- 詢問具體的參數、數值、定義、錯誤碼、特定實體等
-- 需要精確的技術細節和操作步驟
-- 例："如何修復HTTP 404錯誤？"、"pandas DataFrame sort_values()方法的參數"
+<rules>
+## 關鍵規則
 
-**unknown (不確定)**：
-- 問題模糊或可能跨越多個文檔
-- 意圖不明確或需要探索性搜索
-- 例："怎樣提升網站性能？"、"最佳的數據分析方法"
+1. **關鍵詞要短**：2-6 字最佳，不超過 8 字
+2. **抓住文件特徵**：用能識別目標文件的詞
+3. **不要複述問題**：用戶問「花費多少」不代表要搜「花費」
+</rules>
 
-## 3. 策略建議 (Strategy Suggestion)
-根據粒度分析，推薦最佳的後續搜索策略：
+<examples>
+用戶問：服裝相關花費的總金額
+要找的文件：服裝相關文件
+✅ 關鍵詞：["服裝", "服飾", "衣服"]
 
-**summary_only**：當問題是 `thematic` 時，摘要向量最能匹配主題意圖
-**rrf_fusion**：當問題是 `detailed` 或 `unknown` 時，平衡摘要和文本塊的信號
-**keyword_enhanced_rrf**：當問題包含非常明確的專有名詞時（函數名、API名稱等）
+用戶問：電費帳單
+要找的文件：電費帳單
+✅ 關鍵詞：["電費帳單", "電費", "水電費"]
 
-## 4. 查詢重寫 (Query Rewriting) - E5 優化版
+用戶問：上次跟 A 公司的合約
+要找的文件：A公司合約
+✅ 關鍵詞：["A公司", "A公司 合約", "合約"]
 
-### ⚠️ 核心原則：語義完整的短句（5-15字）
+用戶問：Python 怎麼讀 Excel
+要找的文件：Python/Excel 相關教程
+✅ 關鍵詞：["Python Excel", "pandas", "Excel"]
 
-**E5 模型最佳實踐**：
-1. **保持語義完整**：重寫為完整的短句或短語，而非孤立關鍵詞
-2. **長度適中**：5-15 個字的語義單元效果最佳
-3. **保留核心實體**：確保關鍵詞、日期、金額等實體完整保留
-4. **避免過度擴展**：不要添加用戶未提及的假設場景
+用戶問：我買的那雙鞋多少錢
+要找的文件：鞋子購買記錄
+✅ 關鍵詞：["鞋", "鞋子", "運動鞋"]
+</examples>
 
-### 查詢重寫示例
-
-**示例 1：簡單查詢**
-原問題：`早餐收據`
-- ✅ "早餐消費的收據"（語義完整）
-- ✅ "早餐費用收據記錄"（添加類型上下文）
-- ✅ "餐飲早餐消費憑證"（同義擴展）
-
-**示例 2：帶時間的查詢**
-原問題：`2024年的報表`
-- ✅ "2024年度財務報表"（語義完整）
-- ✅ "2024年的報表文件"（保留時間）
-- ✅ "去年的財務報告"（同義表達）
-
-**示例 3：技術問題**
-原問題：`Python 讀取 Excel`
-- ✅ "Python 如何讀取 Excel 文件"（完整問句）
-- ✅ "使用 Python 處理 Excel 數據"（動作+對象）
-- ✅ "pandas 讀取 Excel 的方法"（具體庫名）
-
-### ❌ 避免的錯誤
-
-1. **過度簡化**（丟失語義）：
-   - ❌ "收據"（太短，語義模糊）
-   - ❌ "報表"（缺乏上下文）
-
-2. **過度擴展**（添加假設）：
-   - ❌ "如何在報銷系統中處理早餐收據"（用戶沒提報銷）
-   - ❌ "如何分類和歸檔收據文件"（用戶沒提分類）
-
-3. **純關鍵詞堆砌**：
-   - ❌ "早餐 收據 消費 費用"（無語義結構）
-
----
-
-## 輸出格式要求
-嚴格按照以下 JSON 格式輸出，不要包含額外解釋或 Markdown：
-
+<output_format>
 ```json
 {
-  "reasoning": "簡要分析：核心意圖、關鍵概念、複雜度評估",
+  "reasoning": "用戶要找的是什麼文件，用什麼詞能找到",
   "query_granularity": "thematic|detailed|unknown",
-  "rewritten_queries": [
-    "語義完整的主查詢（5-15字）",
-    "同義或補充角度的查詢",
-    "可選：第三個查詢變體"
-  ],
-  "search_strategy_suggestion": "summary_only|rrf_fusion|keyword_enhanced_rrf",
+  "rewritten_queries": ["關鍵詞1", "關鍵詞2", "關鍵詞3"],
+  "search_strategy_suggestion": "rrf_fusion",
   "extracted_parameters": {
     "time_range": null,
     "document_types": [],
     "key_entities": [],
-    "amounts": {"min": null, "max": null, "currency": null},
-    "knowledge_domains": [],
-    "content_types": [],
-    "complexity_level": "simple|medium|complex",
-    "has_specific_terms": false,
-    "requires_comparison": false,
-    "other_filters": {}
+    "knowledge_domains": []
   },
-  "intent_analysis": "深度分析用戶的真實意圖，解釋粒度分類和搜索策略的選擇理由"
+  "intent_analysis": "用戶意圖"
 }
 ```
-
----
-
-## 特殊情境處理
-
-### 用戶選擇了特定文檔（has_selected_documents=true）
-- 查詢重寫應專注於「從這些文檔中提取信息」
-- **搜索策略**：
-  - thematic 問題 → `rrf_fusion`
-  - detailed 問題 → `rrf_fusion` 或 `keyword_enhanced_rrf`
-  - ⚠️ 不要使用 `summary_only`（用戶需要詳細內容）
-
-### 指代詞解析（最高優先級）
-- **必須替換所有指代詞**："他"、"它"、"這個"、"那個"、"這張"、"那份"、"此"、"該"
-- 從 `<document_summaries>` 中提取具體信息替換指代詞
-
-**示例**：
-- 文檔池：餐飲收據（2025年9月10日，130元，熱狗蛋餅）
-- 用戶問："搜索跟他相關的文件"
-- ✅ 正確重寫：
-  - "餐飲消費的收據文件"（核心類型）
-  - "130元的消費記錄"（金額特徵）
-  - "2025年9月的收據"（時間特徵）''',
-        user_prompt_template='''分析並重寫查詢：
-<user_query>{original_query}</user_query>
-
-<context>
-用戶是否選擇了特定文檔：{has_selected_documents}
-選擇的文檔數量：{selected_document_count}
-
+</output_format>''',
+        user_prompt_template='''<context>
 {document_summaries_context}
-</context>''',
+</context>
+
+<user_question>
+{original_query}
+</user_question>
+
+請分析：用戶想找什麼文件？用什麼關鍵詞能找到？''',
         variables=["original_query", "has_selected_documents", "selected_document_count", "document_summaries_context"],
-        description="基於意圖分析的智能查詢重寫和動態策略路由"
+        description="文件定位策略"
     )
 
 

@@ -103,19 +103,23 @@ class QAAnswerService:
                     for i, result in enumerate(search_results[:max_results], 1):
                         doc_id_str = result.document_id
                         
-                        # 從 metadata 提取摘要
-                        chunk_summary = result.metadata.get('chunk_summary', '') if result.metadata else ''
+                        # 使用新增的 document_summary 欄位（文件摘要）
+                        # 如果沒有，fallback 到 metadata 中的 chunk_summary
+                        doc_summary = result.document_summary or ""
+                        if not doc_summary and result.metadata:
+                            doc_summary = result.metadata.get('chunk_summary', '')
+                        
                         chunk_type = result.metadata.get('type', 'unknown') if result.metadata else 'unknown'
                         
                         # 獲取文件名
                         matching_doc = doc_map.get(doc_id_str)
                         filename = getattr(matching_doc, 'filename', 'Unknown') if matching_doc else 'Unknown'
                         
-                        # 構建精簡上下文 (只保留 AI 需要的資訊)
+                        # 構建精簡上下文 (包含文件摘要 + 匹配的片段)
                         context_content = f"""=== 文檔 {i}（引用編號: citation:{i}）: {filename} ===
-摘要: {chunk_summary}
+【文件摘要】: {doc_summary}
 
-內容:
+【匹配片段】:
 {result.summary_text}
 """
                         context_parts.append(context_content)
@@ -127,6 +131,16 @@ class QAAnswerService:
                         ))
                     
                     logger.info(f"優化上下文: {len(context_parts)} 個搜索結果 chunk")
+                    
+                    # 🔍 DEBUG: 顯示實際提供給 AI 的上下文內容
+                    logger.info("="*60)
+                    logger.info("🔍 [DEBUG] 實際提供給 AI 的上下文內容:")
+                    logger.info("="*60)
+                    for idx, ctx in enumerate(context_parts, 1):
+                        # 限制每個顯示的長度，避免 log 太長
+                        preview = ctx[:500] + "..." if len(ctx) > 500 else ctx
+                        logger.info(f"\n📄 [上下文 {idx}]\n{preview}")
+                    logger.info("="*60)
                 
                 # Fallback: 如果沒有搜索結果，使用文件摘要
                 else:

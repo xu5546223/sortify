@@ -222,8 +222,11 @@ class ClusteringService:
             logger.info(f"聚類結果：主要聚類 {len(valid_clusters)} 個，小型聚類 {len(small_clusters)} 個，未分類 {len(excluded_doc_ids)} 個文檔")
             
             # 批量生成標籤 (一次AI調用處理所有聚類!)
+            # 傳遞 embeddings 以支持多樣性採樣
             cluster_labels_map = await self._generate_all_cluster_labels_batch(
-                db, owner_id_str, valid_clusters
+                db, owner_id_str, valid_clusters, 
+                all_embeddings=embeddings, 
+                all_doc_ids=document_ids
             )
             
             # 5. 保存主要聚類信息並更新文檔
@@ -511,25 +514,106 @@ class ClusteringService:
         
         return clusters_map
     
+    def _select_diverse_samples(
+        self,
+        cluster_doc_ids: List[str],
+        all_embeddings: np.ndarray,
+        all_doc_ids: List[str],
+        sample_size: int = 10
+    ) -> List[str]:
+        """
+        使用 Embeddings 和 Farthest Point Sampling (FPS) 選擇多樣性樣本
+        
+        策略:
+        1. 獲取該聚類所有文檔的 embeddings
+        2. 計算聚類中心 (Centroid)
+        3. 選擇離中心最近的點作為第一個樣本 (代表性)
+        4. 之後每次選擇離已選點集距離最遠的點 (多樣性)
+        5. 直到選滿 sample_size
+        """
+        if len(cluster_doc_ids) <= sample_size:
+            return cluster_doc_ids
+            
+        try:
+            # 建立 doc_id -> index 映射
+            id_to_idx = {doc_id: i for i, doc_id in enumerate(all_doc_ids)}
+            
+            # 獲取聚類中所有文檔的 embeddings
+            cluster_indices = [id_to_idx[doc_id] for doc_id in cluster_doc_ids if doc_id in id_to_idx]
+            
+            if not cluster_indices:
+                return cluster_doc_ids[:sample_size]
+                
+            cluster_embeddings = all_embeddings[cluster_indices]
+            
+            # 記錄選中的局部索引 (相對於 cluster_embeddings)
+            selected_local_indices = []
+            cand_local_indices = list(range(len(cluster_embeddings)))
+            
+            # 1. 選擇第一個點：離中心最近
+            centroid = np.mean(cluster_embeddings, axis=0)
+            dists_to_centroid = np.linalg.norm(cluster_embeddings - centroid, axis=1)
+            first_idx = np.argmin(dists_to_centroid)
+            
+            selected_local_indices.append(first_idx)
+            cand_local_indices.remove(first_idx)
+            
+            # 初始化距離矩陣：每個候選點到最近已選點的距離
+            # 初始時只有一個已選點，所以就是到該點的距離
+            min_dists = np.linalg.norm(cluster_embeddings[cand_local_indices] - cluster_embeddings[first_idx], axis=1)
+            
+            # FPS 循環
+            while len(selected_local_indices) < sample_size and cand_local_indices:
+                # 選擇距離最大的點 (Maximize Minimum Distance)
+                max_dist_idx_in_cand = np.argmax(min_dists)
+                best_local_idx = cand_local_indices[max_dist_idx_in_cand]
+                
+                selected_local_indices.append(best_local_idx)
+                
+                # 從候選列表移除
+                # 注意：min_dists 對應的是 cand_local_indices，需要同步移除
+                cand_local_indices.pop(max_dist_idx_in_cand)
+                min_dists = np.delete(min_dists, max_dist_idx_in_cand)
+                
+                if not cand_local_indices:
+                    break
+                    
+                # 更新 min_dists
+                # 計算剩餘候選點到新選中點的距離
+                curr_embedding = cluster_embeddings[best_local_idx]
+                new_dists = np.linalg.norm(cluster_embeddings[cand_local_indices] - curr_embedding, axis=1)
+                
+                # 更新為兩者較小值 (距離已選集合的最小距離)
+                min_dists = np.minimum(min_dists, new_dists)
+            
+            # 轉換回 doc_ids
+            selected_doc_ids = [cluster_doc_ids[i] for i in selected_local_indices]
+            logger.info(f"FPS多樣性採樣: 從 {len(cluster_doc_ids)} 個文檔中選出 {len(selected_doc_ids)} 個樣本")
+            return selected_doc_ids
+            
+        except Exception as e:
+            logger.error(f"FPS採樣失敗: {e}, 降級為隨機採樣")
+            return random.sample(cluster_doc_ids, min(sample_size, len(cluster_doc_ids)))
+
     async def _generate_all_cluster_labels_batch(
         self,
         db: AsyncIOMotorDatabase,
         owner_id_str: str,
-        clusters_map: Dict[int, List[str]]  # {cluster_idx: [doc_ids]}
+        clusters_map: Dict[int, List[str]],  # {cluster_idx: [doc_ids]}
+        all_embeddings: Optional[np.ndarray] = None,
+        all_doc_ids: Optional[List[str]] = None
     ) -> Dict[int, str]:
         """
         批量生成所有聚類的標籤 (一次AI調用!)
         
-        這是優化版本,避免為每個聚類都調用一次AI,
-        而是一次性處理所有聚類。
+        使用 Embedding FPS 採樣確保樣本多樣性，避免漏掉少數類別。
         
         Args:
             db: 數據庫連接
             owner_id_str: 用戶ID字符串
             clusters_map: 聚類映射 {cluster_idx: [doc_ids]}
-        
-        Returns:
-            Dict[cluster_idx, cluster_name]: 聚類標籤映射
+            all_embeddings: 所有文檔的 embeddings (用於 FPS 採樣)
+            all_doc_ids: 所有文檔的 ID (用於 FPS 採樣)
         """
         try:
             from app.services.ai.unified_ai_service_simplified import unified_ai_service_simplified, AIRequest, TaskType
@@ -540,8 +624,19 @@ class ClusteringService:
             all_clusters_data = []
             
             for cluster_idx, doc_ids in clusters_map.items():
-                # 每個聚類取前5個代表性文檔
-                sample_doc_ids = doc_ids[:5]
+                # 使用多樣性採樣
+                if all_embeddings is not None and all_doc_ids is not None:
+                    sample_doc_ids = self._select_diverse_samples(doc_ids, all_embeddings, all_doc_ids, sample_size=10)
+                else:
+                    # 降級為均勻間隔抽樣
+                    sample_size = min(10, len(doc_ids))
+                    if len(doc_ids) <= sample_size:
+                        sample_doc_ids = doc_ids
+                    else:
+                        shuffled_ids = doc_ids.copy()
+                        random.shuffle(shuffled_ids)
+                        step = len(shuffled_ids) / sample_size
+                        sample_doc_ids = [shuffled_ids[int(i * step)] for i in range(sample_size)]
                 
                 cursor = db[DOCUMENTS_COLLECTION].find(
                     {"_id": {"$in": [uuid.UUID(doc_id) for doc_id in sample_doc_ids]}},
@@ -549,7 +644,7 @@ class ClusteringService:
                         "filename": 1,
                         "analysis.ai_analysis_output": 1
                     }
-                ).limit(5)
+                ).limit(len(sample_doc_ids))
                 
                 document_samples = []
                 async for doc in cursor:

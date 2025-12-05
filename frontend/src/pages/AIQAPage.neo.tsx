@@ -77,12 +77,12 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
   const [qaHistory, setQAHistory] = useState<QASession[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  
+
   // Conversation History
   const [conversations, setConversations] = useState<any[]>([]);
   const [loadingConversations, setLoadingConversations] = useState(false);
   const [showHistorySidebar, setShowHistorySidebar] = useState(true);
-  
+
   // Grouped conversations by date
   const [groupedConversations, setGroupedConversations] = useState<{
     pinned: any[];
@@ -97,13 +97,13 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
     last7Days: [],
     older: []
   });
-  
+
   // Document Pool
   const [documentPool, setDocumentPool] = useState<any[]>([]);
   const [showDocumentPool, setShowDocumentPool] = useState(false);
   const [selectedDocForDetail, setSelectedDocForDetail] = useState<Document | null>(null);
   const [isLoadingDocDetail, setIsLoadingDocDetail] = useState(false);
-  
+
   // ⭐ 監控 documentPool 狀態變化（僅用於調試）
   useEffect(() => {
     console.log('🔄 [documentPool 狀態更新]:', {
@@ -113,7 +113,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
     // 注意：不再自動修正快照，因為現在使用 current_round_documents
     // 每個會話的快照只包含該輪次 AI 看到的文檔
   }, [documentPool]);
-  
+
   // Removed AI Settings
 
   // Workflow State (for clarification, approvals)
@@ -133,7 +133,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
   // Document Preview
   const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
   const [previewDrawerOpen, setPreviewDrawerOpen] = useState(false);
-  
+
   // File Search Modal
   const [showFileSearchModal, setShowFileSearchModal] = useState(false);
 
@@ -144,7 +144,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
     loadConversations();
     setIsLoading(false);
   }, []);
-  
+
   // 快捷键支持 (Ctrl+K 打开文件搜索)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -154,7 +154,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
         setShowFileSearchModal(true);
       }
     };
-    
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
@@ -186,7 +186,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
     yesterdayStart.setDate(yesterdayStart.getDate() - 1);
     const last7DaysStart = new Date(todayStart);
     last7DaysStart.setDate(last7DaysStart.getDate() - 7);
-    
+
     const grouped = {
       pinned: [] as any[],
       today: [] as any[],
@@ -194,16 +194,16 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
       last7Days: [] as any[],
       older: [] as any[]
     };
-    
+
     convs.forEach((conv) => {
       // Pinned conversations go to pinned group
       if (conv.is_pinned) {
         grouped.pinned.push(conv);
         return;
       }
-      
+
       const updatedAt = new Date(conv.updated_at);
-      
+
       if (updatedAt >= todayStart) {
         grouped.today.push(conv);
       } else if (updatedAt >= yesterdayStart) {
@@ -214,21 +214,21 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
         grouped.older.push(conv);
       }
     });
-    
+
     return grouped;
   }, []);
-  
+
   const loadConversations = useCallback(async () => {
     try {
       setLoadingConversations(true);
       const response = await conversationService.listConversations();
       const convs = response.conversations || [];
       setConversations(convs);
-      
+
       // 按日期分組
       const grouped = groupConversationsByDate(convs);
       setGroupedConversations(grouped);
-      
+
       console.log('📊 對話分組:', {
         total: convs.length,
         pinned: grouped.pinned.length,
@@ -253,10 +253,10 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
       setPendingWorkflow(null);
       setCurrentStreamingSession(null);
       setDocumentPool([]);  // 先清空，載入後更新
-      
+
       // 獲取對話詳情
       const conversationDetail = await conversationService.getConversation(conversationId);
-      
+
       console.log('📥 載入對話詳情:', {
         id: conversationDetail.id,
         title: conversationDetail.title,
@@ -266,7 +266,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
         cachedDocumentDataType: typeof conversationDetail.cached_document_data,
         cachedDocumentDataKeys: conversationDetail.cached_document_data ? Object.keys(conversationDetail.cached_document_data).length : 0
       });
-      
+
       // 解析文檔池
       // ⭐ 重要：按相關性排序，與後端 _build_classification_context 保持一致
       // 這樣 citation:1 才能正確對應到相關性最高的文檔
@@ -287,7 +287,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
       }
       setDocumentPool(docPool);
       console.log('📚 文檔池（按相關性排序）:', docPool.map(d => `${d.filename}(${d.relevance_score?.toFixed(2)})`));
-      
+
       const loadedSessions: QASession[] = [];
 
       // 將消息轉換為 QA 會話（成對處理：用戶問題 + AI 回答）
@@ -304,18 +304,18 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
 
           if (assistantMsg.source_documents && assistantMsg.source_documents.length > 0 && conversationDetail.cached_document_data) {
             // 🔍 調試：顯示 source_documents 和 cached_document_data 的對應關係
-            console.log(`🔍 [歷史會話 ${i/2 + 1}] source_documents:`, assistantMsg.source_documents);
-            console.log(`🔍 [歷史會話 ${i/2 + 1}] cached_document_data keys:`, Object.keys(conversationDetail.cached_document_data));
-            
+            console.log(`🔍 [歷史會話 ${i / 2 + 1}] source_documents:`, assistantMsg.source_documents);
+            console.log(`🔍 [歷史會話 ${i / 2 + 1}] cached_document_data keys:`, Object.keys(conversationDetail.cached_document_data));
+
             // 根據 source_documents 的順序提取文檔信息
             // ⭐ 重要修復：即使文檔不在 cached_document_data 中，也保留佔位符以維持引用編號順序
             sessionSnapshot = assistantMsg.source_documents
               .map((docId, index) => {
                 const docInfo = conversationDetail.cached_document_data?.[docId];
-                
+
                 // 🔍 調試：顯示每個 docId 的查找結果
                 console.log(`   [${index + 1}] docId: ${docId?.substring(0, 8)}... -> found: ${!!docInfo}, filename: ${docInfo?.filename || 'N/A'}`);
-                
+
                 if (docInfo) {
                   return {
                     document_id: docId,
@@ -338,14 +338,14 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
                 };
               });
 
-            console.log(`📸 為歷史會話 ${i/2 + 1} 構建快照: ${sessionSnapshot.length} 個文檔`, {
+            console.log(`📸 為歷史會話 ${i / 2 + 1} 構建快照: ${sessionSnapshot.length} 個文檔`, {
               source_documents: assistantMsg.source_documents,
               snapshot_filenames: sessionSnapshot.map(d => d.filename),
               snapshot_doc_ids: sessionSnapshot.map(d => d.document_id?.substring(0, 8))
             });
           } else {
             // 如果沒有 source_documents，回退到使用全局文檔池（向後兼容）
-            console.warn(`⚠️ 歷史會話 ${i/2 + 1} 沒有 source_documents，使用全局文檔池作為快照`);
+            console.warn(`⚠️ 歷史會話 ${i / 2 + 1} 沒有 source_documents，使用全局文檔池作為快照`);
             sessionSnapshot = [...docPool];
           }
 
@@ -363,7 +363,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
           });
         }
       }
-      
+
       console.log(`✅ 載入了 ${loadedSessions.length} 個 QA 會話`);
       setQAHistory(loadedSessions);
       showPCMessage(`已載入 ${conversationDetail.title}`, 'success');
@@ -378,11 +378,11 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
       await conversationService.deleteConversation(conversationId);
       const updatedConvs = conversations.filter(c => c.id !== conversationId);
       setConversations(updatedConvs);
-      
+
       // 重新分組
       const grouped = groupConversationsByDate(updatedConvs);
       setGroupedConversations(grouped);
-      
+
       if (currentConversationId === conversationId) {
         // 清空當前對話的所有狀態
         setCurrentConversationId(null);
@@ -407,17 +407,17 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
       } else {
         await conversationService.pinConversation(conversationId);
       }
-      
+
       // 更新對話列表
-      const updatedConvs = conversations.map(c => 
+      const updatedConvs = conversations.map(c =>
         c.id === conversationId ? { ...c, is_pinned: !currentlyPinned } : c
       );
       setConversations(updatedConvs);
-      
+
       // 重新分組
       const grouped = groupConversationsByDate(updatedConvs);
       setGroupedConversations(grouped);
-      
+
       showPCMessage(currentlyPinned ? '已取消置頂' : '已置頂對話', 'success');
     } catch (error) {
       console.error('Pin/Unpin 對話失敗:', error);
@@ -434,12 +434,12 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
       document_pool_keys: meta?.document_pool ? Object.keys(meta.document_pool).length : 0,
       raw_meta: meta
     });
-    
+
     if (!meta?.document_pool) {
       console.warn('⚠️ [mergeDocumentPool] document_pool 不存在，跳過合併');
       return;
     }
-    
+
     // ⭐ 關鍵修復：保持後端返回的順序（後端已按 source_documents 順序排列）
     // Object.entries 會保持 JS 對象的插入順序
     const backendDocs = Object.entries(meta.document_pool).map(([docId, docInfo]: [string, any]) => ({
@@ -450,17 +450,17 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
       relevance_score: docInfo.relevance_score,
       access_count: docInfo.access_count
     }));
-    
+
     console.log('📊 [mergeDocumentPool] 後端文檔數:', backendDocs.length, backendDocs.map(d => d.filename));
-    
+
     // ⭐ 直接使用後端返回的順序，不做任何合併或重排
     // 這樣可以確保引用編號與文檔一一對應
     setDocumentPool(() => {
-      console.log('✅ [mergeDocumentPool] 直接使用後端順序:', { 
+      console.log('✅ [mergeDocumentPool] 直接使用後端順序:', {
         backend_count: backendDocs.length,
         filenames: backendDocs.map(d => d.filename)
       });
-      
+
       return backendDocs;
     });
   }, []);
@@ -475,15 +475,15 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
         currentPoolSize: documentPool.length,
         currentPoolFilenames: documentPool.map(d => d.filename)
       });
-      
+
       // ⭐ 智能選擇文檔池：優先使用 session pool，但如果引用超出範圍，回退到全局 pool
       let targetPool = sessionDocumentPool || documentPool;
       const docIndex = docId - 1; // 轉換為 0-based index
-      
+
       // 如果 session pool 存在但引用超出範圍，嘗試使用全局 pool（可能是快照不完整）
       if (sessionDocumentPool && (docIndex < 0 || docIndex >= sessionDocumentPool.length)) {
         console.warn(`⚠️ 引用編號 ${docId} 超出 session pool 範圍 (${sessionDocumentPool.length}), 嘗試使用全局文檔池 (${documentPool.length})`);
-        
+
         // 如果全局 pool 能覆蓋這個引用，就使用全局 pool
         if (docIndex >= 0 && docIndex < documentPool.length) {
           console.log('✅ 使用全局文檔池作為 fallback');
@@ -494,7 +494,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
           return;
         }
       }
-      
+
       console.log('🎯 [handleCitationClick] 使用的文檔池:', {
         poolSize: targetPool.length,
         filenames: targetPool.map(d => d.filename)
@@ -505,18 +505,18 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
         showPCMessage(`引用編號 ${docId} 超出文檔池範圍`, 'error');
         return;
       }
-      
+
       const poolDoc = targetPool[docIndex];
       const actualDocId = poolDoc.document_id;
-      
+
       console.log(`📄 從文檔池載入文檔: ${poolDoc.filename} (ID: ${actualDocId})`);
       showPCMessage(`正在載入 ${poolDoc.filename}...`, 'info');
-      
+
       // 獲取完整文檔資料
       const doc = await getDocumentById(actualDocId);
       setPreviewDoc(doc);
       setPreviewDrawerOpen(true);
-      
+
       console.log('✅ 文檔預覽已打開');
     } catch (error) {
       console.error('❌ 載入文檔失敗:', error);
@@ -680,10 +680,10 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
       if (currentConversationId) {
         await conversationService.removeCachedDocument(currentConversationId, docId);
       }
-      
+
       // ✅ 總是更新本地文檔池狀態（即使沒有對話 ID）
       setDocumentPool(prev => prev.filter(doc => doc.document_id !== docId));
-      
+
       showPCMessage('已從文檔池移除', 'success');
     } catch (error) {
       console.error('❌ 移除文檔失敗:', error);
@@ -696,9 +696,9 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
     if (!pendingWorkflow) return;
 
     const originalQuestion = pendingWorkflow.originalQuestion;
-    
+
     console.log('📤 批准操作:', action, '查詢:', originalQuestion);
-    
+
     // 清除工作流狀態
     setPendingWorkflow(null);
     setIsAsking(true);
@@ -714,7 +714,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
     // 保留當前 session 的內容
     const existingAnswer = currentStreamingSession?.answer || '';
     const existingSteps = currentStreamingSession?.reasoningSteps || [];
-    
+
     const approvalStep: ReasoningStep = {
       type: 'action',
       stage: 'approval',
@@ -754,7 +754,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
         onProgress: (stage, message, detail) => {
           console.log('📊 Progress (批准):', stage, message, detail);
           handleProgressEvent(stage, message, detail, tempReasoningSteps);
-          
+
           // 如果是查詢重寫結果，更新 pendingWorkflow 的查詢重寫結果
           if (stage === 'query_rewriting' && detail && detail.queries) {
             setPendingWorkflow((prev: any) => prev ? {
@@ -768,7 +768,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
               }
             } : null);
           }
-          
+
           setCurrentStreamingSession(prev => prev ? {
             ...prev,
             reasoningSteps: [...tempReasoningSteps]
@@ -785,7 +785,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
           metadata = meta;
           // ⭐ 使用智能合併邏輯
           mergeDocumentPool(meta);
-          
+
           // ⭐⭐ 保存當前輪次的文檔到 streaming session（用於引用解析）
           if (meta.current_round_documents && meta.current_round_documents.length > 0) {
             setCurrentStreamingSession(prev => prev ? {
@@ -801,7 +801,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
           // 檢查是否需要澄清
           if (completeData?.workflow_state?.current_step === 'need_clarification') {
             console.log('📝 批准後需要澄清');
-            
+
             // 添加澄清請求步驟到 reasoning chain
             const clarificationStep: ReasoningStep = {
               type: 'approval',
@@ -811,14 +811,14 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
               status: 'active',
               timestamp: Date.now()
             };
-            
+
             tempReasoningSteps.push(clarificationStep);
-            
+
             setPendingWorkflow({
               originalQuestion,
               state: completeData.workflow_state
             });
-            
+
             setCurrentStreamingSession(prev => prev ? {
               ...prev,
               answer: fullAnswer || completeAnswer,
@@ -826,16 +826,16 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
               workflowState: completeData.workflow_state,
               isStreaming: false
             } : null);
-            
+
             setIsAsking(false);
             return;
           }
 
           // 檢查是否還需要進一步批准
           if (completeData?.workflow_state?.current_step === 'awaiting_search_approval' ||
-              completeData?.workflow_state?.current_step === 'awaiting_detail_query_approval') {
+            completeData?.workflow_state?.current_step === 'awaiting_detail_query_approval') {
             console.log('📋 批准後仍需進一步批准');
-            
+
             const mergedState = {
               ...completeData.workflow_state,
               query_rewrite_result: completeData.query_rewrite_result,
@@ -843,26 +843,26 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
               next_action: completeData.next_action,
               pending_approval: completeData.pending_approval
             };
-            
+
             setPendingWorkflow({
               originalQuestion,
               state: mergedState
             });
-            
+
             setCurrentStreamingSession(prev => prev ? {
               ...prev,
               answer: fullAnswer || completeAnswer,
               workflowState: mergedState,
               isStreaming: false
             } : null);
-            
+
             setIsAsking(false);
             return;
           }
 
           // ⭐⭐ 使用當前輪次的文檔快照
           const currentRoundDocs = metadata.current_round_documents || [];
-          
+
           const newSession: QASession = {
             id: `qa-${Date.now()}`,
             question: originalQuestion,
@@ -883,7 +883,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
         },
         onApprovalNeeded: (approvalData) => {
           console.log('⚠️ 批准後仍需批准:', approvalData);
-          
+
           // 合併 workflow_state 和額外數據
           const mergedState = {
             ...approvalData.workflow_state,
@@ -892,25 +892,25 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
             next_action: approvalData.next_action,
             pending_approval: approvalData.pending_approval
           };
-          
+
           // 添加批准/澄清請求到 reasoning chain
           const approvalStep: ReasoningStep = {
             type: 'approval',
             stage: mergedState.current_step || 'approval',
-            message: mergedState.current_step === 'awaiting_search_approval' 
+            message: mergedState.current_step === 'awaiting_search_approval'
               ? '🔐 需要權限批准：文檔搜索'
               : mergedState.current_step === 'awaiting_detail_query_approval'
-              ? '🔐 需要權限批准：詳細查詢'
-              : mergedState.current_step === 'need_clarification'
-              ? '❓ 需要澄清問題'
-              : '🔐 需要權限批准',
+                ? '🔐 需要權限批准：詳細查詢'
+                : mergedState.current_step === 'need_clarification'
+                  ? '❓ 需要澄清問題'
+                  : '🔐 需要權限批准',
             detail: mergedState,
             status: 'active',
             timestamp: Date.now()
           };
-          
+
           tempReasoningSteps.push(approvalStep);
-          
+
           // 可能還需要其他批准（如搜索後需要詳細查詢）
           setPendingWorkflow({
             originalQuestion,
@@ -940,13 +940,13 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
 
     const clarificationText = question.trim();
     const originalQuestion = pendingWorkflow.originalQuestion;
-    
+
     console.log('📤 提交澄清回答:', clarificationText);
-    
+
     // 清空輸入框
     setQuestion('');
     setMentionedFiles([]);  // 清空 @ 文件
-    
+
     // 清除工作流狀態
     setPendingWorkflow(null);
     setIsAsking(true);
@@ -954,7 +954,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
     // 保留當前 session，添加澄清回答標記
     const existingSteps = currentStreamingSession?.reasoningSteps || [];
     const existingAnswer = currentStreamingSession?.answer || '';
-    
+
     // 添加澄清回答的標記到 reasoning steps
     const clarificationStep: ReasoningStep = {
       type: 'action',
@@ -964,7 +964,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
       status: 'done',
       timestamp: Date.now()
     };
-    
+
     // 繼續在當前 session 中，不創建新的
     setCurrentStreamingSession(prev => prev ? {
       ...prev,
@@ -998,7 +998,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
         onProgress: (stage, message, detail) => {
           console.log('📊 Progress (澄清後):', stage, message, detail);
           handleProgressEvent(stage, message, detail, tempReasoningSteps);
-          
+
           // 如果是查詢重寫結果，更新 pendingWorkflow 的查詢重寫結果
           if (stage === 'query_rewriting' && detail && detail.queries) {
             setPendingWorkflow((prev: any) => prev ? {
@@ -1012,7 +1012,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
               }
             } : null);
           }
-          
+
           setCurrentStreamingSession(prev => prev ? {
             ...prev,
             reasoningSteps: [...tempReasoningSteps]
@@ -1029,7 +1029,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
           metadata = meta;
           // ⭐ 使用智能合併邏輯
           mergeDocumentPool(meta);
-          
+
           // ⭐⭐ 保存當前輪次的文檔到 streaming session（用於引用解析）
           if (meta.current_round_documents && meta.current_round_documents.length > 0) {
             setCurrentStreamingSession(prev => prev ? {
@@ -1045,7 +1045,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
           // 檢查澄清後是否還需要進一步澄清
           if (completeData?.workflow_state?.current_step === 'need_clarification') {
             console.log('📝 澄清後仍需澄清');
-            
+
             // 添加澄清請求步驟到 reasoning chain
             const clarificationStep: ReasoningStep = {
               type: 'approval',
@@ -1055,9 +1055,9 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
               status: 'active',
               timestamp: Date.now()
             };
-            
+
             tempReasoningSteps.push(clarificationStep);
-            
+
             // 不保存到歷史，繼續在當前 session 中顯示
             setPendingWorkflow({
               originalQuestion,
@@ -1076,9 +1076,9 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
 
           // 檢查是否需要批准
           if (completeData?.workflow_state?.current_step === 'awaiting_search_approval' ||
-              completeData?.workflow_state?.current_step === 'awaiting_detail_query_approval') {
+            completeData?.workflow_state?.current_step === 'awaiting_detail_query_approval') {
             console.log('📋 澄清後需要批准');
-            
+
             const mergedState = {
               ...completeData.workflow_state,
               query_rewrite_result: completeData.query_rewrite_result,
@@ -1086,19 +1086,19 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
               next_action: completeData.next_action,
               pending_approval: completeData.pending_approval
             };
-            
+
             setPendingWorkflow({
               originalQuestion,
               state: mergedState
             });
-            
+
             setCurrentStreamingSession(prev => prev ? {
               ...prev,
               answer: fullAnswer || completeAnswer,
               workflowState: mergedState,
               isStreaming: false
             } : null);
-            
+
             setIsAsking(false);
             return;
           }
@@ -1127,7 +1127,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
         },
         onApprovalNeeded: (approvalData) => {
           console.log('⚠️ 澄清後仍需批准:', approvalData);
-          
+
           // 合併 workflow_state 和額外數據
           const mergedState = {
             ...approvalData.workflow_state,
@@ -1136,34 +1136,34 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
             next_action: approvalData.next_action,
             pending_approval: approvalData.pending_approval
           };
-          
+
           console.log('📋 合併後的狀態:', mergedState);
           console.log('📋 當前步驟:', mergedState.current_step);
-          
+
           // 添加批准/澄清請求到 reasoning chain
           const approvalStep: ReasoningStep = {
             type: 'approval',
             stage: mergedState.current_step || 'approval',
-            message: mergedState.current_step === 'awaiting_search_approval' 
+            message: mergedState.current_step === 'awaiting_search_approval'
               ? '🔐 需要權限批准：文檔搜索'
               : mergedState.current_step === 'awaiting_detail_query_approval'
-              ? '🔐 需要權限批准：詳細查詢'
-              : mergedState.current_step === 'need_clarification'
-              ? '❓ 需要澄清問題'
-              : '🔐 需要權限批准',
+                ? '🔐 需要權限批准：詳細查詢'
+                : mergedState.current_step === 'need_clarification'
+                  ? '❓ 需要澄清問題'
+                  : '🔐 需要權限批准',
             detail: mergedState,
             status: 'active',
             timestamp: Date.now()
           };
-          
+
           tempReasoningSteps.push(approvalStep);
-          
+
           // 可能還需要其他批准
           // ⭐ 重要：使用後端返回的組合後問題（如 "收據 → 早餐"）
           // 後端在處理澄清時已經組合了問題，並通過 search_preview.original_question 返回
           const combinedQuestion = mergedState.search_preview?.original_question || originalQuestion;
           console.log('🔍 [澄清後批准] 組合後的問題:', combinedQuestion, '(原始:', originalQuestion, ')');
-          
+
           setPendingWorkflow({
             originalQuestion: combinedQuestion,  // 使用組合後的問題
             state: mergedState
@@ -1192,7 +1192,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
   // ========== Streaming Q&A ==========
   const handleAskQuestionStream = async (customQuestion?: string) => {
     const questionToAsk = customQuestion || question.trim();
-    
+
     if (!questionToAsk.trim()) {
       showPCMessage('請輸入問題', 'error');
       return;
@@ -1201,14 +1201,14 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
     try {
       setIsAsking(true);
       setQuestion(''); // Clear input
-      
+
       // ✅ 從文檔池中提取文檔 ID 作為上下文
       // 注意：文件已經在 @ 選擇時添加到 documentPool 了
       const mentionedDocIds = documentPool.map(d => d.document_id);
-      console.log('📚 文檔池狀態:', { 
-        documentPool, 
+      console.log('📚 文檔池狀態:', {
+        documentPool,
         mentionedDocIds,
-        count: mentionedDocIds.length 
+        count: mentionedDocIds.length
       });
 
       // Create conversation if needed
@@ -1218,8 +1218,27 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
           const newConversation = await conversationService.createConversation(questionToAsk);
           conversationId = newConversation.id;
           setCurrentConversationId(conversationId);
+          // 直接用問題創建的對話，標題已經正確，不需要更新
         } catch (error) {
           console.error('創建對話失敗:', error);
+        }
+      } else if (qaHistory.length === 0) {
+        // ⭐ 對話已存在（可能是通過"新對話"按鈕創建的），但還沒有問答歷史
+        // 這意味著標題可能是 "新對話"，立即更新為問題內容
+        console.log('📝 [偵測] 這是現有對話的第一個問題，立即更新標題');
+        try {
+          await conversationService.updateConversation(conversationId, {
+            title: questionToAsk.substring(0, 100)
+          });
+          console.log('✅ 對話標題已更新為:', questionToAsk.substring(0, 50));
+          // 更新本地對話列表中的標題
+          setConversations(prev => prev.map(c =>
+            c.id === conversationId
+              ? { ...c, title: questionToAsk.substring(0, 100) }
+              : c
+          ));
+        } catch (err) {
+          console.error('更新對話標題失敗:', err);
         }
       }
 
@@ -1251,7 +1270,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
           onProgress: (stage, message, detail) => {
             console.log('📊 Progress:', stage, message, detail);
             handleProgressEvent(stage, message, detail, tempReasoningSteps);
-            
+
             // 如果是查詢重寫結果，更新 pendingWorkflow 的查詢重寫結果
             if (stage === 'query_rewriting' && detail && detail.queries) {
               setPendingWorkflow((prev: any) => prev ? {
@@ -1265,7 +1284,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
                 }
               } : null);
             }
-            
+
             setCurrentStreamingSession(prev => prev ? {
               ...prev,
               reasoningSteps: [...tempReasoningSteps]
@@ -1287,7 +1306,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
             console.log('📋 Metadata:', meta);
             // ⭐ 使用智能合併邏輯
             mergeDocumentPool(meta);
-            
+
             // ⭐⭐ 保存當前輪次的文檔到 streaming session（用於引用解析）
             if (meta.current_round_documents && meta.current_round_documents.length > 0) {
               console.log('📸 [onMetadata] 保存當前輪次文檔:', meta.current_round_documents.map((d: any) => d.filename));
@@ -1299,7 +1318,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
           },
 
           // Handle completion
-          onComplete: (completeAnswer, completeData?: any) => {
+          onComplete: async (completeAnswer, completeData?: any) => {
             console.log('✅ Stream complete', completeData);
 
             if (tempReasoningSteps.length > 0) {
@@ -1312,7 +1331,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
             // 檢查是否包含 workflow_state（澄清問題）
             if (completeData?.workflow_state?.current_step === 'need_clarification') {
               console.log('📝 收到澄清問題:', completeData.workflow_state);
-              
+
               // 添加澄清請求步驟到 reasoning chain
               const clarificationStep: ReasoningStep = {
                 type: 'approval',
@@ -1322,15 +1341,15 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
                 status: 'active',
                 timestamp: Date.now()
               };
-              
+
               tempReasoningSteps.push(clarificationStep);
-              
+
               // 設置工作流狀態
               setPendingWorkflow({
                 originalQuestion: questionToAsk,
                 state: completeData.workflow_state
               });
-              
+
               // 更新流式會話包含 workflowState 和 reasoning steps
               setCurrentStreamingSession(prev => prev ? {
                 ...prev,
@@ -1339,7 +1358,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
                 workflowState: completeData.workflow_state,
                 isStreaming: false
               } : null);
-              
+
               setIsAsking(false);
               showPCMessage('請提供更多資訊以繼續', 'info');
               return;
@@ -1352,13 +1371,13 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
               // 這只包含當前輪次 AI 看到的文檔（按順序），而不是累積的全部文檔池
               // 這樣 citation:1 就會正確指向當前輪次的第一個文檔
               const currentRoundDocs = metadata.current_round_documents || [];
-              
+
               console.log('📸 [documentPoolSnapshot] 使用當前輪次文檔:', {
                 current_round_count: currentRoundDocs.length,
                 current_round_filenames: currentRoundDocs.map((d: any) => d.filename),
                 full_pool_count: documentPool.length
               });
-              
+
               const newSession: QASession = {
                 id: `qa-${Date.now()}`,
                 question: questionToAsk,
@@ -1384,7 +1403,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
           // Handle approval needed
           onApprovalNeeded: (approvalData) => {
             console.log('⚠️ Approval needed:', approvalData);
-            
+
             // 合併 workflow_state 和額外數據
             const mergedState = {
               ...approvalData.workflow_state,
@@ -1393,39 +1412,39 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
               next_action: approvalData.next_action,
               pending_approval: approvalData.pending_approval
             };
-            
+
             // 添加批准/澄清請求到 reasoning chain
             const approvalStep: ReasoningStep = {
               type: 'approval',
               stage: mergedState.current_step || 'approval',
-              message: mergedState.current_step === 'awaiting_search_approval' 
+              message: mergedState.current_step === 'awaiting_search_approval'
                 ? '🔐 需要權限批准：文檔搜索'
                 : mergedState.current_step === 'awaiting_detail_query_approval'
-                ? '🔐 需要權限批准：詳細查詢'
-                : mergedState.current_step === 'need_clarification'
-                ? '❓ 需要澄清問題'
-                : '🔐 需要權限批准',
+                  ? '🔐 需要權限批准：詳細查詢'
+                  : mergedState.current_step === 'need_clarification'
+                    ? '❓ 需要澄清問題'
+                    : '🔐 需要權限批准',
               detail: mergedState,
               status: 'active',
               timestamp: Date.now()
             };
-            
+
             tempReasoningSteps.push(approvalStep);
-            
+
             // 設置工作流狀態  
             // ⭐ 優先使用後端返回的問題（可能已經組合了澄清答案）
-            const actualQuestion = 
+            const actualQuestion =
               mergedState.search_preview?.original_question ||  // 後端組合後的問題（如 "收據 → 早餐"）
               currentStreamingSession?.question ||              // 當前會話問題
               questionToAsk;                                     // 原始問題
-            
+
             console.log('🔍 [主流程批准] 使用問題:', actualQuestion);
-            
+
             setPendingWorkflow({
               originalQuestion: actualQuestion,
               state: mergedState
             });
-            
+
             // 更新當前流式會話的 workflowState 和 reasoning steps
             setCurrentStreamingSession(prev => prev ? {
               ...prev,
@@ -1433,9 +1452,9 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
               workflowState: mergedState,
               isStreaming: false
             } : null);
-            
+
             setIsAsking(false);
-            
+
             // 根據不同類型顯示提示
             if (mergedState.current_step === 'need_clarification') {
               showPCMessage('請提供更多資訊以繼續', 'info');
@@ -1478,466 +1497,472 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
   // ========== Main Render ==========
   return (
     <>
-    <div className="h-screen flex bg-neo-bg">
-      {/* ✅ Left Sidebar - Conversation History (Neo-Brutalism) */}
-      {showHistorySidebar && (
-        <aside className="w-72 bg-white border-r-2 border-neo-black flex flex-col shadow-[6px_6px_0px_0px_rgba(0,0,0,0.1)]">
-          {/* Sidebar Header */}
-          <div className="p-4 border-b-2 border-neo-black space-y-3 bg-white z-10">
-            {/* NEW CHAT Button - Neo Style */}
-            <button
-              onClick={startNewConversation}
-              disabled={loadingConversations}
-              className="w-full py-3 flex items-center justify-center gap-2 bg-neo-black text-neo-primary border-2 border-neo-black font-bold uppercase tracking-wide rounded-lg shadow-[3px_3px_0px_0px_rgba(0,0,0,0.2)] hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,0.2)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0px_0px_rgba(0,0,0,0.2)] transition-all"
-            >
-              <i className="ph-bold ph-plus text-lg"></i> New Chat
-            </button>
-            
-            {/* Search Box */}
-            <div className="relative group">
-              <i className="ph-bold ph-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-black"></i>
-              <input
-                type="text"
-                placeholder="Search history..."
-                className="w-full bg-gray-50 border-2 border-gray-200 rounded-lg py-2 pl-9 pr-3 text-sm font-medium outline-none focus:border-black transition-colors"
-              />
-            </div>
-          </div>
+      <div className="h-screen flex bg-neo-bg">
+        {/* ✅ Left Sidebar - Conversation History (Neo-Brutalism) */}
+        {showHistorySidebar && (
+          <aside className="w-72 bg-white border-r-2 border-neo-black flex flex-col shadow-[6px_6px_0px_0px_rgba(0,0,0,0.1)]">
+            {/* Sidebar Header */}
+            <div className="p-4 border-b-2 border-neo-black space-y-3 bg-white z-10">
+              {/* NEW CHAT Button - Neo Style */}
+              <button
+                onClick={startNewConversation}
+                disabled={loadingConversations}
+                className="w-full py-3 flex items-center justify-center gap-2 bg-neo-black text-neo-primary border-2 border-neo-black font-bold uppercase tracking-wide rounded-lg shadow-[3px_3px_0px_0px_rgba(0,0,0,0.2)] hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,0.2)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0px_0px_rgba(0,0,0,0.2)] transition-all"
+              >
+                <i className="ph-bold ph-plus text-lg"></i> New Chat
+              </button>
 
-          {/* Conversation List - Scrollable */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-6" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-            <style>{`.flex-1::-webkit-scrollbar { display: none; }`}</style>
-            
-            {loadingConversations ? (
-              <div className="flex items-center justify-center py-8">
-                <Spin size="small" />
+              {/* Search Box */}
+              <div className="relative group">
+                <i className="ph-bold ph-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-black"></i>
+                <input
+                  type="text"
+                  placeholder="Search history..."
+                  className="w-full bg-gray-50 border-2 border-gray-200 rounded-lg py-2 pl-9 pr-3 text-sm font-medium outline-none focus:border-black transition-colors"
+                />
               </div>
-            ) : conversations.length > 0 ? (
-              <>
-                {/* Pinned Section */}
-                {groupedConversations.pinned.length > 0 && (
-                  <div className="space-y-1 mb-4">
-                    <div className="flex items-center gap-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">
-                      <span>Pinned ({groupedConversations.pinned.length})</span>
-                      <i className="ph-fill ph-push-pin text-xs"></i>
+            </div>
+
+            {/* Conversation List - Scrollable */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-6" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+              <style>{`.flex-1::-webkit-scrollbar { display: none; }`}</style>
+
+              {loadingConversations ? (
+                <div className="flex items-center justify-center py-8">
+                  <Spin size="small" />
+                </div>
+              ) : conversations.length > 0 ? (
+                <>
+                  {/* Pinned Section */}
+                  {groupedConversations.pinned.length > 0 && (
+                    <div className="space-y-1 mb-4">
+                      <div className="flex items-center gap-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">
+                        <span>Pinned ({groupedConversations.pinned.length})</span>
+                        <i className="ph-fill ph-push-pin text-xs"></i>
+                      </div>
+                      {groupedConversations.pinned.map((conv) => (
+                        <div
+                          key={conv.id}
+                          onClick={() => switchConversation(conv.id)}
+                          className={`relative group flex items-center gap-2.5 px-3 py-2.5 mb-1 rounded-lg cursor-pointer transition-all ${currentConversationId === conv.id
+                            ? 'bg-neo-active text-white border-2 border-neo-black shadow-[3px_3px_0px_0px_#000000] font-bold'
+                            : 'border-2 border-transparent hover:bg-gray-100'
+                            }`}
+                        >
+                          <i className={`ph-fill ph-push-pin text-lg flex-shrink-0 ${currentConversationId === conv.id ? 'text-white' : 'text-neo-primary'
+                            }`}></i>
+                          <div className="flex-1 min-w-0 pr-20">
+                            <div className={`truncate text-sm ${currentConversationId === conv.id ? 'font-bold' : 'font-medium'}`}>
+                              {conv.title}
+                            </div>
+                            <div className={`text-[10px] truncate ${currentConversationId === conv.id ? 'text-white text-opacity-80' : 'text-gray-400 group-hover:text-gray-600'
+                              }`}>
+                              {new Date(conv.updated_at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          </div>
+                          {/* Hover Actions */}
+                          <div className={`absolute right-2 top-1/2 -translate-y-1/2 hidden group-hover:flex gap-1 ${currentConversationId === conv.id ? 'bg-neo-active' : 'bg-gray-100'
+                            } pl-2 z-10`}>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                togglePinConversation(conv.id, conv.is_pinned || false);
+                              }}
+                              className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
+                                }`}
+                              title="Unpin"
+                            >
+                              <i className="ph-bold ph-push-pin-slash text-sm"></i>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                console.log('Edit conversation:', conv.id);
+                                showPCMessage('Edit 功能開發中', 'info');
+                              }}
+                              className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
+                                }`}
+                              title="Edit"
+                            >
+                              <i className="ph-bold ph-pencil-simple text-sm"></i>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteConversation(conv.id);
+                              }}
+                              className={`p-1 rounded hover:bg-black hover:bg-opacity-10 hover:text-red-500 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
+                                }`}
+                              title="Delete"
+                            >
+                              <i className="ph-bold ph-trash text-sm"></i>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                    {groupedConversations.pinned.map((conv) => (
-                      <div
-                        key={conv.id}
-                        onClick={() => switchConversation(conv.id)}
-                        className={`relative group flex items-center gap-2.5 px-3 py-2.5 mb-1 rounded-lg cursor-pointer transition-all ${
-                          currentConversationId === conv.id
+                  )}
+
+                  {/* TODAY Section */}
+                  {groupedConversations.today.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">Today ({groupedConversations.today.length})</div>
+                      {groupedConversations.today.map((conv) => (
+                        <div
+                          key={conv.id}
+                          onClick={() => switchConversation(conv.id)}
+                          className={`relative group flex items-center gap-2.5 px-3 py-2.5 mb-1 rounded-lg cursor-pointer transition-all ${currentConversationId === conv.id
                             ? 'bg-neo-active text-white border-2 border-neo-black shadow-[3px_3px_0px_0px_#000000] font-bold'
                             : 'border-2 border-transparent hover:bg-gray-100'
-                        }`}
-                      >
-                        <i className={`ph-fill ph-push-pin text-lg flex-shrink-0 ${
-                          currentConversationId === conv.id ? 'text-white' : 'text-neo-primary'
-                        }`}></i>
-                        <div className="flex-1 min-w-0 pr-20">
-                          <div className={`truncate text-sm ${currentConversationId === conv.id ? 'font-bold' : 'font-medium'}`}>
-                            {conv.title}
+                            }`}
+                        >
+                          <i className={`ph-bold ph-chat-text text-lg flex-shrink-0 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-400 group-hover:text-black'
+                            }`}></i>
+                          <div className="flex-1 min-w-0 pr-20">
+                            <div className={`truncate text-sm ${currentConversationId === conv.id ? 'font-bold' : 'font-medium'}`}>
+                              {conv.title}
+                            </div>
+                            <div className={`text-[10px] truncate ${currentConversationId === conv.id ? 'text-white text-opacity-80' : 'text-gray-400 group-hover:text-gray-600'
+                              }`}>
+                              {new Date(conv.updated_at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}
+                            </div>
                           </div>
-                          <div className={`text-[10px] truncate ${
-                            currentConversationId === conv.id ? 'text-white text-opacity-80' : 'text-gray-400 group-hover:text-gray-600'
-                          }`}>
-                            {new Date(conv.updated_at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}
+                          {/* Hover Actions */}
+                          <div className={`absolute right-2 top-1/2 -translate-y-1/2 hidden group-hover:flex gap-1 ${currentConversationId === conv.id ? 'bg-neo-active' : 'bg-gray-100'
+                            } pl-2 z-10`}>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                togglePinConversation(conv.id, conv.is_pinned || false);
+                              }}
+                              className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
+                                }`}
+                              title={conv.is_pinned ? 'Unpin' : 'Pin'}
+                            >
+                              <i className={`ph-bold ${conv.is_pinned ? 'ph-push-pin-slash' : 'ph-push-pin'} text-sm`}></i>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                console.log('Edit conversation:', conv.id);
+                                showPCMessage('Edit 功能開發中', 'info');
+                              }}
+                              className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
+                                }`}
+                              title="Edit"
+                            >
+                              <i className="ph-bold ph-pencil-simple text-sm"></i>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteConversation(conv.id);
+                              }}
+                              className={`p-1 rounded hover:bg-black hover:bg-opacity-10 hover:text-red-500 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
+                                }`}
+                              title="Delete"
+                            >
+                              <i className="ph-bold ph-trash text-sm"></i>
+                            </button>
                           </div>
                         </div>
-                        {/* Hover Actions */}
-                        <div className={`absolute right-2 top-1/2 -translate-y-1/2 hidden group-hover:flex gap-1 ${
-                          currentConversationId === conv.id ? 'bg-neo-active' : 'bg-gray-100'
-                        } pl-2 z-10`}>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              togglePinConversation(conv.id, conv.is_pinned || false);
-                            }}
-                            className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${
-                              currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
-                            }`}
-                            title="Unpin"
-                          >
-                            <i className="ph-bold ph-push-pin-slash text-sm"></i>
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              console.log('Edit conversation:', conv.id);
-                              showPCMessage('Edit 功能開發中', 'info');
-                            }}
-                            className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${
-                              currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
-                            }`}
-                            title="Edit"
-                          >
-                            <i className="ph-bold ph-pencil-simple text-sm"></i>
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteConversation(conv.id);
-                            }}
-                            className={`p-1 rounded hover:bg-black hover:bg-opacity-10 hover:text-red-500 ${
-                              currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
-                            }`}
-                            title="Delete"
-                          >
-                            <i className="ph-bold ph-trash text-sm"></i>
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* TODAY Section */}
-                {groupedConversations.today.length > 0 && (
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">Today ({groupedConversations.today.length})</div>
-                    {groupedConversations.today.map((conv) => (
-                    <div
-                      key={conv.id}
-                      onClick={() => switchConversation(conv.id)}
-                      className={`relative group flex items-center gap-2.5 px-3 py-2.5 mb-1 rounded-lg cursor-pointer transition-all ${
-                        currentConversationId === conv.id
-                          ? 'bg-neo-active text-white border-2 border-neo-black shadow-[3px_3px_0px_0px_#000000] font-bold'
-                          : 'border-2 border-transparent hover:bg-gray-100'
-                      }`}
-                    >
-                      <i className={`ph-bold ph-chat-text text-lg flex-shrink-0 ${
-                        currentConversationId === conv.id ? 'text-white' : 'text-gray-400 group-hover:text-black'
-                      }`}></i>
-                      <div className="flex-1 min-w-0 pr-20">
-                        <div className={`truncate text-sm ${currentConversationId === conv.id ? 'font-bold' : 'font-medium'}`}>
-                          {conv.title}
-                        </div>
-                        <div className={`text-[10px] truncate ${
-                          currentConversationId === conv.id ? 'text-white text-opacity-80' : 'text-gray-400 group-hover:text-gray-600'
-                        }`}>
-                          {new Date(conv.updated_at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                      </div>
-                      {/* Hover Actions */}
-                      <div className={`absolute right-2 top-1/2 -translate-y-1/2 hidden group-hover:flex gap-1 ${
-                        currentConversationId === conv.id ? 'bg-neo-active' : 'bg-gray-100'
-                      } pl-2 z-10`}>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            togglePinConversation(conv.id, conv.is_pinned || false);
-                          }}
-                          className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${
-                            currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
-                          }`}
-                          title={conv.is_pinned ? 'Unpin' : 'Pin'}
-                        >
-                          <i className={`ph-bold ${conv.is_pinned ? 'ph-push-pin-slash' : 'ph-push-pin'} text-sm`}></i>
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            console.log('Edit conversation:', conv.id);
-                            showPCMessage('Edit 功能開發中', 'info');
-                          }}
-                          className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${
-                            currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
-                          }`}
-                          title="Edit"
-                        >
-                          <i className="ph-bold ph-pencil-simple text-sm"></i>
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteConversation(conv.id);
-                          }}
-                          className={`p-1 rounded hover:bg-black hover:bg-opacity-10 hover:text-red-500 ${
-                            currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
-                          }`}
-                          title="Delete"
-                        >
-                          <i className="ph-bold ph-trash text-sm"></i>
-                        </button>
-                      </div>
+                      ))}
                     </div>
-                    ))}
-                  </div>
-                )}
+                  )}
 
-                {/* YESTERDAY Section */}
-                {groupedConversations.yesterday.length > 0 && (
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">Yesterday ({groupedConversations.yesterday.length})</div>
-                    {groupedConversations.yesterday.map((conv) => (
-                      <div
-                        key={conv.id}
-                        onClick={() => switchConversation(conv.id)}
-                        className={`relative group flex items-center gap-2.5 px-3 py-2.5 mb-1 rounded-lg cursor-pointer transition-all ${
-                          currentConversationId === conv.id
+                  {/* YESTERDAY Section */}
+                  {groupedConversations.yesterday.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">Yesterday ({groupedConversations.yesterday.length})</div>
+                      {groupedConversations.yesterday.map((conv) => (
+                        <div
+                          key={conv.id}
+                          onClick={() => switchConversation(conv.id)}
+                          className={`relative group flex items-center gap-2.5 px-3 py-2.5 mb-1 rounded-lg cursor-pointer transition-all ${currentConversationId === conv.id
                             ? 'bg-neo-active text-white border-2 border-neo-black shadow-[3px_3px_0px_0px_#000000] font-bold'
                             : 'border-2 border-transparent hover:bg-gray-100'
-                        }`}
-                      >
-                        <i className={`ph-bold ph-chat-text text-lg flex-shrink-0 ${
-                          currentConversationId === conv.id ? 'text-white' : 'text-gray-400 group-hover:text-black'
-                        }`}></i>
-                        <div className="flex-1 min-w-0 pr-20">
-                          <div className={`truncate text-sm ${currentConversationId === conv.id ? 'font-bold' : 'font-medium'}`}>
-                            {conv.title}
+                            }`}
+                        >
+                          <i className={`ph-bold ph-chat-text text-lg flex-shrink-0 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-400 group-hover:text-black'
+                            }`}></i>
+                          <div className="flex-1 min-w-0 pr-20">
+                            <div className={`truncate text-sm ${currentConversationId === conv.id ? 'font-bold' : 'font-medium'}`}>
+                              {conv.title}
+                            </div>
+                            <div className={`text-[10px] truncate ${currentConversationId === conv.id ? 'text-white text-opacity-80' : 'text-gray-400 group-hover:text-gray-600'
+                              }`}>
+                              {conv.message_count} messages
+                            </div>
                           </div>
-                          <div className={`text-[10px] truncate ${
-                            currentConversationId === conv.id ? 'text-white text-opacity-80' : 'text-gray-400 group-hover:text-gray-600'
-                          }`}>
-                            {conv.message_count} messages
+                          {/* Hover Actions */}
+                          <div className={`absolute right-2 top-1/2 -translate-y-1/2 hidden group-hover:flex gap-1 ${currentConversationId === conv.id ? 'bg-neo-active' : 'bg-gray-100'
+                            } pl-2 z-10`}>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                togglePinConversation(conv.id, conv.is_pinned || false);
+                              }}
+                              className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
+                                }`}
+                              title={conv.is_pinned ? 'Unpin' : 'Pin'}
+                            >
+                              <i className={`ph-bold ${conv.is_pinned ? 'ph-push-pin-slash' : 'ph-push-pin'} text-sm`}></i>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                console.log('Edit conversation:', conv.id);
+                                showPCMessage('Edit 功能開發中', 'info');
+                              }}
+                              className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
+                                }`}
+                              title="Edit"
+                            >
+                              <i className="ph-bold ph-pencil-simple text-sm"></i>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteConversation(conv.id);
+                              }}
+                              className={`p-1 rounded hover:bg-black hover:bg-opacity-10 hover:text-red-500 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
+                                }`}
+                              title="Delete"
+                            >
+                              <i className="ph-bold ph-trash text-sm"></i>
+                            </button>
                           </div>
                         </div>
-                        {/* Hover Actions */}
-                        <div className={`absolute right-2 top-1/2 -translate-y-1/2 hidden group-hover:flex gap-1 ${
-                          currentConversationId === conv.id ? 'bg-neo-active' : 'bg-gray-100'
-                        } pl-2 z-10`}>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              togglePinConversation(conv.id, conv.is_pinned || false);
-                            }}
-                            className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${
-                              currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
-                            }`}
-                            title={conv.is_pinned ? 'Unpin' : 'Pin'}
-                          >
-                            <i className={`ph-bold ${conv.is_pinned ? 'ph-push-pin-slash' : 'ph-push-pin'} text-sm`}></i>
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              console.log('Edit conversation:', conv.id);
-                              showPCMessage('Edit 功能開發中', 'info');
-                            }}
-                            className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${
-                              currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
-                            }`}
-                            title="Edit"
-                          >
-                            <i className="ph-bold ph-pencil-simple text-sm"></i>
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteConversation(conv.id);
-                            }}
-                            className={`p-1 rounded hover:bg-black hover:bg-opacity-10 hover:text-red-500 ${
-                              currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
-                            }`}
-                            title="Delete"
-                          >
-                            <i className="ph-bold ph-trash text-sm"></i>
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                      ))}
+                    </div>
+                  )}
 
-                {/* PREVIOUS 7 DAYS Section */}
-                {groupedConversations.last7Days.length > 0 && (
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">Previous 7 Days ({groupedConversations.last7Days.length})</div>
-                    {groupedConversations.last7Days.map((conv) => (
-                      <div
-                        key={conv.id}
-                        onClick={() => switchConversation(conv.id)}
-                        className={`relative group flex items-center gap-2.5 px-3 py-2.5 mb-1 rounded-lg cursor-pointer transition-all ${
-                          currentConversationId === conv.id
+                  {/* PREVIOUS 7 DAYS Section */}
+                  {groupedConversations.last7Days.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">Previous 7 Days ({groupedConversations.last7Days.length})</div>
+                      {groupedConversations.last7Days.map((conv) => (
+                        <div
+                          key={conv.id}
+                          onClick={() => switchConversation(conv.id)}
+                          className={`relative group flex items-center gap-2.5 px-3 py-2.5 mb-1 rounded-lg cursor-pointer transition-all ${currentConversationId === conv.id
                             ? 'bg-neo-active text-white border-2 border-neo-black shadow-[3px_3px_0px_0px_#000000] font-bold'
                             : 'border-2 border-transparent hover:bg-gray-100'
-                        }`}
-                      >
-                        <i className={`ph-bold ph-chat-text text-lg flex-shrink-0 ${
-                          currentConversationId === conv.id ? 'text-white' : 'text-gray-400 group-hover:text-black'
-                        }`}></i>
-                        <div className="flex-1 min-w-0 pr-20">
-                          <div className={`truncate text-sm ${currentConversationId === conv.id ? 'font-bold' : 'font-medium'}`}>
-                            {conv.title}
+                            }`}
+                        >
+                          <i className={`ph-bold ph-chat-text text-lg flex-shrink-0 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-400 group-hover:text-black'
+                            }`}></i>
+                          <div className="flex-1 min-w-0 pr-20">
+                            <div className={`truncate text-sm ${currentConversationId === conv.id ? 'font-bold' : 'font-medium'}`}>
+                              {conv.title}
+                            </div>
+                            <div className={`text-[10px] truncate ${currentConversationId === conv.id ? 'text-white text-opacity-80' : 'text-gray-400 group-hover:text-gray-600'
+                              }`}>
+                              {new Date(conv.updated_at).toLocaleDateString('zh-TW', { month: 'short', day: 'numeric' })}
+                            </div>
                           </div>
-                          <div className={`text-[10px] truncate ${
-                            currentConversationId === conv.id ? 'text-white text-opacity-80' : 'text-gray-400 group-hover:text-gray-600'
-                          }`}>
-                            {new Date(conv.updated_at).toLocaleDateString('zh-TW', { month: 'short', day: 'numeric' })}
+                          {/* Hover Actions */}
+                          <div className={`absolute right-2 top-1/2 -translate-y-1/2 hidden group-hover:flex gap-1 ${currentConversationId === conv.id ? 'bg-neo-active' : 'bg-gray-100'
+                            } pl-2 z-10`}>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                togglePinConversation(conv.id, conv.is_pinned || false);
+                              }}
+                              className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
+                                }`}
+                              title={conv.is_pinned ? 'Unpin' : 'Pin'}
+                            >
+                              <i className={`ph-bold ${conv.is_pinned ? 'ph-push-pin-slash' : 'ph-push-pin'} text-sm`}></i>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                console.log('Edit conversation:', conv.id);
+                                showPCMessage('Edit 功能開發中', 'info');
+                              }}
+                              className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
+                                }`}
+                              title="Edit"
+                            >
+                              <i className="ph-bold ph-pencil-simple text-sm"></i>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteConversation(conv.id);
+                              }}
+                              className={`p-1 rounded hover:bg-black hover:bg-opacity-10 hover:text-red-500 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
+                                }`}
+                              title="Delete"
+                            >
+                              <i className="ph-bold ph-trash text-sm"></i>
+                            </button>
                           </div>
                         </div>
-                        {/* Hover Actions */}
-                        <div className={`absolute right-2 top-1/2 -translate-y-1/2 hidden group-hover:flex gap-1 ${
-                          currentConversationId === conv.id ? 'bg-neo-active' : 'bg-gray-100'
-                        } pl-2 z-10`}>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              togglePinConversation(conv.id, conv.is_pinned || false);
-                            }}
-                            className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${
-                              currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
-                            }`}
-                            title={conv.is_pinned ? 'Unpin' : 'Pin'}
-                          >
-                            <i className={`ph-bold ${conv.is_pinned ? 'ph-push-pin-slash' : 'ph-push-pin'} text-sm`}></i>
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              console.log('Edit conversation:', conv.id);
-                              showPCMessage('Edit 功能開發中', 'info');
-                            }}
-                            className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${
-                              currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
-                            }`}
-                            title="Edit"
-                          >
-                            <i className="ph-bold ph-pencil-simple text-sm"></i>
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteConversation(conv.id);
-                            }}
-                            className={`p-1 rounded hover:bg-black hover:bg-opacity-10 hover:text-red-500 ${
-                              currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
-                            }`}
-                            title="Delete"
-                          >
-                            <i className="ph-bold ph-trash text-sm"></i>
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                      ))}
+                    </div>
+                  )}
 
-                {/* OLDER Section */}
-                {groupedConversations.older.length > 0 && (
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">Older ({groupedConversations.older.length})</div>
-                    {groupedConversations.older.map((conv) => (
-                      <div
-                        key={conv.id}
-                        onClick={() => switchConversation(conv.id)}
-                        className={`relative group flex items-center gap-2.5 px-3 py-2.5 mb-1 rounded-lg cursor-pointer transition-all ${
-                          currentConversationId === conv.id
+                  {/* OLDER Section */}
+                  {groupedConversations.older.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">Older ({groupedConversations.older.length})</div>
+                      {groupedConversations.older.map((conv) => (
+                        <div
+                          key={conv.id}
+                          onClick={() => switchConversation(conv.id)}
+                          className={`relative group flex items-center gap-2.5 px-3 py-2.5 mb-1 rounded-lg cursor-pointer transition-all ${currentConversationId === conv.id
                             ? 'bg-neo-active text-white border-2 border-neo-black shadow-[3px_3px_0px_0px_#000000] font-bold'
                             : 'border-2 border-transparent hover:bg-gray-100'
-                        }`}
-                      >
-                        <i className={`ph-bold ph-chat-text text-lg flex-shrink-0 ${
-                          currentConversationId === conv.id ? 'text-white' : 'text-gray-400 group-hover:text-black'
-                        }`}></i>
-                        <div className="flex-1 min-w-0 pr-20">
-                          <div className={`truncate text-sm ${currentConversationId === conv.id ? 'font-bold' : 'font-medium'}`}>
-                            {conv.title}
+                            }`}
+                        >
+                          <i className={`ph-bold ph-chat-text text-lg flex-shrink-0 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-400 group-hover:text-black'
+                            }`}></i>
+                          <div className="flex-1 min-w-0 pr-20">
+                            <div className={`truncate text-sm ${currentConversationId === conv.id ? 'font-bold' : 'font-medium'}`}>
+                              {conv.title}
+                            </div>
+                            <div className={`text-[10px] truncate ${currentConversationId === conv.id ? 'text-white text-opacity-80' : 'text-gray-400 group-hover:text-gray-600'
+                              }`}>
+                              {new Date(conv.updated_at).toLocaleDateString('zh-TW')}
+                            </div>
                           </div>
-                          <div className={`text-[10px] truncate ${
-                            currentConversationId === conv.id ? 'text-white text-opacity-80' : 'text-gray-400 group-hover:text-gray-600'
-                          }`}>
-                            {new Date(conv.updated_at).toLocaleDateString('zh-TW')}
+                          {/* Hover Actions */}
+                          <div className={`absolute right-2 top-1/2 -translate-y-1/2 hidden group-hover:flex gap-1 ${currentConversationId === conv.id ? 'bg-neo-active' : 'bg-gray-100'
+                            } pl-2 z-10`}>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                togglePinConversation(conv.id, conv.is_pinned || false);
+                              }}
+                              className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
+                                }`}
+                              title={conv.is_pinned ? 'Unpin' : 'Pin'}
+                            >
+                              <i className={`ph-bold ${conv.is_pinned ? 'ph-push-pin-slash' : 'ph-push-pin'} text-sm`}></i>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                console.log('Edit conversation:', conv.id);
+                                showPCMessage('Edit 功能開發中', 'info');
+                              }}
+                              className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
+                                }`}
+                              title="Edit"
+                            >
+                              <i className="ph-bold ph-pencil-simple text-sm"></i>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteConversation(conv.id);
+                              }}
+                              className={`p-1 rounded hover:bg-black hover:bg-opacity-10 hover:text-red-500 ${currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
+                                }`}
+                              title="Delete"
+                            >
+                              <i className="ph-bold ph-trash text-sm"></i>
+                            </button>
                           </div>
                         </div>
-                        {/* Hover Actions */}
-                        <div className={`absolute right-2 top-1/2 -translate-y-1/2 hidden group-hover:flex gap-1 ${
-                          currentConversationId === conv.id ? 'bg-neo-active' : 'bg-gray-100'
-                        } pl-2 z-10`}>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              togglePinConversation(conv.id, conv.is_pinned || false);
-                            }}
-                            className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${
-                              currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
-                            }`}
-                            title={conv.is_pinned ? 'Unpin' : 'Pin'}
-                          >
-                            <i className={`ph-bold ${conv.is_pinned ? 'ph-push-pin-slash' : 'ph-push-pin'} text-sm`}></i>
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              console.log('Edit conversation:', conv.id);
-                              showPCMessage('Edit 功能開發中', 'info');
-                            }}
-                            className={`p-1 rounded hover:bg-black hover:bg-opacity-10 ${
-                              currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
-                            }`}
-                            title="Edit"
-                          >
-                            <i className="ph-bold ph-pencil-simple text-sm"></i>
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteConversation(conv.id);
-                            }}
-                            className={`p-1 rounded hover:bg-black hover:bg-opacity-10 hover:text-red-500 ${
-                              currentConversationId === conv.id ? 'text-white' : 'text-gray-600'
-                            }`}
-                            title="Delete"
-                          >
-                            <i className="ph-bold ph-trash text-sm"></i>
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            ) : (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="暫無對話記錄"
-                className="mt-8"
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="暫無對話記錄"
+                  className="mt-8"
+                />
+              )}
+            </div>
+
+            {/* User Settings Footer - Removed */}
+          </aside>
+        )}
+
+        {/* ✅ Main Content */}
+        <div className="flex-1 flex flex-col">
+          {/* Header */}
+          <header className="bg-neo-white border-b-3 border-neo-black px-6 py-4 flex items-center justify-between shadow-neo-sm">
+            <div className="flex items-center gap-3">
+              <Button
+                type="text"
+                icon={<i className={`ph ${showHistorySidebar ? 'ph-sidebar-simple' : 'ph-sidebar'}`}></i>}
+                onClick={() => setShowHistorySidebar(!showHistorySidebar)}
+                className="border-2 border-neo-black"
               />
-            )}
-          </div>
-
-          {/* User Settings Footer - Removed */}
-        </aside>
-      )}
-
-      {/* ✅ Main Content */}
-      <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <header className="bg-neo-white border-b-3 border-neo-black px-6 py-4 flex items-center justify-between shadow-neo-sm">
-          <div className="flex items-center gap-3">
-            <Button
-              type="text"
-              icon={<i className={`ph ${showHistorySidebar ? 'ph-sidebar-simple' : 'ph-sidebar'}`}></i>}
-              onClick={() => setShowHistorySidebar(!showHistorySidebar)}
-              className="border-2 border-neo-black"
-            />
-            <div className="w-10 h-10 bg-neo-primary border-2 border-neo-black rounded-lg flex items-center justify-center font-display font-bold text-lg shadow-neo-sm">
-              S
+              <div className="w-10 h-10 bg-neo-primary border-2 border-neo-black rounded-lg flex items-center justify-center font-display font-bold text-lg shadow-neo-sm">
+                S
+              </div>
+              <div>
+                <h1 className="font-display font-bold text-lg uppercase tracking-tight">AI WORKSPACE</h1>
+                <p className="text-xs text-gray-600 font-mono">Sortify Intelligence System</p>
+              </div>
             </div>
-            <div>
-              <h1 className="font-display font-bold text-lg uppercase tracking-tight">AI WORKSPACE</h1>
-              <p className="text-xs text-gray-600 font-mono">Sortify Intelligence System</p>
+
+            <div className="flex items-center gap-2">
+              {/* Settings removed */}
             </div>
-          </div>
+          </header>
 
-          <div className="flex items-center gap-2">
-            {/* Settings removed */}
-          </div>
-        </header>
+          {/* ✅ Main Content Area */}
+          <div className="flex-1 overflow-y-auto p-6 relative">
+            <div className="max-w-5xl mx-auto space-y-6">
+              {/* 歷史對話記錄 - 始終顯示 */}
+              {qaHistory.length > 0 && (
+                <div className="space-y-6">
+                  {qaHistory.map((session) => (
+                    <div key={session.id} className="space-y-6">
+                      {/* User Question */}
+                      <div className="flex justify-end">
+                        <div className="max-w-[70%] bg-neo-black text-white px-5 py-3 rounded-2xl rounded-br-none shadow-neo-md">
+                          <div className="flex items-start gap-3">
+                            <Text className="text-white font-medium flex-1">{session.question}</Text>
+                            <UserOutlined className="text-white mt-1" />
+                          </div>
+                        </div>
+                      </div>
 
-        {/* ✅ Main Content Area */}
-        <div className="flex-1 overflow-y-auto p-6 relative">
-        <div className="max-w-5xl mx-auto space-y-6">
-          {/* 歷史對話記錄 - 始終顯示 */}
-          {qaHistory.length > 0 && (
-            <div className="space-y-6">
-              {qaHistory.map((session) => (
-                <div key={session.id} className="space-y-6">
+                      {/* AI Response */}
+                      <div className="flex justify-start gap-4">
+                        <div className="w-10 h-10 bg-neo-primary border-2 border-neo-black rounded-lg flex-shrink-0 flex items-center justify-center font-display font-bold shadow-neo-sm">
+                          AI
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          {/* Reasoning Chain */}
+                          {session.reasoningSteps && session.reasoningSteps.length > 0 && (
+                            <ReasoningChainDisplay
+                              steps={session.reasoningSteps}
+                              isStreaming={false}
+                              onCitationClick={(docId) => handleCitationClick(docId, session.documentPoolSnapshot)}
+                            />
+                          )}
+
+                          {/* Answer */}
+                          <StreamedAnswer
+                            content={session.answer}
+                            isStreaming={false}
+                            onCitationClick={(docId) => handleCitationClick(docId, session.documentPoolSnapshot)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 當前流式會話 - 在歷史記錄之後顯示 */}
+              {currentStreamingSession && (
+                <div className="space-y-6">
                   {/* User Question */}
                   <div className="flex justify-end">
                     <div className="max-w-[70%] bg-neo-black text-white px-5 py-3 rounded-2xl rounded-br-none shadow-neo-md">
                       <div className="flex items-start gap-3">
-                        <Text className="text-white font-medium flex-1">{session.question}</Text>
+                        <Text className="text-white font-medium flex-1">{currentStreamingSession.question}</Text>
                         <UserOutlined className="text-white mt-1" />
                       </div>
                     </div>
@@ -1950,474 +1975,432 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
                     </div>
                     <div className="flex-1 min-w-0">
                       {/* Reasoning Chain */}
-                      {session.reasoningSteps && session.reasoningSteps.length > 0 && (
+                      {currentStreamingSession.reasoningSteps.length > 0 && (
                         <ReasoningChainDisplay
-                          steps={session.reasoningSteps}
-                          isStreaming={false}
-                          onCitationClick={(docId) => handleCitationClick(docId, session.documentPoolSnapshot)}
+                          steps={currentStreamingSession.reasoningSteps}
+                          isStreaming={currentStreamingSession.isStreaming && !currentStreamingSession.answer}
+                          processingTime={(Date.now() - currentStreamingSession.startTime) / 1000}
+                          onApprove={handleApprove}
+                          isApproving={isAsking}
+                          onClarificationResponse={(response) => setQuestion(response)}
+                          // ⭐⭐ 使用當前輪次的文檔快照（如果有），否則使用全局文檔池
+                          onCitationClick={(docId) => handleCitationClick(docId, currentStreamingSession.currentRoundDocuments || documentPool)}
                         />
                       )}
 
-                      {/* Answer */}
-                      <StreamedAnswer
-                        content={session.answer}
-                        isStreaming={false}
-                        onCitationClick={(docId) => handleCitationClick(docId, session.documentPoolSnapshot)}
+                      {/* Streamed Answer - 澄清請求時不顯示原始answer，因為已有澄清卡片 */}
+                      {currentStreamingSession.answer &&
+                        !currentStreamingSession.reasoningSteps.some(
+                          step => step.type === 'approval' &&
+                            step.status === 'active' &&
+                            step.detail?.current_step === 'need_clarification'
+                        ) && (
+                          <StreamedAnswer
+                            content={currentStreamingSession.answer}
+                            isStreaming={currentStreamingSession.isStreaming}
+                            // ⭐⭐ 使用當前輪次的文檔快照（如果有），否則使用全局文檔池
+                            onCitationClick={(docId) => handleCitationClick(docId, currentStreamingSession.currentRoundDocuments || documentPool)}
+                          />
+                        )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Empty State - 只在沒有歷史記錄且沒有當前會話時顯示 */}
+              {qaHistory.length === 0 && !currentStreamingSession && (
+                <div className="text-center mt-20">
+                  <RobotOutlined className="text-6xl text-neo-primary mb-4" />
+                  <h2 className="font-display font-bold text-2xl mb-2 uppercase">AI 智能助手</h2>
+                  <Text className="text-gray-600">您可以問我任何關於文檔的問題</Text>
+                </div>
+              )}
+
+              {/* Auto Scroll Anchor */}
+              <div ref={messagesEndRef} />
+
+              {/* 輸入框區域 - 跟隨內容流動 */}
+              <div className="mt-6 sticky bottom-0 pb-6 z-50">
+                <div className="max-w-4xl mx-auto">
+                  {/* 主輸入卡片 - Neo-Brutalism 風格 */}
+                  <div className="bg-white border-3 border-neo-black shadow-[6px_6px_0px_0px_#000000] overflow-hidden">
+
+                    {/* CONTEXT 區域 - 簡潔版 */}
+                    {documentPool.length > 0 && (
+                      <div className="bg-gray-50 border-b-3 border-neo-black">
+                        {/* 文檔標籤行 */}
+                        <div className="px-4 py-2.5">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {/* CONTEXT 標籤 */}
+                            <div className="px-2 py-1 bg-gray-200 text-gray-600 text-[10px] font-bold uppercase tracking-wider">
+                              CONTEXT
+                            </div>
+
+                            {/* 文檔標籤 */}
+                            {documentPool.slice(0, 3).map((doc: any, index: number) => {
+                              // 根據文件類型決定圖標和顏色
+                              const getFileIcon = (filename: string) => {
+                                const ext = filename.split('.').pop()?.toLowerCase();
+                                if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext || '')) {
+                                  return { icon: 'ph-image', color: 'text-orange-500' };
+                                } else if (['pdf'].includes(ext || '')) {
+                                  return { icon: 'ph-file-pdf', color: 'text-red-500' };
+                                } else if (['txt', 'md'].includes(ext || '')) {
+                                  return { icon: 'ph-file-text', color: 'text-blue-500' };
+                                } else if (['doc', 'docx'].includes(ext || '')) {
+                                  return { icon: 'ph-file-doc', color: 'text-blue-600' };
+                                } else if (['xls', 'xlsx'].includes(ext || '')) {
+                                  return { icon: 'ph-file-xls', color: 'text-green-600' };
+                                }
+                                return { icon: 'ph-file', color: 'text-gray-500' };
+                              };
+
+                              const { icon, color } = getFileIcon(doc.filename);
+
+                              return (
+                                <div
+                                  key={doc.document_id}
+                                  onClick={() => handleViewDocumentDetail(doc.document_id)}
+                                  className="group relative flex items-center gap-1.5 px-3 py-1.5 bg-white border-2 border-neo-black text-xs font-bold hover:bg-neo-hover transition-all cursor-pointer"
+                                  title={`${doc.filename}\n相關性: ${(doc.relevance_score * 100).toFixed(0)}%`}
+                                >
+                                  <i className={`ph-fill ${icon} ${color}`}></i>
+                                  <span className="max-w-[140px] truncate">{doc.filename}</span>
+                                  {/* 移除按鈕 */}
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRemoveFromDocumentPool(doc.document_id);
+                                    }}
+                                    className="ml-1 opacity-30 group-hover:opacity-100 hover:text-red-600 hover:scale-125 transition-all"
+                                    title="移除"
+                                  >
+                                    <i className="ph-bold ph-x text-[10px]"></i>
+                                  </button>
+                                </div>
+                              );
+                            })}
+
+                            {/* 展開/收起按鈕 */}
+                            {documentPool.length > 3 && (
+                              <button
+                                onClick={() => setShowDocumentPool(!showDocumentPool)}
+                                className="px-3 py-1.5 bg-neo-black text-white border-2 border-neo-black text-xs font-bold hover:bg-neo-primary hover:text-black transition-all flex items-center gap-1"
+                                title={showDocumentPool ? "收起文檔" : "顯示所有文檔"}
+                              >
+                                {showDocumentPool ? (
+                                  <>
+                                    <i className="ph-bold ph-caret-up text-[10px]"></i>
+                                    <span>收起</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span>+{documentPool.length - 3} more</span>
+                                    <i className="ph-bold ph-caret-down text-[10px]"></i>
+                                  </>
+                                )}
+                              </button>
+                            )}
+
+                            {/* 展開時顯示剩餘的文檔 */}
+                            {showDocumentPool && documentPool.slice(3).map((doc: any) => {
+                              const getFileIcon = (filename: string) => {
+                                const ext = filename.split('.').pop()?.toLowerCase();
+                                if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext || '')) {
+                                  return { icon: 'ph-image', color: 'text-orange-500' };
+                                } else if (['pdf'].includes(ext || '')) {
+                                  return { icon: 'ph-file-pdf', color: 'text-red-500' };
+                                } else if (['txt', 'md'].includes(ext || '')) {
+                                  return { icon: 'ph-file-text', color: 'text-blue-500' };
+                                } else if (['doc', 'docx'].includes(ext || '')) {
+                                  return { icon: 'ph-file-doc', color: 'text-blue-600' };
+                                } else if (['xls', 'xlsx'].includes(ext || '')) {
+                                  return { icon: 'ph-file-xls', color: 'text-green-600' };
+                                }
+                                return { icon: 'ph-file', color: 'text-gray-500' };
+                              };
+
+                              const { icon, color } = getFileIcon(doc.filename);
+
+                              return (
+                                <div
+                                  key={doc.document_id}
+                                  onClick={() => handleViewDocumentDetail(doc.document_id)}
+                                  className="group relative flex items-center gap-1.5 px-3 py-1.5 bg-white border-2 border-neo-black text-xs font-bold hover:bg-neo-hover transition-all cursor-pointer"
+                                  title={`${doc.filename}\n相關性: ${(doc.relevance_score * 100).toFixed(0)}%`}
+                                >
+                                  <i className={`ph-fill ${icon} ${color}`}></i>
+                                  <span className="max-w-[140px] truncate">{doc.filename}</span>
+                                  {/* 移除按鈕 */}
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRemoveFromDocumentPool(doc.document_id);
+                                    }}
+                                    className="ml-1 opacity-30 group-hover:opacity-100 hover:text-red-600 hover:scale-125 transition-all"
+                                    title="移除"
+                                  >
+                                    <i className="ph-bold ph-x text-[10px]"></i>
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 輸入區域 */}
+                    <div className="px-4 py-3 bg-white">
+                      {/* 輸入框 - 占滿整行 */}
+                      <FileMentionInput
+                        value={question}
+                        onChange={setQuestion}
+                        mentionedFiles={mentionedFiles}
+                        onMentionedFilesChange={setMentionedFiles}
+                        placeholder={
+                          pendingWorkflow?.state?.current_step === 'need_clarification'
+                            ? "輸入您的回答..."
+                            : "Ask AI anything... (Type @ to tag files)"
+                        }
+                        disabled={isAsking}
+                        minHeight="60px"
+                        className=""
+                        enableSemanticSearch={enableSemanticSearch}
+                        showHint={false}
+                        onFileSelected={(file) => {
+                          // ✅ 立即添加到文件池
+                          console.log('📎 @ 選擇文件，立即添加到文件池:', file);
+                          const newDoc = {
+                            document_id: file.id,
+                            filename: file.filename,
+                            summary: file.summary || '',
+                            key_concepts: file.key_concepts || [],
+                            relevance_score: 1.0,
+                            access_count: 0
+                          };
+
+                          setDocumentPool(prev => {
+                            const existingIds = new Set(prev.map(d => d.document_id));
+                            if (existingIds.has(newDoc.document_id)) {
+                              console.log('⚠️ 文件已存在於文件池，跳過');
+                              return prev;
+                            }
+                            console.log('✅ 添加文件到文件池');
+                            return [newDoc, ...prev];
+                          });
+                        }}
                       />
                     </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
 
-          {/* 當前流式會話 - 在歷史記錄之後顯示 */}
-          {currentStreamingSession && (
-            <div className="space-y-6">
-              {/* User Question */}
-              <div className="flex justify-end">
-                <div className="max-w-[70%] bg-neo-black text-white px-5 py-3 rounded-2xl rounded-br-none shadow-neo-md">
-                  <div className="flex items-start gap-3">
-                    <Text className="text-white font-medium flex-1">{currentStreamingSession.question}</Text>
-                    <UserOutlined className="text-white mt-1" />
-                  </div>
-                </div>
-              </div>
-
-              {/* AI Response */}
-              <div className="flex justify-start gap-4">
-                <div className="w-10 h-10 bg-neo-primary border-2 border-neo-black rounded-lg flex-shrink-0 flex items-center justify-center font-display font-bold shadow-neo-sm">
-                  AI
-                </div>
-                <div className="flex-1 min-w-0">
-                  {/* Reasoning Chain */}
-                  {currentStreamingSession.reasoningSteps.length > 0 && (
-                    <ReasoningChainDisplay
-                      steps={currentStreamingSession.reasoningSteps}
-                      isStreaming={currentStreamingSession.isStreaming && !currentStreamingSession.answer}
-                      processingTime={(Date.now() - currentStreamingSession.startTime) / 1000}
-                      onApprove={handleApprove}
-                      isApproving={isAsking}
-                      onClarificationResponse={(response) => setQuestion(response)}
-                      // ⭐⭐ 使用當前輪次的文檔快照（如果有），否則使用全局文檔池
-                      onCitationClick={(docId) => handleCitationClick(docId, currentStreamingSession.currentRoundDocuments || documentPool)}
-                    />
-                  )}
-
-                  {/* Streamed Answer - 澄清請求時不顯示原始answer，因為已有澄清卡片 */}
-                  {currentStreamingSession.answer && 
-                   !currentStreamingSession.reasoningSteps.some(
-                     step => step.type === 'approval' && 
-                             step.status === 'active' && 
-                             step.detail?.current_step === 'need_clarification'
-                   ) && (
-                    <StreamedAnswer
-                      content={currentStreamingSession.answer}
-                      isStreaming={currentStreamingSession.isStreaming}
-                      // ⭐⭐ 使用當前輪次的文檔快照（如果有），否則使用全局文檔池
-                      onCitationClick={(docId) => handleCitationClick(docId, currentStreamingSession.currentRoundDocuments || documentPool)}
-                    />
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Empty State - 只在沒有歷史記錄且沒有當前會話時顯示 */}
-          {qaHistory.length === 0 && !currentStreamingSession && (
-            <div className="text-center mt-20">
-              <RobotOutlined className="text-6xl text-neo-primary mb-4" />
-              <h2 className="font-display font-bold text-2xl mb-2 uppercase">AI 智能助手</h2>
-              <Text className="text-gray-600">您可以問我任何關於文檔的問題</Text>
-            </div>
-          )}
-
-          {/* Auto Scroll Anchor */}
-          <div ref={messagesEndRef} />
-          
-          {/* 輸入框區域 - 跟隨內容流動 */}
-          <div className="mt-6 sticky bottom-0 pb-6 z-50">
-            <div className="max-w-4xl mx-auto">
-              {/* 主輸入卡片 - Neo-Brutalism 風格 */}
-              <div className="bg-white border-3 border-neo-black shadow-[6px_6px_0px_0px_#000000] overflow-hidden">
-                
-                {/* CONTEXT 區域 - 簡潔版 */}
-                {documentPool.length > 0 && (
-                  <div className="bg-gray-50 border-b-3 border-neo-black">
-                    {/* 文檔標籤行 */}
-                    <div className="px-4 py-2.5">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {/* CONTEXT 標籤 */}
-                        <div className="px-2 py-1 bg-gray-200 text-gray-600 text-[10px] font-bold uppercase tracking-wider">
-                          CONTEXT
+                    {/* 底部狀態欄 - @ 提示 + RAG 模式 + 提交按鈕 */}
+                    <div className="px-4 py-2.5 bg-gray-50 border-t-2 border-gray-200 flex items-center justify-between">
+                      {/* 左側：@ 提示 + RAG 模式 */}
+                      <div className="flex items-center gap-3 text-[11px] font-bold">
+                        {/* @ 提示 */}
+                        <div className="flex items-center gap-1.5 text-gray-600">
+                          <i className="ph-bold ph-at text-neo-active"></i>
+                          <span>輸入 <span className="text-neo-black">@</span> 立即搜索文件（{enableSemanticSearch ? '文件名 + 語義搜索' : '僅文件名搜索'}）</span>
                         </div>
-                        
-                        {/* 文檔標籤 */}
-                        {documentPool.slice(0, 3).map((doc: any, index: number) => {
-                          // 根據文件類型決定圖標和顏色
-                          const getFileIcon = (filename: string) => {
-                            const ext = filename.split('.').pop()?.toLowerCase();
-                            if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext || '')) {
-                              return { icon: 'ph-image', color: 'text-orange-500' };
-                            } else if (['pdf'].includes(ext || '')) {
-                              return { icon: 'ph-file-pdf', color: 'text-red-500' };
-                            } else if (['txt', 'md'].includes(ext || '')) {
-                              return { icon: 'ph-file-text', color: 'text-blue-500' };
-                            } else if (['doc', 'docx'].includes(ext || '')) {
-                              return { icon: 'ph-file-doc', color: 'text-blue-600' };
-                            } else if (['xls', 'xlsx'].includes(ext || '')) {
-                              return { icon: 'ph-file-xls', color: 'text-green-600' };
-                            }
-                            return { icon: 'ph-file', color: 'text-gray-500' };
-                          };
-                          
-                          const { icon, color } = getFileIcon(doc.filename);
-                          
-                          return (
-                            <div
-                              key={doc.document_id}
-                              onClick={() => handleViewDocumentDetail(doc.document_id)}
-                              className="group relative flex items-center gap-1.5 px-3 py-1.5 bg-white border-2 border-neo-black text-xs font-bold hover:bg-neo-hover transition-all cursor-pointer"
-                              title={`${doc.filename}\n相關性: ${(doc.relevance_score * 100).toFixed(0)}%`}
-                            >
-                              <i className={`ph-fill ${icon} ${color}`}></i>
-                              <span className="max-w-[140px] truncate">{doc.filename}</span>
-                              {/* 移除按鈕 */}
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleRemoveFromDocumentPool(doc.document_id);
-                                }}
-                                className="ml-1 opacity-30 group-hover:opacity-100 hover:text-red-600 hover:scale-125 transition-all"
-                                title="移除"
-                              >
-                                <i className="ph-bold ph-x text-[10px]"></i>
-                              </button>
-                            </div>
-                          );
-                        })}
-                        
-                        {/* 展開/收起按鈕 */}
-                        {documentPool.length > 3 && (
-                          <button
-                            onClick={() => setShowDocumentPool(!showDocumentPool)}
-                            className="px-3 py-1.5 bg-neo-black text-white border-2 border-neo-black text-xs font-bold hover:bg-neo-primary hover:text-black transition-all flex items-center gap-1"
-                            title={showDocumentPool ? "收起文檔" : "顯示所有文檔"}
-                          >
-                            {showDocumentPool ? (
-                              <>
-                                <i className="ph-bold ph-caret-up text-[10px]"></i>
-                                <span>收起</span>
-                              </>
-                            ) : (
-                              <>
-                                <span>+{documentPool.length - 3} more</span>
-                                <i className="ph-bold ph-caret-down text-[10px]"></i>
-                              </>
-                            )}
-                          </button>
+
+                        {/* RAG 模式 */}
+                        <button
+                          onClick={() => setEnableSemanticSearch(!enableSemanticSearch)}
+                          className="flex items-center gap-1.5 text-gray-600 hover:text-neo-black transition-colors cursor-pointer"
+                          title="點擊切換 RAG 模式"
+                        >
+                          <i className={`ph-bold ${enableSemanticSearch ? 'ph-lightning-fill text-neo-active' : 'ph-lightning text-gray-400'}`}></i>
+                          <span>RAG: <span className="text-neo-black">{enableSemanticSearch ? 'Hybrid' : 'Basic'}</span></span>
+                        </button>
+                      </div>
+
+                      {/* 右側：提交按鈕 */}
+                      <button
+                        onClick={() => {
+                          if (pendingWorkflow?.state?.current_step === 'need_clarification') {
+                            handleClarificationSubmit();
+                          } else {
+                            handleAskQuestionStream();
+                          }
+                        }}
+                        disabled={!question.trim() || isAsking}
+                        className={`w-10 h-10 flex items-center justify-center border-2 border-neo-black transition-all ${!question.trim() || isAsking
+                          ? 'bg-gray-300 cursor-not-allowed opacity-50'
+                          : 'bg-neo-black shadow-neo-sm hover:shadow-neo-md hover:-translate-x-[1px] hover:-translate-y-[1px] active:shadow-none active:translate-x-[2px] active:translate-y-[2px]'
+                          }`}
+                      >
+                        {isAsking ? (
+                          <Spin size="small" />
+                        ) : (
+                          <div className="w-0 h-0 border-l-[10px] border-l-neo-primary border-t-[7px] border-t-transparent border-b-[7px] border-b-transparent ml-0.5"></div>
                         )}
-                        
-                        {/* 展開時顯示剩餘的文檔 */}
-                        {showDocumentPool && documentPool.slice(3).map((doc: any) => {
-                          const getFileIcon = (filename: string) => {
-                            const ext = filename.split('.').pop()?.toLowerCase();
-                            if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext || '')) {
-                              return { icon: 'ph-image', color: 'text-orange-500' };
-                            } else if (['pdf'].includes(ext || '')) {
-                              return { icon: 'ph-file-pdf', color: 'text-red-500' };
-                            } else if (['txt', 'md'].includes(ext || '')) {
-                              return { icon: 'ph-file-text', color: 'text-blue-500' };
-                            } else if (['doc', 'docx'].includes(ext || '')) {
-                              return { icon: 'ph-file-doc', color: 'text-blue-600' };
-                            } else if (['xls', 'xlsx'].includes(ext || '')) {
-                              return { icon: 'ph-file-xls', color: 'text-green-600' };
-                            }
-                            return { icon: 'ph-file', color: 'text-gray-500' };
-                          };
-                          
-                          const { icon, color } = getFileIcon(doc.filename);
-                          
-                          return (
-                            <div
-                              key={doc.document_id}
-                              onClick={() => handleViewDocumentDetail(doc.document_id)}
-                              className="group relative flex items-center gap-1.5 px-3 py-1.5 bg-white border-2 border-neo-black text-xs font-bold hover:bg-neo-hover transition-all cursor-pointer"
-                              title={`${doc.filename}\n相關性: ${(doc.relevance_score * 100).toFixed(0)}%`}
-                            >
-                              <i className={`ph-fill ${icon} ${color}`}></i>
-                              <span className="max-w-[140px] truncate">{doc.filename}</span>
-                              {/* 移除按鈕 */}
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleRemoveFromDocumentPool(doc.document_id);
-                                }}
-                                className="ml-1 opacity-30 group-hover:opacity-100 hover:text-red-600 hover:scale-125 transition-all"
-                                title="移除"
-                              >
-                                <i className="ph-bold ph-x text-[10px]"></i>
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
+                      </button>
                     </div>
                   </div>
-                )}
-                
-                {/* 輸入區域 */}
-                <div className="px-4 py-3 bg-white">
-                  {/* 輸入框 - 占滿整行 */}
-                  <FileMentionInput
-                    value={question}
-                    onChange={setQuestion}
-                    mentionedFiles={mentionedFiles}
-                    onMentionedFilesChange={setMentionedFiles}
-                    placeholder={
-                      pendingWorkflow?.state?.current_step === 'need_clarification'
-                        ? "輸入您的回答..."
-                        : "Ask AI anything... (Type @ to tag files)"
-                    }
-                    disabled={isAsking}
-                    minHeight="60px"
-                    className=""
-                    enableSemanticSearch={enableSemanticSearch}
-                    showHint={false}
-                    onFileSelected={(file) => {
-                      // ✅ 立即添加到文件池
-                      console.log('📎 @ 選擇文件，立即添加到文件池:', file);
-                      const newDoc = {
-                        document_id: file.id,
-                        filename: file.filename,
-                        summary: file.summary || '',
-                        key_concepts: file.key_concepts || [],
-                        relevance_score: 1.0,
-                        access_count: 0
-                      };
-                      
-                      setDocumentPool(prev => {
-                        const existingIds = new Set(prev.map(d => d.document_id));
-                        if (existingIds.has(newDoc.document_id)) {
-                          console.log('⚠️ 文件已存在於文件池，跳過');
-                          return prev;
-                        }
-                        console.log('✅ 添加文件到文件池');
-                        return [newDoc, ...prev];
-                      });
-                    }}
-                  />
+                  {/* 輸入框主容器結束 */}
                 </div>
-                
-                {/* 底部狀態欄 - @ 提示 + RAG 模式 + 提交按鈕 */}
-                <div className="px-4 py-2.5 bg-gray-50 border-t-2 border-gray-200 flex items-center justify-between">
-                  {/* 左側：@ 提示 + RAG 模式 */}
-                  <div className="flex items-center gap-3 text-[11px] font-bold">
-                    {/* @ 提示 */}
-                    <div className="flex items-center gap-1.5 text-gray-600">
-                      <i className="ph-bold ph-at text-neo-active"></i>
-                      <span>輸入 <span className="text-neo-black">@</span> 立即搜索文件（{enableSemanticSearch ? '文件名 + 語義搜索' : '僅文件名搜索'}）</span>
-                    </div>
-                    
-                    {/* RAG 模式 */}
-                    <button
-                      onClick={() => setEnableSemanticSearch(!enableSemanticSearch)}
-                      className="flex items-center gap-1.5 text-gray-600 hover:text-neo-black transition-colors cursor-pointer"
-                      title="點擊切換 RAG 模式"
-                    >
-                      <i className={`ph-bold ${enableSemanticSearch ? 'ph-lightning-fill text-neo-active' : 'ph-lightning text-gray-400'}`}></i>
-                      <span>RAG: <span className="text-neo-black">{enableSemanticSearch ? 'Hybrid' : 'Basic'}</span></span>
-                    </button>
-                  </div>
-                  
-                  {/* 右側：提交按鈕 */}
-                  <button
-                    onClick={() => {
-                      if (pendingWorkflow?.state?.current_step === 'need_clarification') {
-                        handleClarificationSubmit();
-                      } else {
-                        handleAskQuestionStream();
-                      }
-                    }}
-                    disabled={!question.trim() || isAsking}
-                    className={`w-10 h-10 flex items-center justify-center border-2 border-neo-black transition-all ${
-                      !question.trim() || isAsking
-                        ? 'bg-gray-300 cursor-not-allowed opacity-50'
-                        : 'bg-neo-black shadow-neo-sm hover:shadow-neo-md hover:-translate-x-[1px] hover:-translate-y-[1px] active:shadow-none active:translate-x-[2px] active:translate-y-[2px]'
-                    }`}
-                  >
-                    {isAsking ? (
-                      <Spin size="small" />
-                    ) : (
-                      <div className="w-0 h-0 border-l-[10px] border-l-neo-primary border-t-[7px] border-t-transparent border-b-[7px] border-b-transparent ml-0.5"></div>
-                    )}
-                  </button>
-                </div>
+                {/* max-w-4xl 結束 */}
               </div>
-              {/* 輸入框主容器結束 */}
+              {/* 輸入框區域結束 */}
             </div>
-            {/* max-w-4xl 結束 */}
+            {/* max-w-5xl 容器結束 */}
           </div>
-          {/* 輸入框區域結束 */}
+          {/* Main Content Area 結束 */}
         </div>
-        {/* max-w-5xl 容器結束 */}
-        </div>
-        {/* Main Content Area 結束 */}
+        {/* flex-1 flex flex-col 結束 */}
       </div>
-      {/* flex-1 flex flex-col 結束 */}
-    </div>
-    {/* h-screen flex 結束 */}
+      {/* h-screen flex 結束 */}
 
-    {/* Settings Modal removed */}
+      {/* Settings Modal removed */}
 
-    {/* ✅ AI Context Preview Drawer - Neo-Brutalism Style */}
-    <Drawer
-      title={
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 bg-neo-primary rounded-full animate-pulse"></div>
-          <span className="font-display font-bold uppercase text-sm">AI CONTEXT</span>
-        </div>
-      }
-      placement="right"
-      width={500}
-      onClose={() => setPreviewDrawerOpen(false)}
-      open={previewDrawerOpen}
-      className="font-sans neo-drawer"
-    >
-      {previewDoc ? (
-        <div className="space-y-4">
-          {/* Document Info Card */}
-          <div className="bg-white border-3 border-neo-black rounded-none overflow-hidden shadow-neo-md">
-            {/* Header */}
-            <div className="bg-neo-black text-white px-4 py-3">
-              <div className="flex items-center gap-2 mb-2">
-                <FileTextOutlined className="text-lg" />
-                <span className="font-display font-bold text-sm uppercase">
-                  {previewDoc?.filename}
-                </span>
-              </div>
-              <div className="flex gap-2 text-xs">
-                <span className="bg-neo-primary text-neo-black px-2 py-1 border-2 border-neo-black font-bold uppercase">
-                  CITED
-                </span>
-                {previewDoc?.analysis?.ai_analysis_output?.confidence_level && (
-                  <span className="bg-neo-active text-white px-2 py-1 border-2 border-neo-black font-bold uppercase">
-                    {previewDoc.analysis.ai_analysis_output.confidence_level}
+      {/* ✅ AI Context Preview Drawer - Neo-Brutalism Style */}
+      <Drawer
+        title={
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 bg-neo-primary rounded-full animate-pulse"></div>
+            <span className="font-display font-bold uppercase text-sm">AI CONTEXT</span>
+          </div>
+        }
+        placement="right"
+        width={500}
+        onClose={() => setPreviewDrawerOpen(false)}
+        open={previewDrawerOpen}
+        className="font-sans neo-drawer"
+      >
+        {previewDoc ? (
+          <div className="space-y-4">
+            {/* Document Info Card */}
+            <div className="bg-white border-3 border-neo-black rounded-none overflow-hidden shadow-neo-md">
+              {/* Header */}
+              <div className="bg-neo-black text-white px-4 py-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <FileTextOutlined className="text-lg" />
+                  <span className="font-display font-bold text-sm uppercase">
+                    {previewDoc?.filename}
                   </span>
+                </div>
+                <div className="flex gap-2 text-xs">
+                  <span className="bg-neo-primary text-neo-black px-2 py-1 border-2 border-neo-black font-bold uppercase">
+                    CITED
+                  </span>
+                  {previewDoc?.analysis?.ai_analysis_output?.confidence_level && (
+                    <span className="bg-neo-active text-white px-2 py-1 border-2 border-neo-black font-bold uppercase">
+                      {previewDoc.analysis.ai_analysis_output.confidence_level}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* AI Context Section */}
+              <div className="p-4 space-y-4">
+                {/* Why This Document */}
+                {previewDoc?.analysis?.ai_analysis_output?.key_information?.content_summary && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <i className="ph-bold ph-brain text-neo-primary"></i>
+                      <span className="text-xs font-bold uppercase tracking-wider text-gray-700">
+                        AI 摘要
+                      </span>
+                    </div>
+                    <div className="bg-gray-50 border-2 border-gray-300 p-3 text-sm text-gray-800 leading-relaxed">
+                      {previewDoc.analysis.ai_analysis_output.key_information.content_summary}
+                    </div>
+                  </div>
+                )}
+
+                {/* Key Information Provided to AI */}
+                {previewDoc?.analysis?.ai_analysis_output?.key_information && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <i className="ph-bold ph-list-bullets text-neo-active"></i>
+                      <span className="text-xs font-bold uppercase tracking-wider text-gray-700">
+                        提供給 AI 的關鍵信息
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {previewDoc.analysis.ai_analysis_output.key_information.main_topics?.length > 0 && (
+                        <div className="bg-white border-2 border-neo-black p-3">
+                          <div className="text-xs font-bold text-gray-600 mb-1">主題</div>
+                          <div className="flex flex-wrap gap-2">
+                            {previewDoc.analysis.ai_analysis_output.key_information.main_topics.slice(0, 5).map((topic: string, idx: number) => (
+                              <span key={idx} className="bg-neo-hover text-neo-black px-2 py-1 text-xs font-bold border-2 border-neo-black">
+                                {topic}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {previewDoc.analysis.ai_analysis_output.key_information.key_concepts?.length > 0 && (
+                        <div className="bg-white border-2 border-neo-black p-3">
+                          <div className="text-xs font-bold text-gray-600 mb-1">關鍵概念</div>
+                          <div className="flex flex-wrap gap-2">
+                            {previewDoc.analysis.ai_analysis_output.key_information.key_concepts.slice(0, 5).map((concept: string, idx: number) => (
+                              <span key={idx} className="bg-neo-active text-white px-2 py-1 text-xs font-bold border-2 border-neo-black">
+                                {concept}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Metadata for AI */}
+                {previewDoc?.analysis?.ai_analysis_output && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <i className="ph-bold ph-info text-gray-500"></i>
+                      <span className="text-xs font-bold uppercase tracking-wider text-gray-700">
+                        文檔元數據
+                      </span>
+                    </div>
+                    <div className="bg-gray-50 border-2 border-gray-300 p-3 text-xs space-y-1">
+                      {previewDoc.analysis.ai_analysis_output.content_type && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">文檔類型:</span>
+                          <span className="font-bold">{previewDoc.analysis.ai_analysis_output.content_type}</span>
+                        </div>
+                      )}
+                      {previewDoc.analysis.ai_analysis_output.confidence_level && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">分析置信度:</span>
+                          <span className="font-bold">{previewDoc.analysis.ai_analysis_output.confidence_level}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
-            </div>
-            
-            {/* AI Context Section */}
-            <div className="p-4 space-y-4">
-              {/* Why This Document */}
-              {previewDoc?.analysis?.ai_analysis_output?.key_information?.content_summary && (
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <i className="ph-bold ph-brain text-neo-primary"></i>
-                    <span className="text-xs font-bold uppercase tracking-wider text-gray-700">
-                      AI 摘要
-                    </span>
-                  </div>
-                  <div className="bg-gray-50 border-2 border-gray-300 p-3 text-sm text-gray-800 leading-relaxed">
-                    {previewDoc.analysis.ai_analysis_output.key_information.content_summary}
-                  </div>
-                </div>
-              )}
 
-              {/* Key Information Provided to AI */}
-              {previewDoc?.analysis?.ai_analysis_output?.key_information && (
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <i className="ph-bold ph-list-bullets text-neo-active"></i>
-                    <span className="text-xs font-bold uppercase tracking-wider text-gray-700">
-                      提供給 AI 的關鍵信息
-                    </span>
-                  </div>
-                  <div className="space-y-2">
-                    {previewDoc.analysis.ai_analysis_output.key_information.main_topics?.length > 0 && (
-                      <div className="bg-white border-2 border-neo-black p-3">
-                        <div className="text-xs font-bold text-gray-600 mb-1">主題</div>
-                        <div className="flex flex-wrap gap-2">
-                          {previewDoc.analysis.ai_analysis_output.key_information.main_topics.slice(0, 5).map((topic: string, idx: number) => (
-                            <span key={idx} className="bg-neo-hover text-neo-black px-2 py-1 text-xs font-bold border-2 border-neo-black">
-                              {topic}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {previewDoc.analysis.ai_analysis_output.key_information.key_concepts?.length > 0 && (
-                      <div className="bg-white border-2 border-neo-black p-3">
-                        <div className="text-xs font-bold text-gray-600 mb-1">關鍵概念</div>
-                        <div className="flex flex-wrap gap-2">
-                          {previewDoc.analysis.ai_analysis_output.key_information.key_concepts.slice(0, 5).map((concept: string, idx: number) => (
-                            <span key={idx} className="bg-neo-active text-white px-2 py-1 text-xs font-bold border-2 border-neo-black">
-                              {concept}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Metadata for AI */}
-              {previewDoc?.analysis?.ai_analysis_output && (
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <i className="ph-bold ph-info text-gray-500"></i>
-                    <span className="text-xs font-bold uppercase tracking-wider text-gray-700">
-                      文檔元數據
-                    </span>
-                  </div>
-                  <div className="bg-gray-50 border-2 border-gray-300 p-3 text-xs space-y-1">
-                    {previewDoc.analysis.ai_analysis_output.content_type && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">文檔類型:</span>
-                        <span className="font-bold">{previewDoc.analysis.ai_analysis_output.content_type}</span>
-                      </div>
-                    )}
-                    {previewDoc.analysis.ai_analysis_output.confidence_level && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">分析置信度:</span>
-                        <span className="font-bold">{previewDoc.analysis.ai_analysis_output.confidence_level}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-            
-            {/* Footer Action */}
-            <div className="border-t-3 border-neo-black bg-gray-50 px-4 py-3">
-              <button 
-                className="w-full bg-neo-primary border-2 border-neo-black text-neo-black font-bold text-xs uppercase px-4 py-2 shadow-neo-sm hover:shadow-neo-md hover:translate-x-[-2px] hover:translate-y-[-2px] transition-all flex items-center justify-center gap-2"
-                onClick={() => {
-                  // 先關閉 Drawer，再打開 Modal（確保 Modal 在最上層）
-                  setPreviewDrawerOpen(false);
-                  handleViewDocumentDetail(previewDoc.id);
-                }}
-              >
-                VIEW FULL DETAILS
-                <i className="ph-bold ph-arrow-square-out"></i>
-              </button>
+              {/* Footer Action */}
+              <div className="border-t-3 border-neo-black bg-gray-50 px-4 py-3">
+                <button
+                  className="w-full bg-neo-primary border-2 border-neo-black text-neo-black font-bold text-xs uppercase px-4 py-2 shadow-neo-sm hover:shadow-neo-md hover:translate-x-[-2px] hover:translate-y-[-2px] transition-all flex items-center justify-center gap-2"
+                  onClick={() => {
+                    // 先關閉 Drawer，再打開 Modal（確保 Modal 在最上層）
+                    setPreviewDrawerOpen(false);
+                    handleViewDocumentDetail(previewDoc.id);
+                  }}
+                >
+                  VIEW FULL DETAILS
+                  <i className="ph-bold ph-arrow-square-out"></i>
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      ) : (
-        <Empty description="無文檔預覽" />
-      )}
-    </Drawer>
+        ) : (
+          <Empty description="無文檔預覽" />
+        )}
+      </Drawer>
 
-    {/* Document Details Modal */}
-    <DocumentDetailsModal
-      document={selectedDocForDetail}
-      isOpen={!!selectedDocForDetail}
-      onClose={() => setSelectedDocForDetail(null)}
-    />
+      {/* Document Details Modal */}
+      <DocumentDetailsModal
+        document={selectedDocForDetail}
+        isOpen={!!selectedDocForDetail}
+        onClose={() => setSelectedDocForDetail(null)}
+      />
 
       {/* 文件搜索弹窗 */}
       <FileSearchModal
@@ -2432,7 +2415,7 @@ const AIQAPageNeo: React.FC<AIQAPageProps> = ({ showPCMessage }) => {
             key_concepts: (file.enriched_data as any)?.key_concepts || (file.analysis?.ai_analysis_output as any)?.key_information?.key_concepts || [],
             file_type: file.file_type || undefined,
           };
-          
+
           // 检查是否已经添加
           if (!mentionedFiles.some(f => f.id === mentionedFile.id)) {
             setMentionedFiles(prev => [...prev, mentionedFile]);

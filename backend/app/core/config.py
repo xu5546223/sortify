@@ -59,7 +59,7 @@ class Settings(BaseSettings):
 
     # RRF 融合檢索設定
     RRF_K_CONSTANT: int = 20  # RRF 常數 k（優化後：原60→20）
-    RRF_WEIGHTS: dict = {"summary": 1.5, "chunks": 1.0}  # 摘要和內容塊搜索的權重配置
+    RRF_WEIGHTS: dict = {"summary": 2.5, "chunks": 1.0}  # 摘要和內容塊搜索的權重配置
     
     # 問題分類器設定
     QUESTION_CLASSIFIER_ENABLED: bool = True  # 是否啟用問題分類器

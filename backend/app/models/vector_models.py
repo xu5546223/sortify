@@ -68,8 +68,11 @@ class SemanticSearchResult(BaseModel):
     """語義搜索結果"""
     document_id: str = Field(..., description="匹配的文檔ID")
     similarity_score: float = Field(..., description="相似度分數")
-    summary_text: str = Field(..., description="語義摘要文本")
+    summary_text: str = Field(..., description="匹配的文本片段（可能是摘要或chunk）")
     metadata: Optional[Dict[str, Any]] = Field(None, description="元數據")
+    
+    # 新增：文件摘要（與 chunk 分開）
+    document_summary: Optional[str] = Field(None, description="文件的 AI 生成摘要")
 
     # Phase 4: AI 邏輯分塊行號資訊 (用於精確引用)
     start_line: Optional[str] = Field(None, description="區塊起始行號 (例如 'L001')")

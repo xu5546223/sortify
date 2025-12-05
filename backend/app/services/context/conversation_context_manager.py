@@ -347,9 +347,13 @@ class ConversationContextManager:
                 answer = self.enforce_citations(answer, source_document_ids=source_documents)
                 
                 # 📈 檢測答案中的引用並給相應文檔加分（使用文檔名匹配）
-                await self.boost_cited_documents(answer)
+                cited_doc_ids = await self.boost_cited_documents(answer)
+                
+                # 🧹 移除未被引用的文檔，保持文檔池乾淨
+                if cited_doc_ids:
+                    await self.remove_uncited_documents(cited_doc_ids)
             
-            # 🗑️ 清理低相關性文檔
+            # 🗑️ 清理低相關性文檔（備用清理機制）
             await self.cleanup_low_relevance_docs()
             
             # 保存文檔池到 cached_document_data
@@ -422,6 +426,45 @@ class ConversationContextManager:
             await self._save_document_pool_to_db()
         else:
             logger.debug("✓ 無需清理文檔")
+    
+    async def remove_uncited_documents(self, cited_doc_ids: set) -> int:
+        """
+        移除未被引用的文檔，保持文檔池乾淨
+        
+        策略：只保留 AI 實際引用的文檔，移除未引用的
+        
+        Args:
+            cited_doc_ids: 被引用的文檔ID集合
+            
+        Returns:
+            int: 移除的文檔數量
+        """
+        if not self._document_pool or not cited_doc_ids:
+            logger.debug("跳過清理：文檔池為空或無引用文檔")
+            return 0
+        
+        # 找出未被引用的文檔
+        uncited_doc_ids = set(self._document_pool.keys()) - cited_doc_ids
+        
+        if not uncited_doc_ids:
+            logger.debug("✓ 所有文檔都被引用，無需清理")
+            return 0
+        
+        # 記錄移除的文檔
+        removed_count = 0
+        for doc_id in uncited_doc_ids:
+            doc = self._document_pool.get(doc_id)
+            if doc:
+                logger.info(f"🗑️ 移除未引用文檔: {doc.filename}")
+                del self._document_pool[doc_id]
+                removed_count += 1
+        
+        if removed_count > 0:
+            logger.info(f"✅ 已移除 {removed_count} 個未引用文檔，保留 {len(cited_doc_ids)} 個被引用文檔")
+            # 保存更新後的文檔池
+            await self._save_document_pool_to_db()
+        
+        return removed_count
     
     async def get_retrieval_priority_docs(
         self,
@@ -628,7 +671,7 @@ class ConversationContextManager:
         
         return modified_text
     
-    async def boost_cited_documents(self, answer_text: str):
+    async def boost_cited_documents(self, answer_text: str) -> set:
         """
         檢測答案中的引用並給相應文檔加分
         
@@ -636,10 +679,15 @@ class ConversationContextManager:
         
         Args:
             answer_text: AI 生成的答案文本
+            
+        Returns:
+            set: 被引用的文檔ID集合
         """
+        cited_doc_ids = set()
+        
         if not answer_text or not self._document_pool:
             logger.debug(f"跳過引用加分：answer_text={bool(answer_text)}, pool={bool(self._document_pool)}")
-            return
+            return cited_doc_ids
         
         logger.info(f"🔍 開始檢測引用，文檔池大小: {len(self._document_pool)}")
         logger.debug(f"答案內容（前 200 字符）: {answer_text[:200]}")
@@ -651,7 +699,7 @@ class ConversationContextManager:
         
         if not matches:
             logger.warning("⚠️ 答案中未發現任何引用標註 [xxx](citation:N)")
-            return
+            return cited_doc_ids
         
         # 提取引用中的文本（可能是文檔名或包含文檔名）
         cited_texts = [match[0] for match in matches]
@@ -659,18 +707,17 @@ class ConversationContextManager:
         
         # 通過文檔名匹配（而不是編號）
         boosted_count = 0
-        boosted_docs = set()  # 避免重複加分
         
         for cited_text in cited_texts:
             # 在文檔池中查找匹配的文檔
             for doc_id, doc in self._document_pool.items():
-                if doc_id in boosted_docs:
+                if doc_id in cited_doc_ids:
                     continue
                     
                 # 檢查文檔名是否出現在引用文本中
                 if doc.filename in cited_text or cited_text in doc.filename:
                     doc.boost_citation(citation_boost=0.2)
-                    boosted_docs.add(doc_id)
+                    cited_doc_ids.add(doc_id)
                     boosted_count += 1
                     logger.info(f"  ✅ 文檔 '{doc.filename}' 被引用，相關性提升")
                     break
@@ -681,6 +728,8 @@ class ConversationContextManager:
             await self._save_document_pool_to_db()
         else:
             logger.warning("⚠️ 未能匹配任何文檔（引用文本可能不包含文檔名）")
+        
+        return cited_doc_ids
     
     async def _load_document_pool(self):
         """

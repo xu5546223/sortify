@@ -66,6 +66,7 @@ class AppLogger:
     def __init__(self, name: str, level: int = logging.INFO):
         self.logger = logging.getLogger(name)
         self.logger.setLevel(level)
+        self.logger.propagate = False  # ✅ 防止 log 傳播到 root logger 導致重複輸出
 
         if not self.logger.handlers: # 避免重複添加 handlers
             ch = logging.StreamHandler()

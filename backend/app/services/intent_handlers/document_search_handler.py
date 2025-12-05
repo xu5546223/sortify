@@ -550,26 +550,43 @@ class DocumentSearchHandler:
             max_context_docs = settings.MAX_CONTEXT_DOCUMENTS
 
             for i, result in enumerate(semantic_results[:max_context_docs], 1):
-                # 從 metadata 提取摘要
-                chunk_summary = result.metadata.get('chunk_summary', '') if result.metadata else ''
-                
-                # 嘗試找到對應的文檔以獲取文件名
+                # 找到對應的 MongoDB 文檔
                 matching_doc = next(
                     (doc for doc in documents if str(doc.id) == result.document_id),
                     None
                 )
                 filename = getattr(matching_doc, 'filename', 'Unknown') if matching_doc else 'Unknown'
                 
-                # 構建精簡上下文 (只保留 AI 需要的資訊)
+                # 從 MongoDB 文檔獲取**文件級別的摘要**
+                doc_summary = ""
+                if matching_doc and hasattr(matching_doc, 'analysis') and matching_doc.analysis:
+                    if hasattr(matching_doc.analysis, 'ai_analysis_output') and isinstance(matching_doc.analysis.ai_analysis_output, dict):
+                        key_info = matching_doc.analysis.ai_analysis_output.get('key_information', {})
+                        doc_summary = key_info.get('content_summary', '')
+                
+                # 匹配片段 = 向量搜索匹配到的內容
+                matched_content = result.summary_text
+                
+                # 構建上下文 (文件摘要 + 匹配片段)
                 context_content = f"""=== 文檔 {i}（引用編號: citation:{i}）: {filename} ===
-摘要: {chunk_summary}
+【文件摘要】: {doc_summary}
 
-內容:
-{result.summary_text}
+【匹配片段】:
+{matched_content}
 """
                 context_parts.append(context_content)
             
             logger.info(f"優化上下文: {len(context_parts) - (1 if conversation_history_text else 0)} 個搜索結果 chunk")
+            
+            # 🔍 DEBUG: 顯示實際提供給 AI 的上下文內容
+            logger.info("="*60)
+            logger.info("🔍 [DEBUG] 實際提供給 AI 的上下文內容:")
+            logger.info("="*60)
+            for idx, ctx in enumerate(context_parts, 1):
+                # 限制每個顯示的長度，避免 log 太長
+                preview = ctx[:500] + "..." if len(ctx) > 500 else ctx
+                logger.info(f"\n📄 [上下文 {idx}]\n{preview}")
+            logger.info("="*60)
         
         # Fallback: 如果沒有搜索結果，使用文檔的 AI 分析摘要
         else:

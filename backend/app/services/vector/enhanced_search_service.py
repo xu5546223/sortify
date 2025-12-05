@@ -494,22 +494,32 @@ class EnhancedSearchService:
         sorted_docs = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
         
         # 構建最終結果
+        # 首先建立 document_id -> summary 的映射
+        summary_map = {r.document_id: r.summary_text for r in summary_results}
+        
         final_results = []
         for doc_id, rrf_score in sorted_docs[:target_count]:
             # 優先使用內容塊結果（更精確），如果沒有則使用摘要結果
             if doc_id in chunk_doc_best:
                 result = chunk_doc_best[doc_id]["result"]
+                # chunk 結果：summary_text 是 chunk 內容，document_summary 是文件摘要
+                matched_text = result.summary_text
+                doc_summary = summary_map.get(doc_id, None)
             else:
                 # 在摘要結果中找到該文檔
                 result = next((r for r in summary_results if r.document_id == doc_id), None)
                 if not result:
                     continue
+                # summary 結果：summary_text 和 document_summary 都是摘要
+                matched_text = result.summary_text
+                doc_summary = result.summary_text
             
             # 創建新的結果對象，使用 RRF 分數替換原始相似度分數
             fused_result = SemanticSearchResult(
                 document_id=result.document_id,
                 similarity_score=rrf_score,  # 使用 RRF 分數
-                summary_text=result.summary_text,
+                summary_text=matched_text,  # 匹配到的文本（chunk 或 summary）
+                document_summary=doc_summary,  # 文件的摘要
                 metadata={
                     **(result.metadata or {}),
                     "rrf_score": rrf_score,
@@ -559,7 +569,11 @@ class EnhancedSearchService:
         2. 按文檔去重（每個文檔只保留最高分的塊）
         3. 如果第二階段結果不足，用第一階段結果補充
         4. 🚀 使用 Cross-Encoder 重排序（如果啟用）
+        5. 為每個結果填充 document_summary
         """
+        
+        # 建立 document_id -> summary 的映射（來自第一階段的摘要結果）
+        summary_map = {r.document_id: r.summary_text for r in stage1_results}
         
         # 按相似度分數排序
         stage2_results.sort(key=lambda x: x.similarity_score, reverse=True)
@@ -571,6 +585,20 @@ class EnhancedSearchService:
         for result in stage2_results:
             if result.document_id not in seen_documents:
                 seen_documents.add(result.document_id)
+                
+                # 為 chunk 結果填充 document_summary
+                if result.document_summary is None:
+                    result = SemanticSearchResult(
+                        document_id=result.document_id,
+                        similarity_score=result.similarity_score,
+                        summary_text=result.summary_text,
+                        document_summary=summary_map.get(result.document_id),
+                        metadata=result.metadata,
+                        start_line=result.start_line,
+                        end_line=result.end_line,
+                        chunk_type=result.chunk_type,
+                    )
+                
                 deduplicated_results.append(result)
                 
                 if len(deduplicated_results) >= target_count * 2:  # 多取一些給 reranker
@@ -581,6 +609,18 @@ class EnhancedSearchService:
             for stage1_result in stage1_results:
                 if (stage1_result.document_id not in seen_documents and 
                     len(deduplicated_results) < target_count):
+                    # summary 結果：document_summary = summary_text
+                    if stage1_result.document_summary is None:
+                        stage1_result = SemanticSearchResult(
+                            document_id=stage1_result.document_id,
+                            similarity_score=stage1_result.similarity_score,
+                            summary_text=stage1_result.summary_text,
+                            document_summary=stage1_result.summary_text,
+                            metadata=stage1_result.metadata,
+                            start_line=stage1_result.start_line,
+                            end_line=stage1_result.end_line,
+                            chunk_type=stage1_result.chunk_type,
+                        )
                     deduplicated_results.append(stage1_result)
                     seen_documents.add(stage1_result.document_id)
         
