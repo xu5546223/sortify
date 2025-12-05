@@ -106,3 +106,5 @@ logs/
 *.swp 
 .claude/
 CLAUDE.md
+# Documentation (不上傳到 GitHub)
+docs/
