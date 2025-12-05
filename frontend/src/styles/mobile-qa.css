@@ -20,13 +20,18 @@
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 70px 16px 16px 16px; /* 增加頂部 padding 避免被 header 遮擋 */
+  padding: 70px 16px 16px 16px;
+  /* 增加頂部 padding 避免被 header 遮擋 */
   padding-left: max(16px, env(safe-area-inset-left));
   padding-right: max(16px, env(safe-area-inset-right));
+  padding-bottom: 16px;
+  /* 底部 padding，輸入框在 flex 容器外 */
   -webkit-overflow-scrolling: touch;
   background: #f5f5f5;
   width: 100%;
   box-sizing: border-box;
+  /* 確保可以正常滾動 */
+  min-height: 0;
 }
 
 /* 消息容器 - 獨立的用戶和 AI 容器 */
@@ -37,20 +42,23 @@
   overflow: visible;
   clear: both;
   position: relative;
-  margin-bottom: 0; /* 移除默認間距 */
+  margin-bottom: 0;
+  /* 移除默認間距 */
   background: transparent !important;
   border: none !important;
 }
 
 /* 用戶消息容器 - 獨立間距 */
 .mobile-qa-user-wrapper {
-  margin-bottom: 16px; /* 用戶消息後的間距 */
+  margin-bottom: 16px;
+  /* 用戶消息後的間距 */
   background: transparent !important;
 }
 
 /* AI 消息容器 - 獨立間距 */
 .mobile-qa-assistant-wrapper {
-  margin-bottom: 24px; /* AI 消息後的間距，為下一個問題留空間 */
+  margin-bottom: 24px;
+  /* AI 消息後的間距，為下一個問題留空間 */
   background: transparent !important;
 }
 
@@ -62,8 +70,10 @@
   align-items: flex-start;
   box-sizing: border-box;
   overflow: visible;
-  margin: 0; /* 移除默認 margin */
-  padding: 0; /* 移除默認 padding */
+  margin: 0;
+  /* 移除默認 margin */
+  padding: 0;
+  /* 移除默認 padding */
   background: transparent !important;
   border: none !important;
 }
@@ -102,6 +112,7 @@
     opacity: 0;
     transform: scale(0.95);
   }
+
   to {
     opacity: 1;
     transform: scale(1);
@@ -138,7 +149,8 @@ div.mobile-qa-bubble.user-bubble {
 .assistant-content {
   width: 100% !important;
   max-width: 100% !important;
-  padding: 12px 0 !important; /* 上下留空，左右滿版 */
+  padding: 12px 0 !important;
+  /* 上下留空，左右滿版 */
   margin: 0 !important;
   color: #262626;
   font-size: 15px;
@@ -157,6 +169,7 @@ div.mobile-qa-bubble.user-bubble {
     opacity: 0;
     transform: translateY(10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -175,8 +188,16 @@ div.mobile-qa-bubble.user-bubble {
 }
 
 @keyframes blink {
-  0%, 49% { opacity: 1; }
-  50%, 100% { opacity: 0; }
+
+  0%,
+  49% {
+    opacity: 1;
+  }
+
+  50%,
+  100% {
+    opacity: 0;
+  }
 }
 
 /* 工作流批准 UI */
@@ -274,6 +295,10 @@ div.mobile-qa-bubble.user-bubble {
   padding-bottom: max(12px, env(safe-area-inset-bottom));
   background: white;
   border-top: 1px solid #f0f0f0;
+  /* 支援 column 佈局 */
+  flex-shrink: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .mobile-qa-input {
@@ -580,7 +605,7 @@ div.mobile-qa-bubble.user-bubble {
     padding: 10px 14px;
     font-size: 14px;
   }
-  
+
   .mobile-qa-input {
     font-size: 14px;
   }
@@ -598,36 +623,36 @@ div.mobile-qa-bubble.user-bubble {
   .mobile-qa-container {
     background: #141414;
   }
-  
+
   .assistant-content {
     color: #e8e8e8;
   }
-  
+
   .message-metadata {
     border-top-color: #303030;
   }
-  
+
   .metadata-item {
     background: #262626;
     color: #a8a8a8;
   }
-  
+
   .mobile-qa-input {
     background: #1f1f1f;
     border-color: #434343;
     color: #e8e8e8;
   }
-  
+
   .mobile-quick-question-btn {
     background: #1f1f1f;
     border-color: #434343;
     color: #e8e8e8;
   }
-  
+
   .conversation-item {
     border-bottom-color: #303030;
   }
-  
+
   .conversation-title {
     color: #e8e8e8;
   }
@@ -636,7 +661,7 @@ div.mobile-qa-bubble.user-bubble {
 /* ==================== Streamdown Markdown 樣式 ==================== */
 
 /* 確保 Streamdown 內容正確換行 */
-.assistant-content > div {
+.assistant-content>div {
   width: 100% !important;
   max-width: 100% !important;
   overflow-wrap: break-word !important;
@@ -650,7 +675,7 @@ div.mobile-qa-bubble.user-bubble {
 
 /* Streamdown 根元素 */
 .assistant-content [class*="streamdown"],
-.assistant-content > * {
+.assistant-content>* {
   width: 100% !important;
   max-width: 100% !important;
   overflow-wrap: break-word !important;
@@ -868,4 +893,3 @@ div.mobile-qa-bubble.user-bubble {
   color: #338aff !important;
   background: rgba(77, 166, 255, 0.25);
 }
-

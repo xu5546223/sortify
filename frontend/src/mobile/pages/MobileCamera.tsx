@@ -22,14 +22,33 @@ const MobileCamera: React.FC = () => {
 
   const startCamera = async () => {
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: facingMode },
+      // 設定高解析度約束，提升畫質
+      const constraints: MediaStreamConstraints = {
+        video: {
+          facingMode: facingMode,
+          width: { ideal: 1920, min: 1280 },
+          height: { ideal: 1080, min: 720 },
+          // 設定較高的幀率
+          frameRate: { ideal: 30, min: 24 }
+        },
         audio: false
-      });
+      };
+
+      const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
 
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
         setStream(mediaStream);
+
+        // 記錄實際獲得的解析度
+        const videoTrack = mediaStream.getVideoTracks()[0];
+        const settings = videoTrack.getSettings();
+        console.log('📷 相機設定:', {
+          width: settings.width,
+          height: settings.height,
+          frameRate: settings.frameRate,
+          facingMode: settings.facingMode
+        });
       }
     } catch (error) {
       console.error('無法啟動相機:', error);
@@ -51,25 +70,34 @@ const MobileCamera: React.FC = () => {
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    
+
+    // 使用視頻的實際解析度
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    
+
+    console.log('📸 拍照解析度:', canvas.width, 'x', canvas.height);
+
     const ctx = canvas.getContext('2d');
     if (ctx) {
+      // 使用高品質渲染
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      
+
+      // 使用 0.95 的品質來保留更多細節
       canvas.toBlob((blob) => {
         if (blob) {
           const file = new File([blob], `photo_${Date.now()}.jpg`, { type: 'image/jpeg' });
-          
+
+          console.log('📄 照片檔案大小:', (blob.size / 1024).toFixed(1), 'KB');
+
           // 停止相機
           stopCamera();
-          
+
           // 導航到預覽頁面，傳遞文件
           navigate('/mobile/preview', { state: { file } });
         }
-      }, 'image/jpeg', 0.9);
+      }, 'image/jpeg', 0.95); // 提高畫質從 0.9 到 0.95
     }
   };
 
@@ -96,6 +124,7 @@ const MobileCamera: React.FC = () => {
         left: 0,
         right: 0,
         height: '56px',
+        paddingTop: 'max(0px, env(safe-area-inset-top))',
         background: 'linear-gradient(180deg, rgba(0,0,0,0.5) 0%, transparent 100%)',
         display: 'flex',
         alignItems: 'center',
@@ -104,15 +133,15 @@ const MobileCamera: React.FC = () => {
         zIndex: 1001,
         color: 'white'
       }}>
-        <h1 style={{ 
-          fontSize: '18px', 
-          fontWeight: 600, 
+        <h1 style={{
+          fontSize: '18px',
+          fontWeight: 600,
           margin: 0,
           color: 'white'
         }}>
           拍照
         </h1>
-        <CloseOutlined 
+        <CloseOutlined
           style={{
             fontSize: '24px',
             cursor: 'pointer',
@@ -136,9 +165,9 @@ const MobileCamera: React.FC = () => {
         alignItems: 'center',
         justifyContent: 'center'
       }}>
-        <video 
-          ref={videoRef} 
-          autoPlay 
+        <video
+          ref={videoRef}
+          autoPlay
           playsInline
           muted
           style={{
@@ -148,22 +177,26 @@ const MobileCamera: React.FC = () => {
             display: 'block'
           }}
         />
-        
+
         <canvas ref={canvasRef} style={{ display: 'none' }} />
 
-        {/* 底部控制欄 */}
+        {/* 底部控制欄 - 修復響應式設計 */}
         <div style={{
           position: 'absolute',
           bottom: 0,
           left: 0,
           right: 0,
-          height: '140px',
-          background: 'linear-gradient(0deg, rgba(0,0,0,0.5) 0%, transparent 100%)',
+          // 增加高度和底部 padding 以避開導航欄
+          height: 'auto',
+          minHeight: '160px',
+          background: 'linear-gradient(0deg, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0.3) 70%, transparent 100%)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           gap: '40px',
-          paddingBottom: 'max(24px, env(safe-area-inset-bottom))',
+          // 增加底部 padding，確保不被導航欄擋住
+          paddingTop: '20px',
+          paddingBottom: 'calc(80px + max(20px, env(safe-area-inset-bottom)))',
           zIndex: 1001
         }}>
           {/* 切換鏡頭按鈕 */}
@@ -188,7 +221,7 @@ const MobileCamera: React.FC = () => {
           >
             <SyncOutlined />
           </button>
-          
+
           {/* 拍照按鈕 */}
           <button
             onClick={capturePhoto}

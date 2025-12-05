@@ -10,8 +10,8 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { 
-  SendOutlined, 
+import {
+  SendOutlined,
   FileTextOutlined,
   DownOutlined,
   CloseOutlined,
@@ -43,9 +43,9 @@ interface Message {
   isStreaming?: boolean;
   workflowState?: any;
   workflowAction?: string; // 用戶的工作流決策（approve_search, skip_search 等）
-  progressSteps?: Array<{ 
-    stage: string; 
-    message: string; 
+  progressSteps?: Array<{
+    stage: string;
+    message: string;
     timestamp: Date;
     detail?: any; // 詳細信息
     expanded?: boolean; // 是否展開
@@ -60,22 +60,22 @@ interface Message {
 const MobileAIQA: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  
+
   // 狀態管理
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
-  
+
   // 對話管理
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [showConversationDrawer, setShowConversationDrawer] = useState(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
-  
+
   // 工作流狀態
   const [pendingWorkflow, setPendingWorkflow] = useState<any>(null);
-  
+
   // 文檔預覽
   const [documentInfoCache, setDocumentInfoCache] = useState<Record<string, any>>({});
   const [selectedDocument, setSelectedDocument] = useState<any>(null);
@@ -83,22 +83,27 @@ const MobileAIQA: React.FC = () => {
   const [loadingDocument, setLoadingDocument] = useState(false);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [pdfPreview, setPdfPreview] = useState<string | null>(null);
-  
+
   // 對話級別的來源文檔
   const [conversationDocuments, setConversationDocuments] = useState<string[]>([]);
   const [showSourceDocsPanel, setShowSourceDocsPanel] = useState(false);
-  
+
   // 建議問題
   const [suggestedQuestions, setSuggestedQuestions] = useState<SuggestedQuestion[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [generatingQuestions, setGeneratingQuestions] = useState(false);
-  
+
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
   const shouldAutoScrollRef = useRef<boolean>(true); // 控制是否自動滾動
   const messageContentRefs = useRef<Map<string, HTMLDivElement>>(new Map()); // 存儲每個消息內容的 ref
+
+  // 文檔池狀態 (與 Desktop 保持一致)
+  const [documentPool, setDocumentPool] = useState<any[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [showAllDocuments, setShowAllDocuments] = useState<boolean>(false); // 控制文檔池展開/收起
 
   // 自動滾動到底部
   const scrollToBottom = () => {
@@ -114,77 +119,7 @@ const MobileAIQA: React.FC = () => {
     shouldAutoScrollRef.current = true;
   }, [messages]);
 
-  // 為 AI 回答中的文檔引用添加點擊事件
-  useEffect(() => {
-    const handlers = new Map<HTMLDivElement, (e: Event) => void>();
-
-    // 為每個 AI 消息添加文檔引用點擊處理
-    messages.forEach(msg => {
-      if (msg.role === 'assistant' && !msg.isStreaming) {
-        const contentElement = messageContentRefs.current.get(msg.id);
-        if (!contentElement) return;
-
-        // 查找所有可能的文檔引用（文件名格式）
-        const textNodes = contentElement.querySelectorAll('p, li, td, span');
-
-        textNodes.forEach(node => {
-          const text = node.textContent || '';
-          // 匹配文件名格式：UUID_filename.ext 或類似的模式
-          const fileNameRegex = /([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}_[^\s,，。]+\.\w+|[a-z0-9_]+_\d+_[a-z0-9]+\.\w+)/gi;
-          const matches = text.match(fileNameRegex);
-          
-          if (matches && !node.querySelector('.doc-reference-link')) {
-            matches.forEach(filename => {
-              // 從 conversationDocuments 和 documentInfoCache 中查找對應的文檔 ID
-              const docId = conversationDocuments.find(id => {
-                const docInfo = documentInfoCache[id];
-                return docInfo && (
-                  docInfo.filename === filename || 
-                  docInfo.original_filename === filename ||
-                  docInfo.filename.includes(filename) ||
-                  filename.includes(docInfo.filename)
-                );
-              });
-
-              if (docId) {
-                // 將文件名包裝為可點擊的元素
-                const innerHTML = node.innerHTML;
-                const escapedFilename = filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const newInnerHTML = innerHTML.replace(
-                  new RegExp(escapedFilename, 'g'),
-                  `<span class="doc-reference-link" data-doc-id="${docId}" style="color: #1890ff; cursor: pointer; text-decoration: underline;">${filename}</span>`
-                );
-                if (newInnerHTML !== innerHTML) {
-                  node.innerHTML = newInnerHTML;
-                }
-              }
-            });
-          }
-        });
-
-        // 添加點擊事件監聽器
-        const handleDocRefClick = (e: Event) => {
-          const target = e.target as HTMLElement;
-          if (target.classList.contains('doc-reference-link')) {
-            const docId = target.getAttribute('data-doc-id');
-            if (docId) {
-              handleDocumentClick(docId);
-            }
-          }
-        };
-
-        handlers.set(contentElement, handleDocRefClick);
-        contentElement.addEventListener('click', handleDocRefClick);
-      }
-    });
-
-    // 清理函數：移除所有監聽器
-    return () => {
-      handlers.forEach((handler, element) => {
-        element.removeEventListener('click', handler);
-      });
-    };
-  }, [messages, conversationDocuments, documentInfoCache]);
+  // 移除舊的 DOM 文檔引用點擊事件處理，改由 StreamedMarkdown 內部處理
 
   // 載入對話列表和建議問題
   useEffect(() => {
@@ -203,20 +138,100 @@ const MobileAIQA: React.FC = () => {
     }
   }, [location.state]);
 
+  // ========== Document Pool Smart Merge (Copied from Desktop) ==========
+  const mergeDocumentPool = (meta: any) => {
+    console.log('🔍 [mergeDocumentPool] 收到 metadata:', {
+      has_meta: !!meta,
+      has_document_pool: !!meta?.document_pool,
+      document_pool_type: typeof meta?.document_pool,
+      document_pool_keys: meta?.document_pool ? Object.keys(meta.document_pool).length : 0,
+    });
+
+    if (!meta?.document_pool) {
+      return;
+    }
+
+    // ⭐ 關鍵修復：保持後端返回的順序
+    const backendDocs = Object.entries(meta.document_pool).map(([docId, docInfo]: [string, any]) => ({
+      document_id: docId,
+      filename: docInfo.filename,
+      summary: docInfo.summary,
+      key_concepts: docInfo.key_concepts || [],
+      relevance_score: docInfo.relevance_score,
+      access_count: docInfo.access_count
+    }));
+
+    setDocumentPool(() => {
+      console.log('✅ [mergeDocumentPool] 直接使用後端順序:', {
+        backend_count: backendDocs.length,
+        filenames: backendDocs.map(d => d.filename)
+      });
+      return backendDocs;
+    });
+  };
+
+  // Switch Conversation (Aligned with Desktop)
+  const switchConversation = async (conversationId: string) => {
+    try {
+      console.log('🔄 切換對話:', conversationId);
+      setCurrentConversationId(conversationId);
+      setCurrentSessionId(null);
+      setMessages([]);
+      setDocumentPool([]); // 先清空，載入後更新
+
+      const conversationDetail = await conversationService.getConversation(conversationId);
+
+      // 解析文檔池
+      const docPool: any[] = [];
+      if (conversationDetail.cached_document_data && typeof conversationDetail.cached_document_data === 'object') {
+        for (const [docId, docInfo] of Object.entries(conversationDetail.cached_document_data)) {
+          docPool.push({
+            document_id: docId,
+            ...docInfo as any
+          });
+        }
+        // ⭐ 按相關性排序，與後端保持一致
+        docPool.sort((a: any, b: any) => (b.relevance_score || 0) - (a.relevance_score || 0));
+      }
+      setDocumentPool(docPool);
+
+      // 重建消息歷史
+      const loadedMessages: Message[] = [];
+
+      // 遍歷消息對，並為每個 AI 消息構建文檔池快照
+      for (const msg of conversationDetail.messages) {
+        const message: Message = {
+          id: `${msg.role}-${Date.now()}-${Math.random()}`,
+          role: msg.role,
+          content: msg.content,
+          timestamp: new Date(msg.timestamp),
+          metadata: {
+            tokens_used: msg.tokens_used,
+            source_documents: msg.source_documents
+          }
+        };
+
+        // 如果是 AI 消息且有引用，構建快照 (這裡不做完整快照存儲到 message，主要用於 debug 或將來擴展)
+        // Desktop 版是將其轉為 QA Session，Mobile 版直接存 message
+        // 我們可以在 metadata 中存儲 snapshot，但這會增加內存。
+        // Mobile 暫時主要依賴全局 documentPool 來解析引用，或者我們需要像 Desktop 一樣為每個消息保存 snapshot。
+        // 為保持一致性，我們嘗試在 metadata 中保留必要信息。
+
+        loadedMessages.push(message);
+      }
+
+      setMessages(loadedMessages);
+
+    } catch (error) {
+      console.error('❌ 載入對話失敗:', error);
+      antdMessage.error('載入對話失敗');
+    }
+  };
+
   const loadConversations = async () => {
     try {
       console.log('📡 API 請求: GET /api/v1/conversations');
       const response = await conversationService.listConversations(0, 50);
-      console.log('API: 對話列表獲取成功:', { 
-        total: response.total, 
-        count: response.conversations.length 
-      });
-      
-      // 顯示前幾個對話的基本信息
-      response.conversations.slice(0, 6).forEach((conv, idx) => {
-        console.log(`  [${idx}] ${conv.id}: {title: '${conv.title}', cached_documents: Array(${conv.cached_documents?.length || 0}), cached_docs_length: ${conv.cached_documents?.length || 0}}`);
-      });
-      
       setConversations(response.conversations);
     } catch (error) {
       console.error('❌ 載入對話列表失敗:', error);
@@ -229,12 +244,12 @@ const MobileAIQA: React.FC = () => {
     try {
       setLoadingSuggestions(true);
       console.log('📡 載入建議問題...');
-      
+
       const response = await suggestedQuestionsService.getSuggestedQuestions(4);
-      
+
       console.log(`✅ 成功載入 ${response.questions.length} 個建議問題`);
       setSuggestedQuestions(response.questions);
-      
+
       if (response.questions.length === 0) {
         console.log('💡 提示：尚無建議問題，請先生成問題');
       }
@@ -252,21 +267,21 @@ const MobileAIQA: React.FC = () => {
     try {
       setGeneratingQuestions(true);
       antdMessage.loading({ content: '正在生成智能問題...', key: 'generating', duration: 0 });
-      
+
       console.log('🔄 開始生成建議問題...');
-      
+
       const response = await suggestedQuestionsService.generateSuggestedQuestions({
         force_regenerate: false,
         questions_per_category: 5,
         include_cross_category: true
       });
-      
+
       antdMessage.destroy('generating');
-      
+
       if (response.success) {
         antdMessage.success(`成功生成 ${response.total_questions} 個智能問題！`);
         console.log(`✅ 生成成功: ${response.total_questions} 個問題`);
-        
+
         // 重新載入問題
         await loadSuggestedQuestions();
       } else {
@@ -275,11 +290,11 @@ const MobileAIQA: React.FC = () => {
       }
     } catch (error: any) {
       antdMessage.destroy('generating');
-      
+
       const errorMsg = error?.response?.data?.detail || '生成建議問題失敗';
       antdMessage.error(errorMsg);
       console.error('❌ 生成建議問題失敗:', error);
-      
+
       // 如果錯誤提示包含"沒有聚類信息"或"文檔數量不足"
       if (errorMsg.includes('聚類') || errorMsg.includes('文檔')) {
         antdMessage.info({
@@ -310,7 +325,7 @@ const MobileAIQA: React.FC = () => {
     // 創建流式接收的消息
     const assistantMessageId = `assistant-${Date.now()}`;
     streamingMessageIdRef.current = assistantMessageId;
-    
+
     const assistantMessage: Message = {
       id: assistantMessageId,
       role: 'assistant',
@@ -341,6 +356,10 @@ const MobileAIQA: React.FC = () => {
     const request: StreamQARequest = {
       question: userMessage.content,
       conversation_id: conversationId || undefined,
+      session_id: currentSessionId || undefined, // 改用 session_id (其實 conversation_id 和 session_id 是同一個概念在後端，但 Desktop 傳了 session_id)
+      use_semantic_search: true,
+      use_structured_filter: true,
+      context_limit: 10
     };
 
     try {
@@ -349,7 +368,7 @@ const MobileAIQA: React.FC = () => {
         onChunk: (text: string) => {
           // AI 現在直接輸出 Markdown，Streamdown 會自動處理
           // 直接使用原始 text，無需額外處理
-          setMessages(prev => prev.map(msg => 
+          setMessages(prev => prev.map(msg =>
             msg.id === assistantMessageId
               ? { ...msg, content: msg.content + text }
               : msg
@@ -357,7 +376,7 @@ const MobileAIQA: React.FC = () => {
         },
         onComplete: (fullText: string) => {
           // 流式完成
-          setMessages(prev => prev.map(msg => 
+          setMessages(prev => prev.map(msg =>
             msg.id === assistantMessageId
               ? { ...msg, isStreaming: false }
               : msg
@@ -370,7 +389,7 @@ const MobileAIQA: React.FC = () => {
           // 需要用戶批准
           console.log('🔔 收到批准請求:', approvalData);
           console.log('📝 當前 assistantMessageId:', assistantMessageId);
-          
+
           // 合併 workflow_state 和額外數據
           const mergedState = {
             ...approvalData.workflow_state,
@@ -379,7 +398,7 @@ const MobileAIQA: React.FC = () => {
             next_action: approvalData.next_action,
             pending_approval: approvalData.pending_approval
           };
-          
+
           setPendingWorkflow({
             messageId: assistantMessageId,
             state: mergedState,
@@ -387,10 +406,10 @@ const MobileAIQA: React.FC = () => {
           });
           setIsStreaming(false);
           setIsLoading(false);
-          
+
           // 更新消息以顯示批准請求（保留 progressSteps）
           setMessages(prev => {
-            const updated = prev.map(msg => 
+            const updated = prev.map(msg =>
               msg.id === assistantMessageId
                 ? { ...msg, workflowState: mergedState, isStreaming: false }
                 : msg
@@ -407,9 +426,9 @@ const MobileAIQA: React.FC = () => {
               const currentSteps = msg.progressSteps || [];
               return {
                 ...msg,
-                progressSteps: [...currentSteps, { 
-                  stage, 
-                  message, 
+                progressSteps: [...currentSteps, {
+                  stage,
+                  message,
                   timestamp: new Date(),
                   detail,
                   expanded: false // 默認不展開
@@ -420,38 +439,27 @@ const MobileAIQA: React.FC = () => {
           }));
         },
         onMetadata: (metadata) => {
+          console.log('📥 收到 Metadata:', metadata);
+          // 合併文檔池
+          mergeDocumentPool(metadata);
+
           // 接收元數據
-          setMessages(prev => prev.map(msg => 
+          setMessages(prev => prev.map(msg =>
             msg.id === assistantMessageId
               ? { ...msg, metadata }
               : msg
           ));
-          
-          // 更新對話級別的來源文檔
-          if (metadata?.source_documents && Array.isArray(metadata.source_documents)) {
-            setConversationDocuments(prev => {
-              // 合併新的文檔 ID，去重
-              const newDocs = metadata.source_documents!.filter((docId: string) => !prev.includes(docId));
-              if (newDocs.length > 0) {
-                console.log('📄 新增來源文檔:', newDocs);
-                // 載入新文檔的信息
-                loadDocumentInfo(newDocs);
-                return [...prev, ...newDocs];
-              }
-              return prev;
-            });
-          }
         },
         onError: (error: string) => {
           console.error('流式問答失敗:', error);
           antdMessage.error(`問答失敗: ${error}`);
-          
-          setMessages(prev => prev.map(msg => 
+
+          setMessages(prev => prev.map(msg =>
             msg.id === assistantMessageId
               ? { ...msg, content: `抱歉，發生錯誤: ${error}`, isStreaming: false }
               : msg
           ));
-          
+
           setIsStreaming(false);
           setIsLoading(false);
         }
@@ -459,13 +467,13 @@ const MobileAIQA: React.FC = () => {
     } catch (error) {
       console.error('問答失敗:', error);
       antdMessage.error('問答失敗，請重試');
-      
-      setMessages(prev => prev.map(msg => 
+
+      setMessages(prev => prev.map(msg =>
         msg.id === assistantMessageId
           ? { ...msg, content: '抱歉，處理您的問題時發生錯誤。', isStreaming: false }
           : msg
       ));
-      
+
       setIsStreaming(false);
       setIsLoading(false);
     }
@@ -482,7 +490,7 @@ const MobileAIQA: React.FC = () => {
   const toggleProgressDetail = (messageId: string, stepIndex: number) => {
     // 展開/折疊時不自動滾動到底部
     shouldAutoScrollRef.current = false;
-    
+
     setMessages(prev => prev.map(msg => {
       if (msg.id === messageId && msg.progressSteps) {
         const updatedSteps = [...msg.progressSteps];
@@ -500,26 +508,26 @@ const MobileAIQA: React.FC = () => {
   const loadDocumentInfo = async (documentIds: string[]) => {
     try {
       const newDocInfo: Record<string, any> = {};
-      
+
       for (const docId of documentIds) {
         // 檢查緩存
         if (documentInfoCache[docId]) {
           continue;
         }
-        
+
         try {
           const response = await apiClient.get(`/documents/${docId}`);
           newDocInfo[docId] = response.data;
         } catch (error) {
           console.error(`獲取文檔 ${docId} 信息失敗:`, error);
-          newDocInfo[docId] = { 
+          newDocInfo[docId] = {
             id: docId,
             filename: '未知文檔',
             status: 'unknown'
           };
         }
       }
-      
+
       if (Object.keys(newDocInfo).length > 0) {
         setDocumentInfoCache(prev => ({ ...prev, ...newDocInfo }));
       }
@@ -529,24 +537,46 @@ const MobileAIQA: React.FC = () => {
   };
 
   // 處理文檔點擊 - 打開預覽抽屜
-  const handleDocumentClick = async (documentId: string) => {
+  // 參數 docIdInput 可以是文檔 ID 字符串 (舊邏輯) 或 引用編號數字 (新邏輯)
+  const handleDocumentClick = async (docIdInput: string | number) => {
+    let documentId: string | undefined;
+
+    if (typeof docIdInput === 'number') {
+      // 新邏輯：引用編號 (1-based index)
+      const index = docIdInput - 1;
+      if (index >= 0 && index < documentPool.length) {
+        documentId = documentPool[index].document_id;
+        console.log(`📄 引用點擊 [${docIdInput}] -> ID: ${documentId}`);
+      } else {
+        console.warn(`⚠️ 引用編號 ${docIdInput} 超出文檔池範圍 (size: ${documentPool.length})`);
+        antdMessage.error(`引用編號 ${docIdInput} 超出範圍`);
+        return;
+      }
+    } else {
+      // 舊邏輯或直接傳 ID
+      documentId = docIdInput;
+    }
+
+    if (!documentId) return;
+
     setLoadingDocument(true);
     setShowDocumentDrawer(true);
     setImagePreview(null);
     setPdfPreview(null);
-    
+
     try {
-      // 從緩存或重新加載
-      let docData = documentInfoCache[documentId];
-      
+      // 嘗試從 documentPool 獲取基本信息
+      let docData = documentPool.find(d => d.document_id === documentId) || documentInfoCache[documentId];
+
       if (!docData || !docData.analysis) {
         const response = await apiClient.get(`/documents/${documentId}`);
         docData = response.data;
-        setDocumentInfoCache(prev => ({ ...prev, [documentId]: docData }));
+        // 更新緩存
+        setDocumentInfoCache(prev => ({ ...prev, [documentId!]: docData }));
       }
-      
+
       setSelectedDocument(docData);
-      
+
       // 如果是圖片，加載預覽
       if (isImageFile(docData.file_type)) {
         try {
@@ -560,7 +590,7 @@ const MobileAIQA: React.FC = () => {
           console.error('❌ 加載圖片預覽失敗:', err);
         }
       }
-      
+
       // 如果是 PDF，加載預覽（第一頁）
       if (isPdfFile(docData.file_type)) {
         try {
@@ -599,7 +629,7 @@ const MobileAIQA: React.FC = () => {
   const closeDocumentDrawer = () => {
     setShowDocumentDrawer(false);
     setSelectedDocument(null);
-    
+
     // 清理 blob URLs
     if (imagePreview) {
       URL.revokeObjectURL(imagePreview);
@@ -616,7 +646,7 @@ const MobileAIQA: React.FC = () => {
     if (selectedDocument) {
       // 傳遞當前對話 ID 作為狀態，以便返回時能恢復對話
       navigate(`/mobile/documents/${selectedDocument.id}`, {
-        state: { 
+        state: {
           fromConversation: currentConversationId,
           returnPath: '/mobile/qa'
         }
@@ -629,7 +659,7 @@ const MobileAIQA: React.FC = () => {
     if (!pendingWorkflow || !inputValue.trim()) return;
 
     const clarificationText = inputValue.trim();
-    
+
     // 添加用戶的澄清回答
     const clarificationMessage: Message = {
       id: `user-clarification-${Date.now()}`,
@@ -637,14 +667,14 @@ const MobileAIQA: React.FC = () => {
       content: clarificationText,
       timestamp: new Date()
     };
-    
+
     setMessages(prev => [...prev, clarificationMessage]);
     setInputValue('');
-    
+
     // 清除工作流狀態
     setPendingWorkflow(null);
     setIsLoading(true);
-    
+
     const assistantMessageId = `assistant-${Date.now()}`;
     const assistantMessage: Message = {
       id: assistantMessageId,
@@ -667,14 +697,14 @@ const MobileAIQA: React.FC = () => {
     try {
       await streamQA(request, {
         onChunk: (text: string) => {
-          setMessages(prev => prev.map(msg => 
+          setMessages(prev => prev.map(msg =>
             msg.id === assistantMessageId
               ? { ...msg, content: msg.content + text }
               : msg
           ));
         },
         onComplete: (fullText: string) => {
-          setMessages(prev => prev.map(msg => 
+          setMessages(prev => prev.map(msg =>
             msg.id === assistantMessageId
               ? { ...msg, isStreaming: false }
               : msg
@@ -686,7 +716,7 @@ const MobileAIQA: React.FC = () => {
           // 可能在提交澄清後還需要其他批准（如搜索批准）
           console.log('🔔 [澄清後] 收到批准請求:', approvalData);
           console.log('📝 [澄清後] 當前 assistantMessageId:', assistantMessageId);
-          
+
           // 合併 workflow_state 和額外數據
           const mergedState = {
             ...approvalData.workflow_state,
@@ -695,7 +725,7 @@ const MobileAIQA: React.FC = () => {
             next_action: approvalData.next_action,
             pending_approval: approvalData.pending_approval
           };
-          
+
           setPendingWorkflow({
             messageId: assistantMessageId,
             state: mergedState,
@@ -703,10 +733,10 @@ const MobileAIQA: React.FC = () => {
           });
           setIsStreaming(false);
           setIsLoading(false);
-          
+
           // 更新消息
           setMessages(prev => {
-            const updated = prev.map(msg => 
+            const updated = prev.map(msg =>
               msg.id === assistantMessageId
                 ? { ...msg, workflowState: mergedState, isStreaming: false }
                 : msg
@@ -722,9 +752,9 @@ const MobileAIQA: React.FC = () => {
               const currentSteps = msg.progressSteps || [];
               return {
                 ...msg,
-                progressSteps: [...currentSteps, { 
-                  stage, 
-                  message, 
+                progressSteps: [...currentSteps, {
+                  stage,
+                  message,
                   timestamp: new Date(),
                   detail,
                   expanded: false
@@ -735,12 +765,16 @@ const MobileAIQA: React.FC = () => {
           }));
         },
         onMetadata: (metadata) => {
-          setMessages(prev => prev.map(msg => 
+          console.log('📥 [澄清後] 收到 Metadata:', metadata);
+          // 合併文檔池
+          mergeDocumentPool(metadata);
+
+          setMessages(prev => prev.map(msg =>
             msg.id === assistantMessageId
               ? { ...msg, metadata }
               : msg
           ));
-          
+
           // 更新對話級別的來源文檔
           if (metadata?.source_documents && Array.isArray(metadata.source_documents)) {
             setConversationDocuments(prev => {
@@ -759,7 +793,7 @@ const MobileAIQA: React.FC = () => {
         onError: (error: string) => {
           console.error('提交澄清失敗:', error);
           antdMessage.error(`提交失敗: ${error}`);
-          setMessages(prev => prev.map(msg => 
+          setMessages(prev => prev.map(msg =>
             msg.id === assistantMessageId
               ? { ...msg, content: `抱歉，發生錯誤: ${error}`, isStreaming: false }
               : msg
@@ -800,7 +834,7 @@ const MobileAIQA: React.FC = () => {
           timestamp: new Date(),
           expanded: false
         };
-        
+
         return {
           ...msg,
           workflowAction: action,
@@ -827,14 +861,14 @@ const MobileAIQA: React.FC = () => {
       await streamQA(request, {
         onChunk: (text: string) => {
           // AI 直接輸出 Markdown，無需處理
-          setMessages(prev => prev.map(msg => 
+          setMessages(prev => prev.map(msg =>
             msg.id === assistantMessageId
               ? { ...msg, content: msg.content + text }
               : msg
           ));
         },
         onComplete: () => {
-          setMessages(prev => prev.map(msg => 
+          setMessages(prev => prev.map(msg =>
             msg.id === assistantMessageId
               ? { ...msg, isStreaming: false }
               : msg
@@ -847,7 +881,7 @@ const MobileAIQA: React.FC = () => {
           // 可能在批准後還需要其他批准（如批准搜索後又需要詳細查詢批准）
           console.log('🔔 [批准後] 收到新的批准請求:', approvalData);
           console.log('📝 [批准後] 當前 assistantMessageId:', assistantMessageId);
-          
+
           // 合併 workflow_state 和額外數據
           const mergedState = {
             ...approvalData.workflow_state,
@@ -856,7 +890,7 @@ const MobileAIQA: React.FC = () => {
             next_action: approvalData.next_action,
             pending_approval: approvalData.pending_approval
           };
-          
+
           setPendingWorkflow({
             messageId: assistantMessageId,
             state: mergedState,
@@ -864,10 +898,10 @@ const MobileAIQA: React.FC = () => {
           });
           setIsStreaming(false);
           setIsLoading(false);
-          
+
           // 更新消息
           setMessages(prev => {
-            const updated = prev.map(msg => 
+            const updated = prev.map(msg =>
               msg.id === assistantMessageId
                 ? { ...msg, workflowState: mergedState, isStreaming: false }
                 : msg
@@ -883,9 +917,9 @@ const MobileAIQA: React.FC = () => {
               const currentSteps = msg.progressSteps || [];
               return {
                 ...msg,
-                progressSteps: [...currentSteps, { 
-                  stage, 
-                  message, 
+                progressSteps: [...currentSteps, {
+                  stage,
+                  message,
                   timestamp: new Date(),
                   detail,
                   expanded: false
@@ -896,12 +930,16 @@ const MobileAIQA: React.FC = () => {
           }));
         },
         onMetadata: (metadata) => {
-          setMessages(prev => prev.map(msg => 
+          console.log('📥 [批准後] 收到 Metadata:', metadata);
+          // 合併文檔池
+          mergeDocumentPool(metadata);
+
+          setMessages(prev => prev.map(msg =>
             msg.id === assistantMessageId
               ? { ...msg, metadata }
               : msg
           ));
-          
+
           // 更新對話級別的來源文檔
           if (metadata?.source_documents && Array.isArray(metadata.source_documents)) {
             setConversationDocuments(prev => {
@@ -937,89 +975,25 @@ const MobileAIQA: React.FC = () => {
     setMessages([]);
     setPendingWorkflow(null);
     setConversationDocuments([]);
+
     setShowSourceDocsPanel(false);
     setShowConversationDrawer(false);
     antdMessage.success('開始新對話');
   };
 
-  // 切換對話
-  const switchConversation = async (conversationId: string) => {
-    try {
-      setCurrentConversationId(conversationId);
-      setMessages([]);
-      setPendingWorkflow(null);
-      
-      const conversationDetail = await conversationService.getConversation(conversationId);
-      
-      console.log('📥 載入對話詳情:', {
-        id: conversationDetail.id,
-        title: conversationDetail.title,
-        messageCount: conversationDetail.messages.length,
-        cachedDocuments: conversationDetail.cached_documents?.length || 0
-      });
-      
-      // 設置對話的來源文檔列表
-      const cachedDocs = conversationDetail.cached_documents || [];
-      setConversationDocuments(cachedDocs);
-      
-      // 批量加載文檔信息（避免重複請求）
-      if (cachedDocs.length > 0) {
-        loadDocumentInfo(cachedDocs);
-      }
-      
-      const loadedMessages: Message[] = [];
-      
-      // 確保消息是成對的（用戶問題 + AI 回答）
-      for (let i = 0; i < conversationDetail.messages.length; i += 2) {
-        const userMsg = conversationDetail.messages[i];
-        const assistantMsg = conversationDetail.messages[i + 1];
-        
-        // 只有當用戶消息和助手消息都存在時才添加
-        if (userMsg && assistantMsg && userMsg.role === 'user' && assistantMsg.role === 'assistant') {
-          // AI 現在直接輸出 Markdown，內容已是正確格式，無需處理
-          loadedMessages.push({
-            id: `user-${i}`,
-            role: 'user',
-            content: userMsg.content,
-            timestamp: new Date(userMsg.timestamp)
-          });
-          
-          loadedMessages.push({
-            id: `assistant-${i}`,
-            role: 'assistant',
-            content: assistantMsg.content,
-            timestamp: new Date(assistantMsg.timestamp),
-            metadata: {
-              tokens_used: assistantMsg.tokens_used || 0
-            }
-          });
-        }
-      }
-      
-      setMessages(loadedMessages);
-      setShowConversationDrawer(false);
-      
-      console.log('✅ 成功載入', loadedMessages.length, '條消息');
-      antdMessage.success(`已載入對話 (${loadedMessages.length / 2} 個問答)`);
-    } catch (error) {
-      console.error('❌ 切換對話失敗:', error);
-      antdMessage.error('切換對話失敗');
-    }
-  };
-
   // 刪除對話
   const deleteConversation = async (conversationId: string, event: React.MouseEvent) => {
     event.stopPropagation();
-    
+
     try {
       await conversationService.deleteConversation(conversationId);
       await loadConversations();
-      
+
       if (conversationId === currentConversationId) {
         setCurrentConversationId(null);
         setMessages([]);
       }
-      
+
       antdMessage.success('對話已刪除');
     } catch (error) {
       console.error('刪除對話失敗:', error);
@@ -1031,7 +1005,7 @@ const MobileAIQA: React.FC = () => {
   const handleQuestionClick = async (question: SuggestedQuestion) => {
     // 設置輸入框內容
     setInputValue(question.question);
-    
+
     // 標記問題已使用（異步，不阻塞用戶操作）
     suggestedQuestionsService.markQuestionUsed(question.id).catch(err => {
       console.warn('標記問題使用失敗（非關鍵錯誤）:', err);
@@ -1039,7 +1013,7 @@ const MobileAIQA: React.FC = () => {
   };
 
   // 過濾對話列表
-  const filteredConversations = conversations.filter(conv => 
+  const filteredConversations = conversations.filter(conv =>
     conv.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -1060,7 +1034,7 @@ const MobileAIQA: React.FC = () => {
 
     filteredConversations.forEach(conv => {
       const convDate = new Date(conv.updated_at);
-      
+
       if (convDate.toDateString() === today.toDateString()) {
         groups[0].conversations.push(conv);
       } else if (convDate.toDateString() === yesterday.toDateString()) {
@@ -1081,10 +1055,10 @@ const MobileAIQA: React.FC = () => {
     if (state?.prefilledQuestion && state?.fromQuestionBank) {
       // 設置輸入框的值為預填問題
       setInputValue(state.prefilledQuestion);
-      
+
       // 清除 location state 以避免重複填充
       window.history.replaceState({}, document.title);
-      
+
       // 如果當前沒有正在進行的對話，自動聚焦到輸入框
       if (textareaRef.current && messages.length === 0) {
         setTimeout(() => {
@@ -1100,7 +1074,7 @@ const MobileAIQA: React.FC = () => {
     if (state?.conversationId && state.conversationId !== currentConversationId) {
       console.log('🔄 從文檔詳情返回，恢復對話:', state.conversationId);
       switchConversation(state.conversationId);
-      
+
       // 清除 state
       window.history.replaceState({}, document.title);
     }
@@ -1119,65 +1093,16 @@ const MobileAIQA: React.FC = () => {
     }
   }, [messages]);
 
-  // 為 AI 回答中的文檔引用添加點擊事件
-  useEffect(() => {
-    messages.forEach((msg) => {
-      if (msg.role === 'assistant' && msg.metadata?.source_documents) {
-        const contentElement = messageContentRefs.current.get(msg.id);
-        if (contentElement) {
-          // 查找所有的文檔文件名
-          const sourceDocIds = msg.metadata.source_documents;
-          
-          // 獲取所有文檔信息
-          sourceDocIds.forEach(docId => {
-            const docInfo = documentInfoCache[docId];
-            if (docInfo && docInfo.filename) {
-              // 查找內容中的文件名
-              const filename = docInfo.filename;
-              const filenamePattern = new RegExp(filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
-              
-              // 找到所有匹配的文字節點
-              const walker = document.createTreeWalker(
-                contentElement,
-                NodeFilter.SHOW_TEXT,
-                null
-              );
-              
-              const textNodes: Text[] = [];
-              let node;
-              while ((node = walker.nextNode())) {
-                if (node.textContent && filenamePattern.test(node.textContent)) {
-                  textNodes.push(node as Text);
-                }
-              }
-              
-              // 為每個匹配的文字節點添加點擊處理
-              textNodes.forEach((textNode) => {
-                const parent = textNode.parentNode as HTMLElement;
-                if (parent && !parent.classList.contains('doc-reference-link')) {
-                  const span = document.createElement('span');
-                  span.className = 'doc-reference-link';
-                  span.textContent = filename;
-                  span.onclick = () => handleDocumentClick(docId);
-                  
-                  textNode.replaceWith(span);
-                }
-              });
-            }
-          });
-        }
-      }
-    });
-  }, [messages, documentInfoCache]);
+
 
   return (
     <>
-      <MobileHeader 
-        title="智能問答" 
+      <MobileHeader
+        title="智能問答"
         showMenu={true}
         onMenuClick={() => setShowConversationDrawer(true)}
       />
-      
+
       <div className="mobile-qa-container">
         {/* 消息列表 */}
         <div className="mobile-qa-messages">
@@ -1186,7 +1111,7 @@ const MobileAIQA: React.FC = () => {
               <div className="mobile-empty-icon">💬</div>
               <div className="mobile-empty-text">開始對話</div>
               <div className="mobile-empty-subtext">向 AI 提問關於您文件的問題</div>
-              
+
               <div style={{ marginTop: '24px', width: '100%' }}>
                 <p style={{ fontSize: '14px', color: '#666', marginBottom: '12px', textAlign: 'center' }}>
                   {loadingSuggestions ? '載入中...' : '💡 智能建議問題：'}
@@ -1224,7 +1149,7 @@ const MobileAIQA: React.FC = () => {
                     }}>
                       {!loadingSuggestions && (
                         <>
-                          尚無智能問題<br/>
+                          尚無智能問題<br />
                           <span style={{ fontSize: '12px' }}>
                             請先上傳文檔並執行智能分類
                           </span>
@@ -1249,22 +1174,22 @@ const MobileAIQA: React.FC = () => {
                       </div>
                     </div>
                   )}
-                  
+
                   {/* AI 消息 - 獨立容器 */}
                   {msg.role === 'assistant' && (
                     <div className="mobile-qa-message-wrapper mobile-qa-assistant-wrapper">
                       <div className="mobile-qa-message assistant">
                         <div className="assistant-content">
                           {/* AI 圖標 */}
-                          <div style={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: '8px', 
+                          <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
                             marginBottom: '8px',
                             color: '#8c8c8c',
                             fontSize: '13px'
                           }}>
-                            <span style={{ 
+                            <span style={{
                               fontSize: '18px',
                               background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                               WebkitBackgroundClip: 'text',
@@ -1272,20 +1197,20 @@ const MobileAIQA: React.FC = () => {
                             }}>🤖</span>
                             <span>AI 助手</span>
                           </div>
-                          
+
                           {/* AI 回答內容 - 使用 Streamdown 渲染 Markdown */}
                           <div style={{ paddingLeft: '26px' }}>
                             {/* 進度時間線 */}
                             {msg.progressSteps && msg.progressSteps.length > 0 && (
                               <div style={{ marginTop: '12px', marginBottom: '12px' }}>
                                 {msg.progressSteps.map((step, idx) => (
-                                  <div key={idx} style={{ 
+                                  <div key={idx} style={{
                                     marginBottom: '8px',
                                     animation: 'fade-in 0.3s ease-out'
                                   }}>
-                                    <div 
+                                    <div
                                       style={{
-                                        display: 'flex', 
+                                        display: 'flex',
                                         alignItems: 'flex-start',
                                         fontSize: '13px',
                                         color: '#595959',
@@ -1307,7 +1232,7 @@ const MobileAIQA: React.FC = () => {
                                         </span>
                                       )}
                                     </div>
-                                    
+
                                     {/* 詳細信息展開區域 */}
                                     {step.detail && step.expanded && (
                                       <div style={{
@@ -1325,7 +1250,7 @@ const MobileAIQA: React.FC = () => {
                                         {typeof step.detail === 'string' && (
                                           <div style={{ whiteSpace: 'pre-wrap' }}>{step.detail}</div>
                                         )}
-                                        
+
                                         {/* 查詢重寫 */}
                                         {step.detail.queries && (
                                           <div>
@@ -1333,7 +1258,7 @@ const MobileAIQA: React.FC = () => {
                                               生成了 {step.detail.count} 個優化查詢：
                                             </div>
                                             {step.detail.queries.map((q: string, qIdx: number) => (
-                                              <div key={qIdx} style={{ 
+                                              <div key={qIdx} style={{
                                                 marginBottom: '6px',
                                                 paddingLeft: '12px',
                                                 borderLeft: '2px solid #d9d9d9'
@@ -1343,14 +1268,14 @@ const MobileAIQA: React.FC = () => {
                                             ))}
                                           </div>
                                         )}
-                                        
+
                                         {/* MongoDB 查詢結果詳細信息 */}
                                         {step.detail.queried_documents !== undefined && (
                                           <div>
                                             <div style={{ fontWeight: 600, marginBottom: '8px', color: '#52c41a' }}>
                                               📊 MongoDB 查詢統計：
                                             </div>
-                                            <div style={{ 
+                                            <div style={{
                                               display: 'flex',
                                               flexDirection: 'column',
                                               gap: '6px',
@@ -1376,7 +1301,7 @@ const MobileAIQA: React.FC = () => {
                                                 </div>
                                               )}
                                             </div>
-                                            
+
                                             {/* 顯示實際的 MongoDB 查詢數據 */}
                                             {step.detail.mongodb_data && step.detail.mongodb_data.length > 0 && (
                                               <div>
@@ -1391,15 +1316,15 @@ const MobileAIQA: React.FC = () => {
                                                     borderRadius: '6px',
                                                     border: '1px solid #e8e8e8'
                                                   }}>
-                                                    <div style={{ 
-                                                      fontWeight: 600, 
+                                                    <div style={{
+                                                      fontWeight: 600,
                                                       marginBottom: '8px',
                                                       color: '#262626',
                                                       fontSize: '13px'
                                                     }}>
                                                       {data.metadata?.filename || `文檔 [${dataIdx + 1}]`}
                                                       {data.metadata?.reference_number && (
-                                                        <span style={{ 
+                                                        <span style={{
                                                           marginLeft: '6px',
                                                           color: '#8c8c8c',
                                                           fontSize: '11px'
@@ -1408,7 +1333,7 @@ const MobileAIQA: React.FC = () => {
                                                         </span>
                                                       )}
                                                     </div>
-                                                    
+
                                                     {/* 顯示提取的詳細數據 */}
                                                     {data.metadata?.detailed_data && (
                                                       <div style={{
@@ -1437,7 +1362,7 @@ const MobileAIQA: React.FC = () => {
                                 ))}
                               </div>
                             )}
-                            
+
                             {msg.content ? (
                               <div ref={(el) => {
                                 if (el) {
@@ -1446,174 +1371,106 @@ const MobileAIQA: React.FC = () => {
                                   messageContentRefs.current.delete(msg.id);
                                 }
                               }}>
-                                <StreamedMarkdown 
+                                <StreamedMarkdown
                                   content={msg.content}
                                   isStreaming={msg.isStreaming}
+                                  onCitationClick={handleDocumentClick}
+                                  documentPool={documentPool}
+                                  onFileClick={handleDocumentClick}
                                 />
                               </div>
                             ) : (
                               msg.isStreaming && (!msg.progressSteps || msg.progressSteps.length === 0) ? '正在思考...' : ''
                             )}
-                            
-                            {/* 工作流批准UI */}
-                            {msg.workflowState && (() => {
-                              // 如果是當前 pending 的工作流，顯示交互式卡片
-                              if (pendingWorkflow && pendingWorkflow.messageId === msg.id) {
-                                console.log('🎨 渲染工作流卡片:', { 
-                                  messageId: msg.id, 
-                                  current_step: msg.workflowState.current_step,
-                                  workflowState: msg.workflowState 
-                                });
-                                return (
-                                  <>
-                                  {msg.workflowState.current_step === 'need_clarification' && (
-                                    <MobileWorkflowCard
-                                      type="clarification"
-                                      clarificationQuestion={msg.workflowState.clarification_question}
-                                      suggestedResponses={msg.workflowState.suggested_responses}
-                                      onFillMainInput={handleFillMainInput}
-                                    />
-                                  )}
-                                    {msg.workflowState.current_step === 'awaiting_search_approval' && (
-                                      <MobileWorkflowCard
-                                        type="search_approval"
-                                        searchPreview={msg.workflowState.search_preview}
-                                        queryRewriteResult={msg.workflowState.query_rewrite_result}
-                                        classification={msg.workflowState.classification}
-                                        estimatedDocuments={msg.workflowState.estimated_documents}
-                                        estimatedTime={msg.workflowState.estimated_time}
-                                        onApproveSearch={() => handleApprove('approve_search')}
-                                        onSkipSearch={() => handleApprove('skip_search')}
-                                        isLoading={isLoading}
-                                      />
-                                    )}
-                                    {msg.workflowState.current_step === 'awaiting_detail_query_approval' && (
-                                      <MobileWorkflowCard
-                                        type="detail_query_approval"
-                                        documentNames={msg.workflowState.document_names}
-                                        queryType={msg.workflowState.query_type}
-                                        onApproveDetailQuery={() => handleApprove('approve_detail_query')}
-                                        onSkipDetailQuery={() => handleApprove('skip_detail_query')}
-                                        isLoading={isLoading}
-                                      />
-                                    )}
-                                  </>
-                                );
-                              }
-                              
-                              // 如果已處理，顯示決策記錄
-                              if (msg.workflowAction) {
-                                const actionLabels = {
-                                  'approve_search': '✅ 已批准文檔搜索',
-                                  'skip_search': '⏭️ 已跳過文檔搜索',
-                                  'approve_detail_query': '✅ 已批准詳細查詢',
-                                  'skip_detail_query': '⏭️ 已跳過詳細查詢'
-                                };
-                                return (
-                                  <div style={{
-                                    marginTop: '12px',
-                                    padding: '10px 14px',
-                                    background: '#f0f7ff',
-                                    border: '1px solid #d9e8ff',
-                                    borderRadius: '8px',
-                                    fontSize: '13px',
-                                    color: '#0066cc',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '8px'
-                                  }}>
-                                    {actionLabels[msg.workflowAction as keyof typeof actionLabels] || msg.workflowAction}
-                                  </div>
-                                );
-                              }
-                              
-                              return null;
-                            })()}
-                            
-                            {/* 來源文檔引用 */}
-                            {msg.metadata?.source_documents && msg.metadata.source_documents.length > 0 && (
-                              <div style={{
-                                marginTop: '16px',
-                                padding: '12px',
-                                background: '#f6f8fa',
-                                borderRadius: '8px',
-                                border: '1px solid #e1e4e8'
-                              }}>
-                                <div style={{
-                                  fontSize: '13px',
-                                  fontWeight: 600,
-                                  color: '#586069',
-                                  marginBottom: '8px',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '6px'
-                                }}>
-                                  <FileTextOutlined style={{ fontSize: '14px' }} />
-                                  參考文檔 ({msg.metadata.source_documents.length})
-                                </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                  {msg.metadata.source_documents.map((docId, idx) => {
-                                    const docInfo = documentInfoCache[docId];
-                                    return (
-                                      <div
-                                        key={docId}
-                                        onClick={() => handleDocumentClick(docId)}
-                                        style={{
-                                          padding: '8px 10px',
-                                          background: 'white',
-                                          borderRadius: '6px',
-                                          border: '1px solid #d1d5db',
-                                          cursor: 'pointer',
-                                          transition: 'all 0.2s',
-                                          fontSize: '13px',
-                                          color: '#1890ff',
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          gap: '8px'
-                                        }}
-                                        onMouseEnter={(e) => {
-                                          e.currentTarget.style.background = '#e6f7ff';
-                                          e.currentTarget.style.borderColor = '#91d5ff';
-                                        }}
-                                        onMouseLeave={(e) => {
-                                          e.currentTarget.style.background = 'white';
-                                          e.currentTarget.style.borderColor = '#d1d5db';
-                                        }}
-                                      >
-                                        <span style={{ 
-                                          fontSize: '11px',
-                                          background: '#e6f7ff',
-                                          color: '#1890ff',
-                                          padding: '2px 6px',
-                                          borderRadius: '4px',
-                                          fontWeight: 600
-                                        }}>
-                                          [{idx + 1}]
-                                        </span>
-                                        <span style={{ flex: 1, fontWeight: 500 }}>
-                                          {docInfo?.filename || `文檔 ${idx + 1}`}
-                                        </span>
-                                        <span style={{ fontSize: '11px', color: '#8c8c8c' }}>
-                                          點擊查看
-                                        </span>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            )}
-                            
+                            {
+                              msg.workflowState && (() => {
+                                // 如果是當前 pending 的工作流，顯示交互式卡片
+                                if (pendingWorkflow && pendingWorkflow.messageId === msg.id) {
+                                  console.log('🎨 渲染工作流卡片:', {
+                                    messageId: msg.id,
+                                    current_step: msg.workflowState.current_step,
+                                    workflowState: msg.workflowState
+                                  });
+                                  return (
+                                    <>
+                                      {msg.workflowState.current_step === 'need_clarification' && (
+                                        <MobileWorkflowCard
+                                          type="clarification"
+                                          clarificationQuestion={msg.workflowState.clarification_question}
+                                          suggestedResponses={msg.workflowState.suggested_responses}
+                                          onFillMainInput={handleFillMainInput}
+                                        />
+                                      )}
+                                      {msg.workflowState.current_step === 'awaiting_search_approval' && (
+                                        <MobileWorkflowCard
+                                          type="search_approval"
+                                          searchPreview={msg.workflowState.search_preview}
+                                          queryRewriteResult={msg.workflowState.query_rewrite_result}
+                                          classification={msg.workflowState.classification}
+                                          estimatedDocuments={msg.workflowState.estimated_documents}
+                                          estimatedTime={msg.workflowState.estimated_time}
+                                          onApproveSearch={() => handleApprove('approve_search')}
+                                          onSkipSearch={() => handleApprove('skip_search')}
+                                          isLoading={isLoading}
+                                        />
+                                      )}
+                                      {msg.workflowState.current_step === 'awaiting_detail_query_approval' && (
+                                        <MobileWorkflowCard
+                                          type="detail_query_approval"
+                                          documentNames={msg.workflowState.document_names}
+                                          queryType={msg.workflowState.query_type}
+                                          onApproveDetailQuery={() => handleApprove('approve_detail_query')}
+                                          onSkipDetailQuery={() => handleApprove('skip_detail_query')}
+                                          isLoading={isLoading}
+                                        />
+                                      )}
+                                    </>
+                                  );
+                                }
+
+                                // 如果已處理，顯示決策記錄
+                                if (msg.workflowAction) {
+                                  const actionLabels = {
+                                    'approve_search': '✅ 已批准文檔搜索',
+                                    'skip_search': '⏭️ 已跳過文檔搜索',
+                                    'approve_detail_query': '✅ 已批准詳細查詢',
+                                    'skip_detail_query': '⏭️ 已跳過詳細查詢'
+                                  };
+                                  return (
+                                    <div style={{
+                                      marginTop: '12px',
+                                      padding: '10px 14px',
+                                      background: '#f0f7ff',
+                                      border: '1px solid #d9e8ff',
+                                      borderRadius: '8px',
+                                      fontSize: '13px',
+                                      color: '#0066cc',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '8px'
+                                    }}>
+                                      {actionLabels[msg.workflowAction as keyof typeof actionLabels] || msg.workflowAction}
+                                    </div>
+                                  );
+                                }
+
+                                return null;
+                              })()
+                            }
+
                             {/* 元數據 */}
-                            {msg.metadata && (
-                              <div className="message-metadata" style={{ marginTop: '12px' }}>
-                                {msg.metadata.tokens_used && (
-                                  <span className="metadata-item">🔢 {msg.metadata.tokens_used} tokens</span>
-                                )}
-                                {msg.metadata.processing_time && (
-                                  <span className="metadata-item">⏱️ {msg.metadata.processing_time.toFixed(2)}s</span>
-                                )}
-                              </div>
-                            )}
+                            {
+                              msg.metadata && (
+                                <div className="message-metadata" style={{ marginTop: '12px' }}>
+                                  {msg.metadata.tokens_used && (
+                                    <span className="metadata-item">🔢 {msg.metadata.tokens_used} tokens</span>
+                                  )}
+                                  {msg.metadata.processing_time && (
+                                    <span className="metadata-item">⏱️ {msg.metadata.processing_time.toFixed(2)}s</span>
+                                  )}
+                                </div>
+                              )
+                            }
                           </div>
                         </div>
                       </div>
@@ -1659,46 +1516,163 @@ const MobileAIQA: React.FC = () => {
         </div>
 
 
-        {/* 輸入框 */}
-        <div className="mobile-qa-input-wrapper">
-          <textarea
-            ref={textareaRef}
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
+
+        {/* 底部輸入區域 (包含文檔池和輸入框) */}
+        <div className="mobile-qa-input-wrapper" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+          {/* 文檔池區域 - 與電腦版一致 */}
+          {documentPool.length > 0 && (
+            <div style={{
+              padding: '8px 0',
+              marginBottom: '8px',
+              borderBottom: '1px solid #e8e8e8'
+            }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '6px'
+              }}>
+                {/* CONTEXT 標籤 */}
+                <span style={{
+                  padding: '2px 6px',
+                  background: '#e6e6e6',
+                  color: '#666',
+                  fontSize: '9px',
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  borderRadius: '3px'
+                }}>
+                  CONTEXT
+                </span>
+
+                {/* 文檔標籤列表 - 根據展開狀態顯示 */}
+                {(showAllDocuments ? documentPool : documentPool.slice(0, 3)).map((doc: any) => {
+                  const getFileIcon = (filename: string) => {
+                    const ext = filename.split('.').pop()?.toLowerCase();
+                    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext || '')) {
+                      return '🖼️';
+                    } else if (['pdf'].includes(ext || '')) {
+                      return '📕';
+                    } else if (['txt', 'md'].includes(ext || '')) {
+                      return '📄';
+                    } else if (['doc', 'docx'].includes(ext || '')) {
+                      return '📘';
+                    } else if (['xls', 'xlsx'].includes(ext || '')) {
+                      return '📗';
+                    }
+                    return '📎';
+                  };
+
+                  return (
+                    <div
+                      key={doc.document_id}
+                      onClick={() => handleDocumentClick(doc.document_id)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '3px',
+                        padding: '3px 8px',
+                        background: 'white',
+                        border: '1px solid #333',
+                        borderRadius: '4px',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        maxWidth: '110px'
+                      }}
+                      title={`${doc.filename}\n相關性: ${((doc.relevance_score || 0) * 100).toFixed(0)}%`}
+                    >
+                      <span style={{ fontSize: '10px' }}>{getFileIcon(doc.filename)}</span>
+                      <span style={{
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        flex: 1
+                      }}>
+                        {doc.filename}
+                      </span>
+                    </div>
+                  );
+                })}
+
+                {/* 展開/收起按鈕 */}
+                {documentPool.length > 3 && (
+                  <button
+                    onClick={() => setShowAllDocuments(!showAllDocuments)}
+                    style={{
+                      padding: '3px 10px',
+                      background: showAllDocuments ? '#1890ff' : '#333',
+                      color: 'white',
+                      fontSize: '10px',
+                      fontWeight: 600,
+                      borderRadius: '4px',
+                      border: 'none',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    {showAllDocuments ? (
+                      <>
+                        <span>↑</span>
+                        <span>收起</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>+{documentPool.length - 3}</span>
+                        <span>↓</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 輸入框行 */}
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
+            <textarea
+              ref={textareaRef}
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  // 判斷當前是否在等待澄清回答
+                  if (pendingWorkflow?.state?.current_step === 'need_clarification') {
+                    handleClarificationSubmit();
+                  } else {
+                    handleSend();
+                  }
+                }
+              }}
+              placeholder={
+                pendingWorkflow?.state?.current_step === 'need_clarification'
+                  ? "輸入您的回答..."
+                  : "輸入您的問題..."
+              }
+              className="mobile-qa-input"
+              disabled={isLoading}
+              rows={1}
+            />
+            <button
+              onClick={() => {
                 // 判斷當前是否在等待澄清回答
                 if (pendingWorkflow?.state?.current_step === 'need_clarification') {
                   handleClarificationSubmit();
                 } else {
                   handleSend();
                 }
-              }
-            }}
-            placeholder={
-              pendingWorkflow?.state?.current_step === 'need_clarification' 
-                ? "輸入您的回答..."
-                : "輸入您的問題..."
-            }
-            className="mobile-qa-input"
-            disabled={isLoading}
-            rows={1}
-          />
-          <button
-            onClick={() => {
-              // 判斷當前是否在等待澄清回答
-              if (pendingWorkflow?.state?.current_step === 'need_clarification') {
-                handleClarificationSubmit();
-              } else {
-                handleSend();
-              }
-            }}
-            disabled={!inputValue.trim() || isLoading}
-            className="mobile-qa-send-btn"
-          >
-            <SendOutlined />
-          </button>
+              }}
+              disabled={!inputValue.trim() || isLoading}
+              className="mobile-qa-send-btn"
+            >
+              <SendOutlined />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1716,7 +1690,7 @@ const MobileAIQA: React.FC = () => {
       >
         {/* 頂部操作區 */}
         <div className="drawer-header-actions">
-          <button 
+          <button
             className="drawer-new-btn"
             onClick={startNewConversation}
           >
@@ -1727,15 +1701,15 @@ const MobileAIQA: React.FC = () => {
         {/* 搜索框 */}
         <div className="drawer-search">
           <div style={{ position: 'relative' }}>
-            <SearchOutlined 
-              style={{ 
-                position: 'absolute', 
-                left: '12px', 
-                top: '50%', 
+            <SearchOutlined
+              style={{
+                position: 'absolute',
+                left: '12px',
+                top: '50%',
                 transform: 'translateY(-50%)',
                 color: '#8c8c8c',
                 fontSize: '14px'
-              }} 
+              }}
             />
             <input
               type="text"
@@ -1787,8 +1761,8 @@ const MobileAIQA: React.FC = () => {
                       )}
                       <div className="conversation-meta-item">
                         <ClockCircleOutlined style={{ fontSize: '11px' }} />
-                        <span>{new Date(conv.updated_at).toLocaleDateString('zh-TW', { 
-                          month: 'numeric', 
+                        <span>{new Date(conv.updated_at).toLocaleDateString('zh-TW', {
+                          month: 'numeric',
                           day: 'numeric',
                           hour: '2-digit',
                           minute: '2-digit'
@@ -1824,32 +1798,32 @@ const MobileAIQA: React.FC = () => {
         styles={{ body: { padding: '16px' } }}
       >
         {loadingDocument ? (
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'center', 
-            alignItems: 'center', 
-            height: '200px' 
+          <div style={{
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            height: '200px'
           }}>
             <LoadingOutlined style={{ fontSize: '32px', color: '#1890ff' }} />
           </div>
         ) : selectedDocument ? (
           <div style={{ paddingBottom: '80px' }}>
             {/* 文檔基本信息 */}
-            <div style={{ 
-              padding: '16px', 
-              background: '#f5f5f5', 
+            <div style={{
+              padding: '16px',
+              background: '#f5f5f5',
               borderRadius: '8px',
               marginBottom: '16px'
             }}>
-              <h3 style={{ 
-                margin: '0 0 12px 0', 
+              <h3 style={{
+                margin: '0 0 12px 0',
                 fontSize: '16px',
                 color: '#262626',
                 wordBreak: 'break-word'
               }}>
                 {selectedDocument.filename}
               </h3>
-              
+
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px', color: '#595959' }}>
                 {selectedDocument.file_type && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -1857,14 +1831,14 @@ const MobileAIQA: React.FC = () => {
                     <span>{selectedDocument.file_type}</span>
                   </div>
                 )}
-                
+
                 {selectedDocument.size && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span style={{ fontWeight: 500 }}>大小:</span>
                     <span>{(selectedDocument.size / 1024).toFixed(2)} KB</span>
                   </div>
                 )}
-                
+
                 {selectedDocument.created_at && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span style={{ fontWeight: 500 }}>上傳時間:</span>
@@ -1877,15 +1851,15 @@ const MobileAIQA: React.FC = () => {
             {/* 圖片預覽 */}
             {imagePreview && (
               <div style={{ marginBottom: '16px' }}>
-                <h4 style={{ 
-                  fontSize: '14px', 
-                  color: '#262626', 
+                <h4 style={{
+                  fontSize: '14px',
+                  color: '#262626',
                   marginBottom: '8px',
                   fontWeight: 600
                 }}>
                   🖼️ 圖片預覽
                 </h4>
-                <div style={{ 
+                <div style={{
                   width: '100%',
                   maxHeight: '300px',
                   overflow: 'hidden',
@@ -1896,8 +1870,8 @@ const MobileAIQA: React.FC = () => {
                   alignItems: 'center',
                   justifyContent: 'center'
                 }}>
-                  <img 
-                    src={imagePreview} 
+                  <img
+                    src={imagePreview}
                     alt={selectedDocument.filename}
                     style={{
                       maxWidth: '100%',
@@ -1912,15 +1886,15 @@ const MobileAIQA: React.FC = () => {
             {/* PDF 預覽 */}
             {pdfPreview && (
               <div style={{ marginBottom: '16px' }}>
-                <h4 style={{ 
-                  fontSize: '14px', 
-                  color: '#262626', 
+                <h4 style={{
+                  fontSize: '14px',
+                  color: '#262626',
                   marginBottom: '8px',
                   fontWeight: 600
                 }}>
                   📄 PDF 預覽
                 </h4>
-                <div style={{ 
+                <div style={{
                   width: '100%',
                   height: '400px',
                   borderRadius: '8px',
@@ -1954,17 +1928,17 @@ const MobileAIQA: React.FC = () => {
             {/* AI 分析摘要 */}
             {selectedDocument.analysis?.ai_analysis_output?.key_information?.content_summary && (
               <div style={{ marginBottom: '16px' }}>
-                <h4 style={{ 
-                  fontSize: '14px', 
-                  color: '#262626', 
+                <h4 style={{
+                  fontSize: '14px',
+                  color: '#262626',
                   marginBottom: '8px',
                   fontWeight: 600
                 }}>
                   📝 文檔摘要
                 </h4>
-                <div style={{ 
-                  padding: '12px', 
-                  background: '#fff', 
+                <div style={{
+                  padding: '12px',
+                  background: '#fff',
                   border: '1px solid #e8e8e8',
                   borderRadius: '6px',
                   fontSize: '13px',
@@ -1980,15 +1954,15 @@ const MobileAIQA: React.FC = () => {
             {/* 關鍵信息 */}
             {selectedDocument.analysis?.ai_analysis_output?.key_information && (
               <div style={{ marginBottom: '16px' }}>
-                <h4 style={{ 
-                  fontSize: '14px', 
-                  color: '#262626', 
+                <h4 style={{
+                  fontSize: '14px',
+                  color: '#262626',
                   marginBottom: '8px',
                   fontWeight: 600
                 }}>
                   🔑 關鍵信息
                 </h4>
-                
+
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {/* 主題 */}
                   {selectedDocument.analysis.ai_analysis_output.key_information.main_topics?.length > 0 && (
@@ -1996,7 +1970,7 @@ const MobileAIQA: React.FC = () => {
                       <div style={{ fontSize: '12px', color: '#8c8c8c', marginBottom: '4px' }}>主題</div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                         {selectedDocument.analysis.ai_analysis_output.key_information.main_topics.map((topic: string, idx: number) => (
-                          <span 
+                          <span
                             key={idx}
                             style={{
                               padding: '4px 10px',
@@ -2012,14 +1986,14 @@ const MobileAIQA: React.FC = () => {
                       </div>
                     </div>
                   )}
-                  
+
                   {/* 關鍵概念 */}
                   {selectedDocument.analysis.ai_analysis_output.key_information.key_concepts?.length > 0 && (
                     <div>
                       <div style={{ fontSize: '12px', color: '#8c8c8c', marginBottom: '4px' }}>關鍵概念</div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                         {selectedDocument.analysis.ai_analysis_output.key_information.key_concepts.map((concept: string, idx: number) => (
-                          <span 
+                          <span
                             key={idx}
                             style={{
                               padding: '4px 10px',
@@ -2035,7 +2009,7 @@ const MobileAIQA: React.FC = () => {
                       </div>
                     </div>
                   )}
-                  
+
                   {/* 日期 */}
                   {selectedDocument.analysis.ai_analysis_output.key_information.dates_mentioned?.length > 0 && (
                     <div>
@@ -2052,9 +2026,9 @@ const MobileAIQA: React.FC = () => {
             {/* 標籤 */}
             {selectedDocument.tags && selectedDocument.tags.length > 0 && (
               <div style={{ marginBottom: '16px' }}>
-                <h4 style={{ 
-                  fontSize: '14px', 
-                  color: '#262626', 
+                <h4 style={{
+                  fontSize: '14px',
+                  color: '#262626',
                   marginBottom: '8px',
                   fontWeight: 600
                 }}>
@@ -2062,7 +2036,7 @@ const MobileAIQA: React.FC = () => {
                 </h4>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                   {selectedDocument.tags.map((tag: string, idx: number) => (
-                    <span 
+                    <span
                       key={idx}
                       style={{
                         padding: '4px 12px',
@@ -2115,10 +2089,10 @@ const MobileAIQA: React.FC = () => {
             </div>
           </div>
         ) : (
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'center', 
-            alignItems: 'center', 
+          <div style={{
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
             height: '200px',
             color: '#8c8c8c'
           }}>

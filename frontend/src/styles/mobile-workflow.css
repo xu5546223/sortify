@@ -4,9 +4,12 @@
   background: white;
   border-radius: 12px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-  margin: 16px 0;
+  margin: 12px 0;
   overflow: hidden;
   animation: slide-in 0.3s ease-out;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 @keyframes slide-in {
@@ -14,6 +17,7 @@
     opacity: 0;
     transform: translateY(20px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -349,57 +353,57 @@
   .mobile-workflow-card {
     background: #1f1f1f;
   }
-  
+
   .mobile-workflow-card .approval-description,
   .mobile-workflow-card .clarification-question {
     color: #e0e0e0;
   }
-  
+
   .mobile-workflow-card .clarification-question {
     background: #2a2416;
     border-left-color: #d48806;
   }
-  
+
   .quick-option-btn {
     background: #141414;
     border-color: #434343;
     color: #e0e0e0;
   }
-  
+
   .quick-option-btn:active {
     background: #262626;
   }
-  
+
   .custom-textarea {
     background: #141414;
     border-color: #434343;
     color: #e0e0e0;
   }
-  
+
   .search-preview {
     background: #111d2c;
     border-color: #15395b;
   }
-  
+
   .search-preview .preview-value {
     color: #e0e0e0;
   }
-  
+
   .document-list {
     background: #162312;
     border-color: #274916;
   }
-  
+
   .document-name {
     color: #e0e0e0;
   }
-  
+
   .action-btn.secondary {
     background: #141414;
     color: #e0e0e0;
     border-color: #434343;
   }
-  
+
   .action-btn.secondary:active {
     background: #262626;
   }
@@ -411,10 +415,9 @@
   .mobile-workflow-card .card-body {
     padding: 12px;
   }
-  
+
   .action-btn {
     padding: 12px 14px;
     font-size: 14px;
   }
 }
-
