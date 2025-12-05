@@ -439,15 +439,8 @@ class ClusteringService:
         
         logger.info(f"運行HDBSCAN聚類: {len(embeddings)} 個樣本")
         
-        # 對於文本embeddings,通常已經是歸一化的
-        # 但為了確保,我們再次歸一化以適配cosine距離
-        import warnings
-        from sklearn.preprocessing import normalize
-        
-        # 抑制 sklearn 的棄用警告
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=FutureWarning)
-            embeddings_normalized = normalize(embeddings, norm='l2')
+        # 注意：embeddings 已經在 EmbeddingService.encode_text() 中通過 
+        # normalize_embeddings=True 進行了 L2 歸一化，無需再次歸一化
         
         # 創建HDBSCAN聚類器
         # 參數說明:
@@ -467,7 +460,7 @@ class ClusteringService:
         )
         
         # 執行聚類
-        cluster_labels = clusterer.fit_predict(embeddings_normalized)
+        cluster_labels = clusterer.fit_predict(embeddings)
         
         # 獲取聚類概率(置信度)
         # 可用於後續判斷聚類質量
@@ -889,16 +882,19 @@ class ClusteringService:
         from collections import Counter
         keywords_counter: Counter = Counter()
         
+        # 使用與其他方法一致的關鍵詞來源: ai_analysis_output
         cursor = db[DOCUMENTS_COLLECTION].find(
             {"_id": {"$in": [uuid.UUID(doc_id) for doc_id in document_ids]}},
-            {"enriched_data.keywords": 1}
+            {"analysis.ai_analysis_output.key_information.searchable_keywords": 1}
         )
         
         async for doc in cursor:
-            enriched_data = doc.get("enriched_data", {})
-            keywords = enriched_data.get("keywords", [])
-            for keyword in keywords:
-                keywords_counter[keyword] += 1
+            ai_output = doc.get("analysis", {}).get("ai_analysis_output", {})
+            key_info = ai_output.get("key_information", {})
+            keywords = key_info.get("searchable_keywords", [])
+            if isinstance(keywords, list):
+                for keyword in keywords:
+                    keywords_counter[keyword] += 1
         
         # 返回最常見的關鍵詞
         return [kw for kw, _ in keywords_counter.most_common(max_keywords)]
@@ -1249,7 +1245,14 @@ class ClusteringService:
             
             total_subclusters = 0
             
-            # === 階層2: 對每個大類進行細粒度聚類 ===
+            # === 收集所有需要處理的聚類信息 ===
+            # 使用批量 AI 調用來減少 API 請求次數
+            
+            all_clusters_to_label = {}  # {temp_idx: doc_ids} 用於批量生成標籤
+            cluster_metadata = {}  # 存儲每個聚類的元數據
+            temp_idx = 0
+            
+            # 第一步：收集所有父聚類的文檔
             for parent_cluster_idx, parent_doc_ids in level0_clusters.items():
                 if parent_cluster_idx == -1:  # 跳過噪聲點
                     await self._mark_documents_as_excluded(db, parent_doc_ids)
@@ -1259,16 +1262,19 @@ class ClusteringService:
                     await self._mark_documents_as_excluded(db, parent_doc_ids)
                     continue
                 
-                # 生成父聚類ID和標籤
                 parent_cluster_id = f"cluster_{owner_id_str}_L0_{parent_cluster_idx}"
-                parent_cluster_name = await self._generate_cluster_label(
-                    db, parent_cluster_id, parent_doc_ids
-                )
-                parent_keywords = await self._extract_cluster_keywords(db, parent_doc_ids)
                 
-                logger.info(f"[階層聚類] 大類 '{parent_cluster_name}' 包含 {len(parent_doc_ids)} 個文檔,開始細分")
+                # 添加父聚類到批量處理
+                all_clusters_to_label[temp_idx] = parent_doc_ids
+                cluster_metadata[temp_idx] = {
+                    "type": "parent",
+                    "cluster_id": parent_cluster_id,
+                    "parent_cluster_idx": parent_cluster_idx,
+                    "doc_ids": parent_doc_ids
+                }
+                temp_idx += 1
                 
-                # 提取這個大類的embeddings
+                # 提取這個大類的embeddings並進行細粒度聚類
                 parent_doc_id_set = set(parent_doc_ids)
                 parent_indices = [i for i, doc_id in enumerate(document_ids) if doc_id in parent_doc_id_set]
                 parent_embeddings = embeddings[parent_indices]
@@ -1279,63 +1285,96 @@ class ClusteringService:
                     level1_labels = self._run_hdbscan_clustering(parent_embeddings)
                     level1_clusters = self._organize_clusters(parent_doc_ids_ordered, level1_labels)
                     
-                    subcluster_ids = []
-                    valid_subclusters = 0
-                    
                     for child_cluster_idx, child_doc_ids in level1_clusters.items():
                         if child_cluster_idx == -1 or len(child_doc_ids) < self.min_cluster_size:
                             continue
                         
-                        # 生成子聚類
                         child_cluster_id = f"cluster_{owner_id_str}_L1_{parent_cluster_idx}_{child_cluster_idx}"
-                        child_cluster_name = await self._generate_cluster_label(
-                            db, child_cluster_id, child_doc_ids
-                        )
-                        child_keywords = await self._extract_cluster_keywords(db, child_doc_ids)
                         
-                        # 保存子聚類信息
-                        child_cluster_info = ClusterInfo(
-                            cluster_id=child_cluster_id,
-                            cluster_name=child_cluster_name,
-                            owner_id=owner_id,
-                            document_count=len(child_doc_ids),
-                            representative_documents=child_doc_ids[:10],
-                            keywords=child_keywords,
-                            clustering_version="v2.0_hierarchical",
-                            parent_cluster_id=parent_cluster_id,
-                            level=1
-                        )
-                        
-                        await self._save_cluster_info(db, child_cluster_info)
-                        
-                        # 更新文檔
-                        await self._update_documents_cluster_info(
-                            db, child_doc_ids, child_cluster_id, child_cluster_name,
-                            child_cluster_idx, len(child_doc_ids)
-                        )
-                        
-                        subcluster_ids.append(child_cluster_id)
-                        valid_subclusters += 1
-                    
-                    logger.info(f"[階層聚類] 大類 '{parent_cluster_name}' 細分為 {valid_subclusters} 個子類")
-                    total_subclusters += valid_subclusters
-                else:
-                    subcluster_ids = []
-                
-                # 保存父聚類信息
-                parent_cluster_info = ClusterInfo(
-                    cluster_id=parent_cluster_id,
-                    cluster_name=parent_cluster_name,
-                    owner_id=owner_id,
-                    document_count=len(parent_doc_ids),
-                    representative_documents=parent_doc_ids[:10],
-                    keywords=parent_keywords,
-                    clustering_version="v2.0_hierarchical",
-                    level=0,
-                    subclusters=subcluster_ids
+                        # 添加子聚類到批量處理
+                        all_clusters_to_label[temp_idx] = child_doc_ids
+                        cluster_metadata[temp_idx] = {
+                            "type": "child",
+                            "cluster_id": child_cluster_id,
+                            "parent_cluster_id": parent_cluster_id,
+                            "parent_cluster_idx": parent_cluster_idx,
+                            "child_cluster_idx": child_cluster_idx,
+                            "doc_ids": child_doc_ids
+                        }
+                        temp_idx += 1
+            
+            # 第二步：批量生成所有標籤 (一次 AI 調用!)
+            if all_clusters_to_label:
+                logger.info(f"[階層聚類] 批量生成 {len(all_clusters_to_label)} 個聚類的標籤")
+                cluster_labels_map = await self._generate_all_cluster_labels_batch(
+                    db, owner_id_str, all_clusters_to_label
                 )
+            else:
+                cluster_labels_map = {}
+            
+            # 第三步：處理和保存所有聚類
+            parent_subclusters = {}  # {parent_cluster_id: [subcluster_ids]}
+            
+            for idx, metadata in cluster_metadata.items():
+                cluster_name = cluster_labels_map.get(idx, f"分類 {idx}")
+                cluster_id = metadata["cluster_id"]
+                doc_ids = metadata["doc_ids"]
+                keywords = await self._extract_cluster_keywords(db, doc_ids)
                 
-                await self._save_cluster_info(db, parent_cluster_info)
+                if metadata["type"] == "child":
+                    # 處理子聚類
+                    parent_cluster_id = metadata["parent_cluster_id"]
+                    child_cluster_idx = metadata["child_cluster_idx"]
+                    
+                    child_cluster_info = ClusterInfo(
+                        cluster_id=cluster_id,
+                        cluster_name=cluster_name,
+                        owner_id=owner_id,
+                        document_count=len(doc_ids),
+                        representative_documents=doc_ids[:10],
+                        keywords=keywords,
+                        clustering_version="v2.0_hierarchical",
+                        parent_cluster_id=parent_cluster_id,
+                        level=1
+                    )
+                    
+                    await self._save_cluster_info(db, child_cluster_info)
+                    
+                    await self._update_documents_cluster_info(
+                        db, doc_ids, cluster_id, cluster_name,
+                        child_cluster_idx, len(doc_ids)
+                    )
+                    
+                    # 記錄子聚類到父聚類的映射
+                    if parent_cluster_id not in parent_subclusters:
+                        parent_subclusters[parent_cluster_id] = []
+                    parent_subclusters[parent_cluster_id].append(cluster_id)
+                    total_subclusters += 1
+            
+            # 第四步：保存父聚類信息
+            for idx, metadata in cluster_metadata.items():
+                if metadata["type"] == "parent":
+                    cluster_name = cluster_labels_map.get(idx, f"分類 {idx}")
+                    cluster_id = metadata["cluster_id"]
+                    doc_ids = metadata["doc_ids"]
+                    keywords = await self._extract_cluster_keywords(db, doc_ids)
+                    subcluster_ids = parent_subclusters.get(cluster_id, [])
+                    
+                    parent_cluster_info = ClusterInfo(
+                        cluster_id=cluster_id,
+                        cluster_name=cluster_name,
+                        owner_id=owner_id,
+                        document_count=len(doc_ids),
+                        representative_documents=doc_ids[:10],
+                        keywords=keywords,
+                        clustering_version="v2.0_hierarchical",
+                        level=0,
+                        subclusters=subcluster_ids
+                    )
+                    
+                    await self._save_cluster_info(db, parent_cluster_info)
+                    
+                    logger.info(f"[階層聚類] 大類 '{cluster_name}' 包含 {len(subcluster_ids)} 個子類")
             
             # 完成任務
             job_status.status = "completed"
